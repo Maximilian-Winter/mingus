@@ -2,3 +2,4 @@
 /extern/clang+llvm-21.1.8-x86_64-pc-windows-msvc
 /.claude
 /build
+/.venv/
