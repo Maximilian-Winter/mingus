@@ -218,7 +218,7 @@ See `examples/mingus_groove.mingus` for the full source.
 git clone https://github.com/Maximilian-Winter/mingus.git
 cd mingus
 mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DLLVM_DIR=./extern/clang+llvm-21.1.8-x86_64-pc-windows-msvc/lib/cmake/llvm
 cmake --build . --config Release
 ```
 
