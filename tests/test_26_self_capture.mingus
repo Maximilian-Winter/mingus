@@ -1,6 +1,6 @@
 // Test 26: Self-Capturing Closures
 // Verifies that a closure can reference itself recursively.
-// var f = (int x) => { return f(x-1); };  // f captures itself
+// var fib = (int x) => { return fib(x-1); };  // fib captures itself
 
 module Test26
 {
@@ -10,7 +10,7 @@ module Test26
     func main() => int
     {
         // Self-capturing recursive fibonacci
-        var fib: func(int) => int = (int n) => {
+        (int) => int fib = (int n) => {
             if (n <= 1) {
                 return n;
             }
@@ -27,7 +27,7 @@ module Test26
         puts("");
 
         // Self-capturing factorial
-        var fact: func(int) => int = (int n) => {
+        (int) => int fact = (int n) => {
             if (n <= 1) {
                 return 1;
             }
@@ -40,7 +40,7 @@ module Test26
         puts("");
 
         // Self-capturing countdown
-        var count: func(int) => int = (int n) => {
+        (int) => int count = (int n) => {
             if (n <= 0) {
                 return 0;
             }

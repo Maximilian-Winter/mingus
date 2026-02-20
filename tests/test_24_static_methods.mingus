@@ -48,22 +48,22 @@ module Test24
     func main() => int
     {
         // Call static method via class name
-        var sum: int = MathUtils.add(3, 4);
+        var sum = MathUtils.add(3, 4);
         printf("add(3,4) = %d", sum);
         puts("");
 
         // Recursive static method
-        var fact: int = MathUtils.factorial(5);
+        var fact = MathUtils.factorial(5);
         printf("factorial(5) = %d", fact);
         puts("");
 
         // Static method with comparison
-        var m: int = MathUtils.max(10, 20);
+        var m = MathUtils.max(10, 20);
         printf("max(10,20) = %d", m);
         puts("");
 
         // Static method on struct
-        var p: Point = Point.origin();
+        var p = Point.origin();
         printf("origin.x = %d", p.x);
         puts("");
         printf("origin.y = %d", p.y);

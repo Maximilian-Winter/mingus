@@ -53,19 +53,19 @@ module Test23
     {
         // Direct delete of Derived — should call ~Derived then ~Base
         puts("--- direct delete ---");
-        var d: Derived* = new Derived(1, 2);
+        var d = new Derived(1, 2);
         d->greet();
         delete d;
 
         // Delete through base pointer — virtual destructor dispatch
         puts("--- base ptr delete ---");
-        var b: Base* = new Derived(3, 4);
+        Base* b = new Derived(3, 4);
         b->greet();
         delete b;
 
         // Delete actual Base — should just call ~Base
         puts("--- base delete ---");
-        var b2: Base* = new Base(5);
+        var b2 = new Base(5);
         b2->greet();
         delete b2;
 

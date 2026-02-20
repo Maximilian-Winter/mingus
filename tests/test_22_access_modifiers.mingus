@@ -40,8 +40,8 @@ module Test22
         public func describe() => int
         {
             // Inside the class, we can access everything
-            var s: int = this.getSecret();
-            var h: int = this.getHealth();
+            var s = this.getSecret();
+            var h = this.getHealth();
             printf("secret=%d", s);
             puts("");
             printf("health=%d", h);
@@ -61,7 +61,7 @@ module Test22
         public func bark() => int
         {
             // Derived class can access protected members
-            var h: int = this.getHealth();
+            var h = this.getHealth();
             printf("Dog health=%d", h);
             puts("");
             // Can also access public members
@@ -76,7 +76,7 @@ module Test22
 
     func main() => int
     {
-        var a: Animal* = new Animal(42, 100, 5, 6);
+        var a = new Animal(42, 100, 5, 6);
         // Public method
         a->describe();
         // Public field
@@ -86,7 +86,7 @@ module Test22
         printf("direct name_len=%d", a->name_len);
         puts("");
 
-        var d: Dog* = new Dog(99, 200, 3);
+        var d = new Dog(99, 200, 3);
         d->bark();
 
         // Cannot access: a->secret (private)

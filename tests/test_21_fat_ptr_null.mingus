@@ -6,7 +6,7 @@ module Test21
 {
     extern func puts(string s) => int;
 
-    func apply(func(int) => int f, int x) => int
+    func apply((int) => int f, int x) => int
     {
         return f(x);
     }
@@ -14,7 +14,7 @@ module Test21
     func main() => int
     {
         // Declare a closure variable, initially null
-        var f: func(int) => int = null;
+        (int) => int f = null;
 
         // Test: f == null (should be true)
         if (f == null) {
@@ -55,7 +55,7 @@ module Test21
         }
 
         // Verify the closure works
-        var result: int = apply(f, 21);
+        var result = apply(f, 21);
         if (result == 42) {
             puts("apply(f, 21) == 42: true");
         }

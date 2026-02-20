@@ -9,7 +9,7 @@ module Test27
 
     func add(int a, int b) => int
     {
-        var result: int = a + b;
+        var result = a + b;
         return result;
     }
 
@@ -36,13 +36,13 @@ module Test27
 
     func main() => int
     {
-        var x: int = 10;
-        var y: int = 20;
-        var sum: int = add(x, y);
+        var x = 10;
+        var y = 20;
+        var sum = add(x, y);
         printf("sum = %d", sum);
         puts("");
 
-        var c: Counter* = new Counter(0);
+        var c = new Counter(0);
         c->increment();
         c->increment();
         c->increment();
@@ -50,7 +50,7 @@ module Test27
         puts("");
 
         // Local variables with debug info
-        var msg: string = "debug works";
+        var msg = "debug works";
         puts(msg);
 
         delete c;
