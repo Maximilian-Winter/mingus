@@ -241,7 +241,7 @@ void SymbolTableBuilder::resolveAllImports(ProgramNode& node) {
 
                     // Import all public symbols from the source module
                     for (auto& [name, sym] : srcScope->getSymbolMap()) {
-                        if (!sym->isPublic) continue;
+                        if (!sym->isPublic()) continue;
                         if (moduleScope->lookupLocal(name)) continue;  // Skip if already defined
                         moduleScope->defineAs(name, sym);
                     }
@@ -260,7 +260,7 @@ void SymbolTableBuilder::resolveAllImports(ProgramNode& node) {
 void SymbolTableBuilder::visit(StructDeclaration& node) {
     auto* sym = symbolTable_.createSymbol<StructSymbol>(
         node.name, node.location, currentScope_->ownerSymbol);
-    sym->isPublic = (node.accessModifier != AccessModifier::Private);
+    sym->accessLevel = node.accessModifier;
     defineSymbol(sym);
 
     auto* memberScope = pushScope(ScopeKind::TypeMembers, sym);
@@ -298,7 +298,7 @@ void SymbolTableBuilder::visit(StructDeclaration& node) {
 void SymbolTableBuilder::visit(ClassDeclaration& node) {
     auto* sym = symbolTable_.createSymbol<ClassSymbol>(
         node.name, node.location, currentScope_->ownerSymbol);
-    sym->isPublic = (node.accessModifier != AccessModifier::Private);
+    sym->accessLevel = node.accessModifier;
     sym->isAbstract = node.isAbstract;
     defineSymbol(sym);
 
@@ -366,7 +366,7 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
             node.location);
         auto* ctorSym = symbolTable_.createSymbol<ConstructorSymbol>(
             node.location, currentScope_->ownerSymbol);
-        ctorSym->isPublic = true;
+        ctorSym->accessLevel = AccessModifier::Public;
         defineSymbol(ctorSym);
         auto* fnScope = pushScope(ScopeKind::Function, ctorSym);
         ctorSym->bodyScope = fnScope;
@@ -417,7 +417,7 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
 void SymbolTableBuilder::visit(InterfaceDeclaration& node) {
     auto* sym = symbolTable_.createSymbol<InterfaceSymbol>(
         node.name, node.location, currentScope_->ownerSymbol);
-    sym->isPublic = (node.accessModifier != AccessModifier::Private);
+    sym->accessLevel = node.accessModifier;
     defineSymbol(sym);
 
     auto* memberScope = pushScope(ScopeKind::TypeMembers, sym);
@@ -454,7 +454,22 @@ void SymbolTableBuilder::buildVtable(ClassSymbol* sym) {
         sym->allFields.push_back(field);
     }
 
-    // Step 2: Build vtable entries from this class's methods
+    // Step 2: Reserve vtable slot 0 for the destructor (virtual destructor support)
+    if (sym->vtable.empty()) {
+        // Root class: insert destructor at slot 0
+        if (sym->destructor) {
+            sym->destructor->vtableIndex = 0;
+            sym->vtable.push_back(sym->destructor);
+        }
+    } else {
+        // Derived class: slot 0 is already the base destructor — override it
+        if (sym->destructor) {
+            sym->destructor->vtableIndex = 0;
+            sym->vtable[0] = sym->destructor;
+        }
+    }
+
+    // Step 3: Build vtable entries from this class's methods
     if (sym->memberScope) {
         for (auto& [name, msym] : sym->memberScope->getSymbolMap()) {
             auto* methodSym = msym->as<FunctionSymbol>();
@@ -488,7 +503,7 @@ void SymbolTableBuilder::buildVtable(ClassSymbol* sym) {
 void SymbolTableBuilder::visit(EnumDeclaration& node) {
     auto* sym = symbolTable_.createSymbol<EnumSymbol>(
         node.name, node.location, currentScope_->ownerSymbol);
-    sym->isPublic = (node.accessModifier != AccessModifier::Private);
+    sym->accessLevel = node.accessModifier;
 
     // Evaluate enum member values
     int64_t nextValue = 0;
@@ -514,10 +529,10 @@ void SymbolTableBuilder::visit(EnumDeclaration& node) {
 void SymbolTableBuilder::visit(FunctionDeclaration& node) {
     auto* sym = symbolTable_.createSymbol<FunctionSymbol>(
         node.name, node.location, currentScope_->ownerSymbol);
-    sym->isPublic = (node.accessModifier != AccessModifier::Private);
+    sym->accessLevel = node.accessModifier;
     sym->isMethod = isInTypeScope();
-    sym->hasThisParam = sym->isMethod;
     sym->isStatic = node.isStatic;
+    sym->hasThisParam = sym->isMethod && !sym->isStatic;
     sym->isAbstract = node.isAbstract;
     defineSymbol(sym);
 
@@ -555,7 +570,7 @@ void SymbolTableBuilder::visit(FunctionDeclaration& node) {
 void SymbolTableBuilder::visit(ConstructorDeclaration& node) {
     auto* sym = symbolTable_.createSymbol<ConstructorSymbol>(
         node.location, currentScope_->ownerSymbol);
-    sym->isPublic = (node.accessModifier != AccessModifier::Private);
+    sym->accessLevel = node.accessModifier;
     defineSymbol(sym);
 
     if (node.body) {
@@ -644,7 +659,7 @@ void SymbolTableBuilder::visit(VariableDeclaration& node) {
 
     auto* sym = symbolTable_.createSymbol<VariableSymbol>(
         node.name, role, node.location, currentScope_->ownerSymbol);
-    sym->isPublic = (node.accessModifier != AccessModifier::Private);
+    sym->accessLevel = node.accessModifier;
     sym->isInferred = node.isInferred;
     sym->isInitialized = (node.initializer != nullptr);
     defineSymbol(sym);

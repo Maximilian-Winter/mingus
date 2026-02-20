@@ -1,0 +1,6 @@
+apply(x+base, 5) = 15
+apply(x*multiplier, 7) = 21
+applyTwice(x+1, 0) = 2
+apply(addBase, 20) = 30
+chain result = 50
+Test25 done

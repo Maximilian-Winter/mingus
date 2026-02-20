@@ -81,7 +81,8 @@ static bool isUserStructKind(const Type* t) {
 //================================================================================
 // Constructor
 //================================================================================
-IRGenerator::IRGenerator(SymbolTable& symbolTable, TypeRegistry& registry)
+IRGenerator::IRGenerator(SymbolTable& symbolTable, TypeRegistry& registry,
+                         bool emitDebugInfo, const std::string& sourceFile)
     : builder_(context_)
     , symbolTable_(symbolTable)
     , registry_(registry)
@@ -91,6 +92,8 @@ IRGenerator::IRGenerator(SymbolTable& symbolTable, TypeRegistry& registry)
     , lastValue_(nullptr)
     , loopExitBlock_(nullptr)
     , loopIterBlock_(nullptr)
+    , emitDebugInfo_(emitDebugInfo)
+    , sourceFile_(sourceFile)
     , lambdaCounter_(0)
     , currentScope_(nullptr)
 {}
@@ -100,6 +103,36 @@ IRGenerator::IRGenerator(SymbolTable& symbolTable, TypeRegistry& registry)
 //================================================================================
 std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     module_ = std::make_unique<llvm::Module>("mingus_module", context_);
+
+    // Initialize debug info if requested
+    if (emitDebugInfo_) {
+        diBuilder_ = std::make_unique<llvm::DIBuilder>(*module_);
+
+        // Extract directory and filename from source path
+        std::string dir = ".";
+        std::string file = sourceFile_;
+        auto lastSlash = sourceFile_.find_last_of("/\\");
+        if (lastSlash != std::string::npos) {
+            dir = sourceFile_.substr(0, lastSlash);
+            file = sourceFile_.substr(lastSlash + 1);
+        }
+
+        diFile_ = diBuilder_->createFile(file, dir);
+        diCompileUnit_ = diBuilder_->createCompileUnit(
+            llvm::dwarf::DW_LANG_C,  // Use C as closest language tag
+            diFile_,
+            "Mingus Compiler 1.0",    // Producer
+            false,                     // isOptimized (set false for now)
+            "",                        // Flags
+            0                          // Runtime version
+        );
+
+        // Add module flags for DWARF
+        module_->addModuleFlag(llvm::Module::Warning, "Debug Info Version",
+                               llvm::DEBUG_METADATA_VERSION);
+        // On Windows, use CodeView format
+        module_->addModuleFlag(llvm::Module::Warning, "CodeView", 1);
+    }
 
     currentScope_ = symbolTable_.getGlobalScope();
 
@@ -113,7 +146,83 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     // Phase B: Function bodies (visitor-based)
     program.accept(*this);
 
+    // Finalize debug info
+    if (emitDebugInfo_ && diBuilder_) {
+        diBuilder_->finalize();
+    }
+
     return std::move(module_);
+}
+
+//================================================================================
+// Debug information helpers
+//================================================================================
+llvm::DIType* IRGenerator::mapDIType(const Type* type) {
+    if (!type || !emitDebugInfo_ || !diBuilder_) return nullptr;
+
+    auto it = diTypeCache_.find(type);
+    if (it != diTypeCache_.end()) return it->second;
+
+    llvm::DIType* result = nullptr;
+
+    if (auto* prim = type->as<PrimitiveType>()) {
+        switch (prim->kind) {
+            case PrimitiveType::PrimitiveKind::Int:
+                result = diBuilder_->createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
+                break;
+            case PrimitiveType::PrimitiveKind::Double:
+                result = diBuilder_->createBasicType("double", 64, llvm::dwarf::DW_ATE_float);
+                break;
+            case PrimitiveType::PrimitiveKind::Bool:
+                result = diBuilder_->createBasicType("bool", 8, llvm::dwarf::DW_ATE_boolean);
+                break;
+            case PrimitiveType::PrimitiveKind::Char:
+                result = diBuilder_->createBasicType("char", 8, llvm::dwarf::DW_ATE_unsigned_char);
+                break;
+            case PrimitiveType::PrimitiveKind::String:
+                result = diBuilder_->createPointerType(
+                    diBuilder_->createBasicType("char", 8, llvm::dwarf::DW_ATE_unsigned_char), 64);
+                break;
+            case PrimitiveType::PrimitiveKind::Void:
+                result = nullptr;  // void has no DIType
+                break;
+            default:
+                result = diBuilder_->createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
+                break;
+        }
+    } else if (type->is<PointerType>()) {
+        result = diBuilder_->createPointerType(nullptr, 64);
+    } else if (type->is<FunctionType>()) {
+        // Fat pointer { ptr, ptr } — represent as a 128-bit struct
+        result = diBuilder_->createBasicType("closure", 128, llvm::dwarf::DW_ATE_unsigned);
+    } else {
+        // Default: opaque type
+        result = diBuilder_->createBasicType("opaque", 64, llvm::dwarf::DW_ATE_unsigned);
+    }
+
+    if (result) diTypeCache_[type] = result;
+    return result;
+}
+
+void IRGenerator::emitDebugLocation(const SourceLocation& loc) {
+    if (!emitDebugInfo_ || !diFile_) return;
+    if (loc.line == 0) return;
+
+    // Get the current function's subprogram for the scope
+    llvm::DIScope* scope = nullptr;
+    if (currentFunction_ && currentFunction_->getSubprogram()) {
+        scope = currentFunction_->getSubprogram();
+    } else {
+        scope = diFile_;
+    }
+
+    builder_.SetCurrentDebugLocation(
+        llvm::DILocation::get(context_, loc.line, loc.column, scope));
+}
+
+void IRGenerator::clearDebugLocation() {
+    if (!emitDebugInfo_) return;
+    builder_.SetCurrentDebugLocation(llvm::DebugLoc());
 }
 
 //================================================================================
@@ -1213,6 +1322,32 @@ void IRGenerator::visit(FunctionDeclaration& node) {
     auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
     builder_.SetInsertPoint(entryBB);
 
+    // Attach debug info subprogram
+    if (emitDebugInfo_ && diBuilder_ && diFile_) {
+        llvm::DIScope* scope = diCompileUnit_;
+        auto* retDIType = funcSym->returnType ? mapDIType(funcSym->returnType.get()) : nullptr;
+
+        llvm::SmallVector<llvm::Metadata*, 8> paramDITypes;
+        paramDITypes.push_back(retDIType);  // Return type is first in subroutine type
+        for (auto* param : funcSym->parameters) {
+            paramDITypes.push_back(param->type ? mapDIType(param->type.get()) : nullptr);
+        }
+        auto* subroutineTy = diBuilder_->createSubroutineType(
+            diBuilder_->getOrCreateTypeArray(paramDITypes));
+
+        auto* sp = diBuilder_->createFunction(
+            scope, node.name, fn->getName(), diFile_,
+            node.location.line, subroutineTy,
+            node.location.line,
+            llvm::DINode::FlagPrototyped,
+            llvm::DISubprogram::SPFlagDefinition);
+        fn->setSubprogram(sp);
+
+        // Set initial debug location
+        builder_.SetCurrentDebugLocation(
+            llvm::DILocation::get(context_, node.location.line, 0, sp));
+    }
+
     auto* prevFunction = currentFunction_;
     auto* prevThisPtr = currentThisPtr_;
     currentFunction_ = fn;
@@ -1631,11 +1766,13 @@ void IRGenerator::visit(BlockStatement& node) {
 }
 
 void IRGenerator::visit(ExpressionStatement& node) {
+    emitDebugLocation(node.location);
     node.expression->accept(*this);
     // Discard result
 }
 
 void IRGenerator::visit(ReturnStatement& node) {
+    emitDebugLocation(node.location);
     if (node.hasValue()) {
         // Mark returned RAII variable for suppression
         if (auto* ident = node.value->as<IdentifierExpression>()) {
@@ -1667,6 +1804,7 @@ void IRGenerator::visit(ReturnStatement& node) {
 }
 
 void IRGenerator::visit(IfStatement& node) {
+    emitDebugLocation(node.location);
     // Emit condition
     node.condition->accept(*this);
     llvm::Value* condVal = lastValue_;
@@ -1822,6 +1960,7 @@ void IRGenerator::visit(SwitchStatement& node) {
 }
 
 void IRGenerator::visit(ForStatement& node) {
+    emitDebugLocation(node.location);
     // For loop has its own scope (for the loop variable)
     enterNextChildScope();
 
@@ -1891,6 +2030,7 @@ void IRGenerator::visit(ForStatement& node) {
 }
 
 void IRGenerator::visit(WhileStatement& node) {
+    emitDebugLocation(node.location);
     auto* condBB = llvm::BasicBlock::Create(context_, "while.cond", currentFunction_);
     auto* bodyBB = llvm::BasicBlock::Create(context_, "while.body", currentFunction_);
     auto* exitBB = llvm::BasicBlock::Create(context_, "while.exit", currentFunction_);
@@ -1942,6 +2082,7 @@ void IRGenerator::visit(ContinueStatement& /*node*/) {
 }
 
 void IRGenerator::visit(DeleteStatement& node) {
+    emitDebugLocation(node.location);
     node.target->accept(*this);
     llvm::Value* ptrVal = lastValue_;
     if (!ptrVal) return;
@@ -1954,13 +2095,30 @@ void IRGenerator::visit(DeleteStatement& node) {
                 // Interface fat pointer { objPtr, itable } — free the object pointer
                 ptrVal = builder_.CreateExtractValue(ptrVal, {0}, "iface.del.obj");
             } else {
-                // Class/struct: call destructor if present, then free
+                // Class/struct: call destructor via vtable dispatch, then free
                 auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
                 auto* classSym = typeSym ? typeSym->as<ClassSymbol>() : nullptr;
                 if (classSym && classSym->destructor) {
-                    auto it = functionCache_.find(classSym->destructor);
-                    if (it != functionCache_.end()) {
-                        builder_.CreateCall(it->second, {ptrVal});
+                    if (classSym->vtableSize > 0 && classSym->destructor->vtableIndex >= 0) {
+                        // Virtual destructor dispatch: load vtable, GEP to slot 0
+                        auto vtUserType = registry_.getUserType(classSym->name,
+                            Type::Kind::Class, classSym);
+                        auto* structTy = getStructType(vtUserType.get());
+                        auto* ptrTy = llvm::PointerType::getUnqual(context_);
+                        auto* vtablePtrPtr = builder_.CreateStructGEP(structTy, ptrVal, 0, "del.vtable.ptr");
+                        auto* vtable = builder_.CreateLoad(ptrTy, vtablePtrPtr, "del.vtable");
+                        auto* dtorSlot = builder_.CreateGEP(ptrTy, vtable,
+                            builder_.getInt32(0), "del.dtor.slot");
+                        auto* dtorFn = builder_.CreateLoad(ptrTy, dtorSlot, "del.dtor.fn");
+                        auto* dtorFnTy = llvm::FunctionType::get(
+                            llvm::Type::getVoidTy(context_), {ptrTy}, false);
+                        builder_.CreateCall(dtorFnTy, dtorFn, {ptrVal});
+                    } else {
+                        // Fallback: direct destructor call (no vtable)
+                        auto it = functionCache_.find(classSym->destructor);
+                        if (it != functionCache_.end()) {
+                            builder_.CreateCall(it->second, {ptrVal});
+                        }
                     }
                 }
             }
@@ -1990,6 +2148,7 @@ void IRGenerator::visit(RawBlock& node) {
 // Variable declaration
 //================================================================================
 void IRGenerator::visit(VariableDeclaration& node) {
+    emitDebugLocation(node.location);
     // Look up the VariableSymbol
     auto* sym = currentScope_->lookupLocal(node.name);
     auto* varSym = sym ? sym->as<VariableSymbol>() : nullptr;
@@ -2002,6 +2161,23 @@ void IRGenerator::visit(VariableDeclaration& node) {
     // Create alloca in entry block
     auto* alloca = createEntryBlockAlloca(currentFunction_, varTy, node.name);
     namedValues_[varSym] = alloca;
+
+    // Emit debug variable declaration
+    if (emitDebugInfo_ && diBuilder_ && currentFunction_ &&
+        currentFunction_->getSubprogram()) {
+        auto* diType = mapDIType(varSym->type.get());
+        if (diType) {
+            auto* diVar = diBuilder_->createAutoVariable(
+                currentFunction_->getSubprogram(),
+                node.name, diFile_, node.location.line, diType);
+            diBuilder_->insertDeclare(
+                alloca, diVar, diBuilder_->createExpression(),
+                llvm::DILocation::get(context_, node.location.line,
+                                       node.location.column,
+                                       currentFunction_->getSubprogram()),
+                builder_.GetInsertBlock());
+        }
+    }
 
     // Zero-initialize closure allocas (prevents releasing garbage on reassignment)
     if (varSym->type && varSym->type->is<FunctionType>()) {
@@ -2058,6 +2234,44 @@ void IRGenerator::visit(VariableDeclaration& node) {
             }
 
             builder_.CreateStore(lastValue_, alloca);
+
+            // Self-capturing closure: patch the env struct with the final fat pointer.
+            // The lambda captured a zero fat pointer for 'this variable' during compilation.
+            // Now that we have the real fat pointer, write it into the capture slot.
+            if (auto* lambda = node.initializer->as<LambdaExpression>()) {
+                if (lambda->selfCapture && !lambda->capturedVariables.empty()) {
+                    // Find the self-capture slot index
+                    int selfCaptureIdx = -1;
+                    for (size_t i = 0; i < lambda->capturedVariables.size(); i++) {
+                        if (lambda->capturedVariables[i] == varSym) {
+                            selfCaptureIdx = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                    if (selfCaptureIdx >= 0) {
+                        // Extract envPtr from the fat pointer
+                        auto* envPtr = builder_.CreateExtractValue(lastValue_, {1}, "self.env");
+                        // Build the closure struct type to GEP into the env
+                        auto* i64Ty = llvm::Type::getInt64Ty(context_);
+                        auto* ptrTy = llvm::PointerType::getUnqual(context_);
+                        std::vector<llvm::Type*> closureFields;
+                        closureFields.push_back(i64Ty);   // refcount
+                        closureFields.push_back(ptrTy);   // cleanup_fn
+                        for (auto* capSym : lambda->capturedVariables) {
+                            auto* capVar = capSym->as<VariableSymbol>();
+                            closureFields.push_back(capVar ? mapType(capVar->type)
+                                                           : llvm::Type::getInt32Ty(context_));
+                        }
+                        auto* closureTy = llvm::StructType::get(context_, closureFields);
+                        const int headerOffset = 2;
+                        auto* selfSlot = builder_.CreateStructGEP(closureTy, envPtr,
+                            headerOffset + selfCaptureIdx, "self.capture.slot");
+                        // Store the fat pointer into the self-capture slot
+                        // Do NOT retain — self-reference is unretained to avoid cycles
+                        builder_.CreateStore(lastValue_, selfSlot);
+                    }
+                }
+            }
         }
     }
 
@@ -2307,6 +2521,13 @@ void IRGenerator::visit(ThisExpression& /*node*/) {
 }
 
 void IRGenerator::visit(MemberAccessExpression& node) {
+    // Handle static method access: ClassName.staticMethod
+    // This just produces a null placeholder — the actual call is handled in CallExpression
+    if (node.isStaticAccess) {
+        lastValue_ = nullptr;  // Static access has no runtime value until called
+        return;
+    }
+
     // Handle enum member access: Color.Red → constant int/string
     if (node.isEnumAccess) {
         if (node.isStringEnumAccess) {
@@ -2513,6 +2734,38 @@ void IRGenerator::visit(BinaryExpression& node) {
             } else {
                 lastValue_ = builder_.CreateICmpNE(cmp,
                     llvm::ConstantInt::get(i32Ty, 0), "str.ne");
+            }
+            return;
+        }
+    }
+
+    // Fat pointer (closure/function) null comparison: f == null, null == f, f == g
+    if ((leftType && leftType->is<FunctionType>()) ||
+        (rightType && rightType->is<FunctionType>())) {
+        if (node.op == BinaryOp::Equal || node.op == BinaryOp::NotEqual) {
+            auto* ptrTy = llvm::PointerType::getUnqual(context_);
+            auto* nullPtr = llvm::ConstantPointerNull::get(ptrTy);
+            llvm::Value* lhsFnPtr = nullptr;
+            llvm::Value* rhsFnPtr = nullptr;
+
+            // Extract fnPtr (index 0) from fat pointer side(s)
+            if (leftType && leftType->is<FunctionType>()) {
+                lhsFnPtr = builder_.CreateExtractValue(leftVal, {0}, "lhs.fnptr");
+            } else {
+                // Left is null literal (bare ptr) — treat as null fnPtr
+                lhsFnPtr = nullPtr;
+            }
+            if (rightType && rightType->is<FunctionType>()) {
+                rhsFnPtr = builder_.CreateExtractValue(rightVal, {0}, "rhs.fnptr");
+            } else {
+                // Right is null literal (bare ptr) — treat as null fnPtr
+                rhsFnPtr = nullPtr;
+            }
+
+            if (node.op == BinaryOp::Equal) {
+                lastValue_ = builder_.CreateICmpEQ(lhsFnPtr, rhsFnPtr, "fatptr.eq");
+            } else {
+                lastValue_ = builder_.CreateICmpNE(lhsFnPtr, rhsFnPtr, "fatptr.ne");
             }
             return;
         }
@@ -2831,7 +3084,23 @@ void IRGenerator::visit(CallExpression& node) {
 
     // Method call: callee is MemberAccessExpression
     if (auto* memAccess = node.callee->as<MemberAccessExpression>()) {
+        // Static method call: ClassName.staticMethod(args) — no this pointer
+        if (memAccess->isStaticAccess) {
+            const Type* objType = memAccess->object->resolvedType.get();
+            if (auto* userType = objType->as<UserType>()) {
+                auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
+                auto* methodSym = typeSym->findMethod(memAccess->memberName);
+                if (methodSym) {
+                    auto it = functionCache_.find(methodSym);
+                    if (it != functionCache_.end()) {
+                        calleeFn = it->second;
+                    }
+                }
+            }
+            // No thisPtr for static methods — skip to arg evaluation
+        }
         // String built-in methods: length(), charAt(i), substring(start, len)
+        else
         if (memAccess->isStringBuiltinMethod) {
             memAccess->object->accept(*this);
             llvm::Value* strVal = lastValue_;
@@ -3000,6 +3269,10 @@ void IRGenerator::visit(CallExpression& node) {
                     if (it != functionCache_.end()) {
                         calleeFn = it->second;
                     }
+                    // Static methods don't take 'this'
+                    if (methodSym->isStatic) {
+                        thisPtr = nullptr;
+                    }
                 }
             } else {
                 // Not a method — check for closure-typed field
@@ -3097,6 +3370,17 @@ void IRGenerator::visit(CallExpression& node) {
                     args.push_back(tmp);
                     continue;
                 }
+            }
+            // RAII-wrap temporary closure arguments to prevent leaks.
+            // If the argument is a lambda literal (temporary), its env was malloc'd
+            // but nobody owns it. Register cleanup so it's released after scope exit.
+            if (arg->resolvedType && arg->resolvedType->is<FunctionType>() &&
+                arg->is<LambdaExpression>()) {
+                auto* fatPtrTy = getFatPtrType();
+                auto* tmpAlloca = createEntryBlockAlloca(currentFunction_,
+                    fatPtrTy, "tmp.closure.arg");
+                builder_.CreateStore(lastValue_, tmpAlloca);
+                registerRAII(tmpAlloca, getOrCreateClosureReleaseWrapper());
             }
             args.push_back(lastValue_);
         }

@@ -1,0 +1,12 @@
+--- direct delete ---
+Derived.greet
+~Derived
+~Base
+--- base ptr delete ---
+Derived.greet
+~Derived
+~Base
+--- base delete ---
+Base.greet
+~Base
+Test23 done

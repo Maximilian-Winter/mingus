@@ -1,0 +1,11 @@
+fib(0) = 0
+fib(1) = 1
+fib(5) = 5
+fib(10) = 55
+fact(5) = 120
+fact(7) = 5040
+countdown:
+  count: 3
+  count: 2
+  count: 1
+Test26 done

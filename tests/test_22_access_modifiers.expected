@@ -1,0 +1,9 @@
+secret=42
+health=100
+age=5
+direct age=5
+direct name_len=6
+Dog health=200
+Dog age=3
+Dog name_len=3
+Test22 done

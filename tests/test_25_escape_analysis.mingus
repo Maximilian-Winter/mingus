@@ -1,0 +1,58 @@
+// Test 25: Escape Analysis and Closure Leak Fix
+// Verifies that temporary closures passed as function arguments are
+// properly cleaned up (no memory leak), and that non-escaping closures
+// are correctly identified.
+
+module Test25
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    func apply(func(int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func applyTwice(func(int) => int f, int x) => int
+    {
+        var first: int = f(x);
+        return f(first);
+    }
+
+    func main() => int
+    {
+        var base: int = 10;
+
+        // Temporary lambda passed directly as argument (non-escaping)
+        // This previously leaked — the closure env was malloc'd but never freed
+        var r1: int = apply((int x) => { return x + base; }, 5);
+        printf("apply(x+base, 5) = %d", r1);
+        puts("");
+
+        // Another temporary lambda with captures
+        var multiplier: int = 3;
+        var r2: int = apply((int x) => { return x * multiplier; }, 7);
+        printf("apply(x*multiplier, 7) = %d", r2);
+        puts("");
+
+        // Temporary lambda with double application
+        var r3: int = applyTwice((int x) => { return x + 1; }, 0);
+        printf("applyTwice(x+1, 0) = %d", r3);
+        puts("");
+
+        // Named closure (already has RAII)
+        var addBase: func(int) => int = (int x) => { return x + base; };
+        var r4: int = apply(addBase, 20);
+        printf("apply(addBase, 20) = %d", r4);
+        puts("");
+
+        // Multiple temporary lambdas in sequence
+        var r5: int = apply((int x) => { return x + 100; }, 0);
+        var r6: int = apply((int x) => { return x - 50; }, r5);
+        printf("chain result = %d", r6);
+        puts("");
+
+        puts("Test25 done");
+        return 0;
+    }
+}

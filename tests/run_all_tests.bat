@@ -54,6 +54,13 @@ call :run_test test_17_hex_literals   HexTest_main  "Hex Binary Octal Literals"
 call :run_test test_18_tuples         Test18_main   "Tuples"
 call :run_test test_19_dynamic_array_map Test19_main "DynamicArray Map"
 call :run_test test_20_complex_numbers Test20_main  "Complex Numbers"
+call :run_test test_21_fat_ptr_null    Test21_main  "Fat Pointer Null Comparison"
+call :run_test test_22_access_modifiers Test22_main "Access Modifiers"
+call :run_test test_23_virtual_destructor Test23_main "Virtual Destructor"
+call :run_test test_24_static_methods   Test24_main  "Static Methods"
+call :run_test test_25_escape_analysis  Test25_main  "Escape Analysis"
+call :run_test test_26_self_capture     Test26_main  "Self-Capturing Closures"
+call :run_test test_27_debug_info      Test27_main  "Debug Info"
 
 echo.
 echo ============================================================

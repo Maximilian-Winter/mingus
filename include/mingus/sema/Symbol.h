@@ -14,6 +14,9 @@
 #include <string>
 #include <vector>
 
+// Re-export AccessModifier from Declarations.h for convenience
+using mingus::ast::AccessModifier;
+
 namespace mingus {
 namespace sema {
 
@@ -77,12 +80,16 @@ public:
     SymbolKind kind;
     SourceLocation location;
     Symbol* owner;          // Enclosing symbol (module, struct, class)
-    bool isPublic;
+    AccessModifier accessLevel;
+
+    // Backward-compatible accessor: anything not Private is "public" in the old sense
+    bool isPublic() const { return accessLevel != AccessModifier::Private; }
 
     Symbol(const std::string& n, SymbolKind k,
            const SourceLocation& loc = SourceLocation(),
            Symbol* own = nullptr, bool pub = true)
-        : name(n), kind(k), location(loc), owner(own), isPublic(pub) {}
+        : name(n), kind(k), location(loc), owner(own)
+        , accessLevel(pub ? AccessModifier::Public : AccessModifier::Private) {}
 
     virtual ~Symbol() = default;
 

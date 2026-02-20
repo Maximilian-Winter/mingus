@@ -1,0 +1,75 @@
+// Test 24: Static Methods
+// Verifies that static methods can be called via ClassName.method() syntax
+// and that they don't receive a 'this' pointer.
+
+module Test24
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    class MathUtils
+    {
+        static func add(int a, int b) => int
+        {
+            return a + b;
+        }
+
+        static func factorial(int n) => int
+        {
+            if (n <= 1) {
+                return 1;
+            }
+            return n * MathUtils.factorial(n - 1);
+        }
+
+        static func max(int a, int b) => int
+        {
+            if (a > b) {
+                return a;
+            }
+            return b;
+        }
+    }
+
+    struct Point
+    {
+        int x;
+        int y;
+
+        static func origin() => Point
+        {
+            Point p;
+            p.x = 0;
+            p.y = 0;
+            return p;
+        }
+    }
+
+    func main() => int
+    {
+        // Call static method via class name
+        var sum: int = MathUtils.add(3, 4);
+        printf("add(3,4) = %d", sum);
+        puts("");
+
+        // Recursive static method
+        var fact: int = MathUtils.factorial(5);
+        printf("factorial(5) = %d", fact);
+        puts("");
+
+        // Static method with comparison
+        var m: int = MathUtils.max(10, 20);
+        printf("max(10,20) = %d", m);
+        puts("");
+
+        // Static method on struct
+        var p: Point = Point.origin();
+        printf("origin.x = %d", p.x);
+        puts("");
+        printf("origin.y = %d", p.y);
+        puts("");
+
+        puts("Test24 done");
+        return 0;
+    }
+}

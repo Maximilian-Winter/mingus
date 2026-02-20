@@ -1,0 +1,75 @@
+// Test 23: Virtual Destructor
+// Verifies that deleting a derived class through a base class pointer
+// calls the derived class destructor (virtual dispatch through vtable slot 0).
+
+module Test23
+{
+    extern func puts(string s) => int;
+
+    class Base
+    {
+        int id;
+
+        constructor(int i)
+        {
+            this.id = i;
+        }
+
+        destructor
+        {
+            puts("~Base");
+        }
+
+        func greet() => int
+        {
+            puts("Base.greet");
+            return 0;
+        }
+    }
+
+    class Derived : Base
+    {
+        int extra;
+
+        constructor(int i, int e) : super(i)
+        {
+            this.extra = e;
+        }
+
+        destructor
+        {
+            puts("~Derived");
+            // Base destructor is chained automatically
+        }
+
+        func greet() => int
+        {
+            puts("Derived.greet");
+            return 0;
+        }
+    }
+
+    func main() => int
+    {
+        // Direct delete of Derived — should call ~Derived then ~Base
+        puts("--- direct delete ---");
+        var d: Derived* = new Derived(1, 2);
+        d->greet();
+        delete d;
+
+        // Delete through base pointer — virtual destructor dispatch
+        puts("--- base ptr delete ---");
+        var b: Base* = new Derived(3, 4);
+        b->greet();
+        delete b;
+
+        // Delete actual Base — should just call ~Base
+        puts("--- base delete ---");
+        var b2: Base* = new Base(5);
+        b2->greet();
+        delete b2;
+
+        puts("Test23 done");
+        return 0;
+    }
+}

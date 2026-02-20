@@ -890,14 +890,77 @@ void TypeChecker::visit(MemberAccessExpression& node) {
         return;
     }
 
+    // Check if this is a static method access via type name (ClassName.method)
+    bool isTypeNameAccess = false;
+    if (auto* idExpr = dynamic_cast<IdentifierExpression*>(node.object.get())) {
+        if (idExpr->resolvedSymbol && idExpr->resolvedSymbol->is<TypeSymbol>()) {
+            isTypeNameAccess = true;
+        }
+    }
+    if (isTypeNameAccess) {
+        if (auto* method = typeSym->findMethod(node.memberName)) {
+            if (method->isStatic) {
+                node.isStaticAccess = true;
+                node.resolvedType = getSymbolType(method);
+                return;
+            } else {
+                errors_.error(node.location,
+                    "cannot call non-static method '" + node.memberName +
+                    "' on type '" + typeSym->name + "' without an instance");
+                node.resolvedType = registry_.getErrorType();
+                return;
+            }
+        }
+    }
+
+    // Helper: check access modifier enforcement
+    auto checkAccess = [&](Symbol* member) -> bool {
+        AccessModifier access = member->accessLevel;
+        if (access == AccessModifier::Public || access == AccessModifier::None) {
+            return true;  // Always accessible
+        }
+        // Determine the type that owns the member being accessed
+        TypeSymbol* ownerType = typeSym;
+        if (access == AccessModifier::Private) {
+            // Private: only accessible from within the same type
+            if (currentType_ && currentType_ == ownerType) return true;
+            errors_.error(node.location,
+                "'" + node.memberName + "' is private in '" + ownerType->name + "'");
+            return false;
+        }
+        if (access == AccessModifier::Protected) {
+            // Protected: accessible from same type or derived types
+            if (currentType_) {
+                // Walk up the class hierarchy from currentType_
+                auto* cls = currentType_->as<ClassSymbol>();
+                while (cls) {
+                    if (cls == ownerType) return true;
+                    cls = cls->baseClass;
+                }
+            }
+            errors_.error(node.location,
+                "'" + node.memberName + "' is protected in '" + ownerType->name + "'");
+            return false;
+        }
+        return true;
+    };
+
     // Check for field
     if (auto* field = typeSym->findField(node.memberName)) {
+        if (!checkAccess(field)) {
+            node.resolvedType = registry_.getErrorType();
+            return;
+        }
         node.resolvedType = field->type ? field->type : registry_.getErrorType();
         return;
     }
 
     // Check for method
     if (auto* method = typeSym->findMethod(node.memberName)) {
+        if (!checkAccess(method)) {
+            node.resolvedType = registry_.getErrorType();
+            return;
+        }
         node.resolvedType = getSymbolType(method);
         return;
     }

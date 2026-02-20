@@ -271,6 +271,7 @@ public:
     bool isEnumAccess = false;               // True when this resolves to an enum member
     bool isStringEnumAccess = false;         // True when this resolves to a string enum member
     bool isStringBuiltinMethod = false;      // True for string built-in methods (length, charAt, substring)
+    bool isStaticAccess = false;             // True for ClassName.staticMethod() syntax
 
     MemberAccessExpression(NodePtr<ExpressionNode> obj,
                            const std::string& member,
@@ -561,6 +562,8 @@ public:
     NodeList<ParameterNode> parameters;
     NodePtr<ASTNode> body;  // ExpressionNode or BlockStatement
     std::vector<mingus::sema::Symbol*> capturedVariables;  // Filled during semantic analysis
+    bool escapes = true;       // Escape analysis: true = heap-alloc, false = stack-alloc
+    bool selfCapture = false;  // True if lambda captures its own variable (letrec pattern)
 
     LambdaExpression(NodeList<ParameterNode> params,
                      NodePtr<ASTNode> bdy,

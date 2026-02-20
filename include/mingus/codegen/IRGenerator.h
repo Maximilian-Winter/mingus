@@ -28,6 +28,8 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/IR/DIBuilder.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #pragma warning(pop)
 
 #include <unordered_map>
@@ -46,7 +48,8 @@ using namespace mingus::ast;
 //================================================================================
 class IRGenerator : public ASTVisitor {
 public:
-    IRGenerator(sema::SymbolTable& symbolTable, sema::TypeRegistry& registry);
+    IRGenerator(sema::SymbolTable& symbolTable, sema::TypeRegistry& registry,
+                bool emitDebugInfo = false, const std::string& sourceFile = "");
 
     // Entry point — generates LLVM IR and returns the module
     std::unique_ptr<llvm::Module> generate(ProgramNode& program);
@@ -184,6 +187,25 @@ private:
     llvm::BasicBlock* loopExitBlock_;
     llvm::BasicBlock* loopIterBlock_;
     size_t loopRAIIScopeDepth_ = 0;  // RAII stack depth at loop entry
+
+    //==========================================================================
+    // Debug information (DIBuilder)
+    //==========================================================================
+    bool emitDebugInfo_;
+    std::string sourceFile_;
+    std::unique_ptr<llvm::DIBuilder> diBuilder_;
+    llvm::DICompileUnit* diCompileUnit_ = nullptr;
+    llvm::DIFile* diFile_ = nullptr;
+    std::unordered_map<const Type*, llvm::DIType*> diTypeCache_;
+
+    // Create a DIType for a Mingus type
+    llvm::DIType* mapDIType(const Type* type);
+
+    // Emit a debug location for a source location
+    void emitDebugLocation(const SourceLocation& loc);
+
+    // Clear debug location (for compiler-generated code)
+    void clearDebugLocation();
 
     //==========================================================================
     // RAII scope stack

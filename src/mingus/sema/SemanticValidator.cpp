@@ -508,6 +508,17 @@ void SemanticValidator::visit(VariableDeclaration& node) {
     // Walk initializer for expression analysis (4c, 4e)
     if (node.initializer) {
         node.initializer->accept(*this);
+
+        // Detect self-capture: var f = (int x) => { return f(x-1); };
+        // If the initializer is a lambda that captured this variable, flag it
+        if (auto* lambda = node.initializer->as<LambdaExpression>()) {
+            for (auto* capSym : lambda->capturedVariables) {
+                if (capSym == sym) {
+                    lambda->selfCapture = true;
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -690,7 +701,14 @@ void SemanticValidator::visit(TernaryExpression& node) {
 void SemanticValidator::visit(CallExpression& node) {
     if (node.callee) node.callee->accept(*this);
     for (auto& arg : node.arguments) {
-        if (arg) arg->accept(*this);
+        if (arg) {
+            arg->accept(*this);
+            // Escape analysis: lambda literals passed directly as function arguments
+            // are non-escaping — the callee only borrows the closure for the call duration
+            if (auto* lambda = arg->as<LambdaExpression>()) {
+                lambda->escapes = false;
+            }
+        }
     }
 }
 

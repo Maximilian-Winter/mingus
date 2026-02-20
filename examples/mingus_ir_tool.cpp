@@ -281,6 +281,7 @@ int main(int argc, char* argv[]) {
                   << "  --entry <Module_func> Inject a C main() that calls the given function\n"
                   << "  --run <Module_func>   Like --entry, but also compile and execute\n"
                   << "  --opt <0|1|2>         Optimization level (default: 0)\n"
+                  << "  --debug               Emit debug information (DWARF/CodeView)\n"
                   << "                          0 = none, 1 = basic (O1), 2 = full (O2)\n";
         return 1;
     }
@@ -290,6 +291,7 @@ int main(int argc, char* argv[]) {
     std::string emitFile;   // --emit <output.ll>
     bool doRun = false;     // --run (compile + execute)
     int optLevel = 0;       // --opt <level> (0=none, 1=O1, 2=O2)
+    bool debugInfo = false;  // --debug (emit DWARF/CodeView debug info)
 
     for (int i = 2; i < argc; i++) {
         std::string arg = argv[i];
@@ -306,6 +308,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Warning: --opt level clamped to range [0, 2]\n";
                 optLevel = std::clamp(optLevel, 0, 2);
             }
+        } else if (arg == "--debug") {
+            debugInfo = true;
         }
     }
 
@@ -354,7 +358,7 @@ int main(int argc, char* argv[]) {
     // 3. LLVM IR Generation
     std::cout << "=== Generating LLVM IR ===\n\n";
 
-    IRGenerator irGen(symbolTable, typeRegistry);
+    IRGenerator irGen(symbolTable, typeRegistry, debugInfo, filename);
     auto module = irGen.generate(*program);
 
     // 4. Inject main wrapper if --run was specified

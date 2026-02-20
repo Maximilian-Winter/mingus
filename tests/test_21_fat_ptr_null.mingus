@@ -1,0 +1,66 @@
+// Test 21: Fat Pointer Null Comparison
+// Verifies that closure/function-typed values can be compared with null
+// using == and != operators (both orderings).
+
+module Test21
+{
+    extern func puts(string s) => int;
+
+    func apply(func(int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func main() => int
+    {
+        // Declare a closure variable, initially null
+        var f: func(int) => int = null;
+
+        // Test: f == null (should be true)
+        if (f == null) {
+            puts("f == null: true");
+        } else {
+            puts("f == null: false");
+        }
+
+        // Test: f != null (should be false)
+        if (f != null) {
+            puts("f != null: true");
+        } else {
+            puts("f != null: false");
+        }
+
+        // Test: null == f (reversed operand order)
+        if (null == f) {
+            puts("null == f: true");
+        } else {
+            puts("null == f: false");
+        }
+
+        // Assign a lambda
+        f = (int x) => { return x * 2; };
+
+        // Test: f != null (should be true after assignment)
+        if (f != null) {
+            puts("after assign, f != null: true");
+        } else {
+            puts("after assign, f != null: false");
+        }
+
+        // Test: f == null (should be false after assignment)
+        if (f == null) {
+            puts("after assign, f == null: true");
+        } else {
+            puts("after assign, f == null: false");
+        }
+
+        // Verify the closure works
+        var result: int = apply(f, 21);
+        if (result == 42) {
+            puts("apply(f, 21) == 42: true");
+        }
+
+        puts("Test21 done");
+        return 0;
+    }
+}

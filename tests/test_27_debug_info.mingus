@@ -1,0 +1,60 @@
+// Test 27: Debug Information
+// Verifies that --debug flag doesn't break compilation or runtime behavior.
+// The test compiles normally and produces correct output.
+
+module Test27
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    func add(int a, int b) => int
+    {
+        var result: int = a + b;
+        return result;
+    }
+
+    class Counter
+    {
+        int value;
+
+        constructor(int initial)
+        {
+            this.value = initial;
+        }
+
+        func increment() => int
+        {
+            this.value = this.value + 1;
+            return this.value;
+        }
+
+        func get() => int
+        {
+            return this.value;
+        }
+    }
+
+    func main() => int
+    {
+        var x: int = 10;
+        var y: int = 20;
+        var sum: int = add(x, y);
+        printf("sum = %d", sum);
+        puts("");
+
+        var c: Counter* = new Counter(0);
+        c->increment();
+        c->increment();
+        c->increment();
+        printf("counter = %d", c->get());
+        puts("");
+
+        // Local variables with debug info
+        var msg: string = "debug works";
+        puts(msg);
+
+        delete c;
+        puts("Test27 done");
+        return 0;
+    }
+}

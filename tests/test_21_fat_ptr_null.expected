@@ -1,0 +1,7 @@
+f == null: true
+f != null: false
+null == f: true
+after assign, f != null: true
+after assign, f == null: false
+apply(f, 21) == 42: true
+Test21 done

@@ -1,0 +1,101 @@
+// Test 22: Access Modifier Enforcement
+// Verifies that public, private, and protected access modifiers work correctly.
+// Private members are accessible from within the class.
+// Protected members are accessible from within the class and derived classes.
+// Public members are accessible from everywhere.
+
+module Test22
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    class Animal
+    {
+        private int secret;
+        protected int health;
+        public int age;
+        int name_len;  // No modifier = public by default
+
+        constructor(int s, int h, int a, int n)
+        {
+            this.secret = s;
+            this.health = h;
+            this.age = a;
+            this.name_len = n;
+        }
+
+        // Private method — only callable within Animal
+        private func getSecret() => int
+        {
+            return this.secret;
+        }
+
+        // Protected method — callable within Animal and derived
+        protected func getHealth() => int
+        {
+            return this.health;
+        }
+
+        // Public method — callable from anywhere
+        public func describe() => int
+        {
+            // Inside the class, we can access everything
+            var s: int = this.getSecret();
+            var h: int = this.getHealth();
+            printf("secret=%d", s);
+            puts("");
+            printf("health=%d", h);
+            puts("");
+            printf("age=%d", this.age);
+            puts("");
+            return 0;
+        }
+    }
+
+    class Dog : Animal
+    {
+        constructor(int s, int h, int a) : super(s, h, a, 3)
+        {
+        }
+
+        public func bark() => int
+        {
+            // Derived class can access protected members
+            var h: int = this.getHealth();
+            printf("Dog health=%d", h);
+            puts("");
+            // Can also access public members
+            printf("Dog age=%d", this.age);
+            puts("");
+            // Can access no-modifier (public) members
+            printf("Dog name_len=%d", this.name_len);
+            puts("");
+            return 0;
+        }
+    }
+
+    func main() => int
+    {
+        var a: Animal* = new Animal(42, 100, 5, 6);
+        // Public method
+        a->describe();
+        // Public field
+        printf("direct age=%d", a->age);
+        puts("");
+        // No-modifier field (public by default)
+        printf("direct name_len=%d", a->name_len);
+        puts("");
+
+        var d: Dog* = new Dog(99, 200, 3);
+        d->bark();
+
+        // Cannot access: a->secret (private)
+        // Cannot access: a->health (protected)
+        // Cannot access: a->getSecret() (private)
+
+        delete d;
+        delete a;
+        puts("Test22 done");
+        return 0;
+    }
+}
