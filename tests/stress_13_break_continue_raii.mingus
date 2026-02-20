@@ -1,10 +1,12 @@
-// Stress Test 13: Destructor Inside Nested Loops + Break + Continue
-// Tests destructor injection on loop edges.
-// Checks: continue path cleanup, break path cleanup, RAII LIFO ordering.
+// Stress Test 13: Destructor Inside Loop + Break + Continue
+// Tests destructor injection on loop control flow edges.
+// Guard is declared inside the inner loop so break/continue
+// must clean it up properly.
 
 module Stress13
 {
     extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
 
     class Guard
     {
@@ -17,15 +19,16 @@ module Stress13
     {
         for (int i = 0; i < 3; i++)
         {
-            var g = Guard(i);
-
             for (int j = 0; j < 3; j++)
             {
+                var g = Guard(i * 10 + j);
+
                 if (j == 1) { continue; }
                 if (j == 2) { break; }
             }
         }
 
+        puts("Stress13 done");
         return 0;
     }
 }

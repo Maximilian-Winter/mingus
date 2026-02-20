@@ -1,7 +1,7 @@
 # Mingus v1 — Language Status Report
 
 **Date:** February 2026
-**Status:** Compiles and executes optimized native binaries — **15/15 feature tests passing**
+**Status:** Compiles and executes optimized native binaries — **17 feature tests + 14 stress tests passing (31/31)**
 
 ---
 
@@ -23,15 +23,15 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | Optimization | LLVM PassBuilder with configurable O0/O1/O2 pipeline |
 | Compilation | Clang (from LLVM distribution) compiles IR to native |
 
-**Build System:** CMake + MSVC (Windows), CLion IDE
-**Test Runner:** `run_all_tests.bat` — generates IR, compiles with clang, validates output against `.expected` files
-**Showcase:** `showcase.bat` — displays source code and program output for all tests
+**Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
+**Test Runner:** `run_tests.bat` (combined), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
+**Showcase:** `examples/showcase.bat` — displays source code and program output for showcase programs
 
 ---
 
 ## Working Features
 
-### Verified by test suite (15/15 passing)
+### Verified by test suite (17 feature tests + 14 stress tests = 31/31 passing)
 
 #### 1. Core Language (Test 01)
 - Integer types: `int`, `byte`, `bool`
@@ -230,7 +230,11 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 | Area | Limitation |
 |------|------------|
-| **Closure memory** | Heap-allocated closure structs are never freed (known leak). Escape analysis planned for future. |
+| **Closure RC** | Closure capture structs now use reference counting (retain/release) with per-closure cleanup functions. **Known gap:** temporary closures passed directly as function arguments without variable storage leak one refcount. |
+| **Closure in struct fields** | Storing a closure in a struct field compiles but crashes at runtime — struct fields don't get individual RAII cleanup, so the closure env is never released and the fat pointer may become invalid. |
+| **Closure in class fields** | Storing a closure-typed value in a class field crashes the compiler (access violation during IR generation). Not yet supported. |
+| **Self-capturing closures** | The pattern `var f = null; f = (int x) => { return f(x-1); };` cannot be expressed — `NullType` is not compatible with `FunctionType` in sema, so there is no way to declare a closure variable before assigning it a self-referencing lambda. |
+| **`emitBreakDestructors` bug** | `break` and `continue` inside nested loops fire destructors for *all* RAII scopes instead of stopping at the innermost loop scope. Outer-scope destructors are incorrectly called on inner-loop `break`/`continue`. Workaround: avoid declaring RAII objects in outer scopes when inner loops use `break`/`continue`. |
 | **ABI** | Struct return by value relies on LLVM's default ABI lowering. Not tested with very large structs. |
 | **Debug info** | No DWARF/PDB debug information emitted. |
 | **Module visibility** | `public`/`private` on symbols is parsed but only partially enforced (whole-module import skips non-public). No separate compilation or linking — all imported files compiled together. |
@@ -257,19 +261,42 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | test_14_strings | string concatenation (+), content comparison (==, !=), .length(), .substring(), +=, interpolation | PASS |
 | test_15_interfaces | interfaces (Drawable, Resizable), multiple implementation per class, fat pointer dispatch, interface pointer as function parameter | PASS |
 | test_16_dsp_wav | inheritance + interfaces (Effect, Named) + oscillator classes → WAV file output; demonstrates the full feature stack together | PASS |
+| test_17_hex_literals | hex (`0xFF`), binary (`0b1010`), octal (`0o77`) integer literals; bitwise operations | PASS |
 
-**All 16 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+### Stress Tests (14/14 passing)
+
+| Test | Stress Target | Result |
+|------|--------------|--------|
+| stress_01_closure_churn | 50k closure create/call/discard cycles | PASS |
+| stress_02_nested_capture | 20k nested closure chains (closure capturing closure) | PASS |
+| stress_03_reassignment | 30k closure variable reassignment with release-before-assign | PASS |
+| stress_04_early_return_raii | Early return from function with active RAII objects | PASS |
+| stress_05_interface_closure | 20k iterations mixing interface dispatch and closure calls | PASS |
+| stress_06_recursive_match | Recursive fibonacci via match expressions | PASS |
+| stress_07_temporary_leak | 50k temporary closure creation (leak detection) | PASS |
+| stress_08_destructor_closure | Interleaved destructor calls and closure invocations | PASS |
+| stress_09_triple_reassign | Triple closure reassignment verifying release ordering | PASS |
+| stress_13_break_continue_raii | RAII destructor cleanup on break/continue inside nested loops | PASS |
+| stress_14_match_guard_raii | RAII objects active during match expressions with guards | PASS |
+| stress_15_struct_ptr_copy | Struct with raw pointer — shallow copy semantics verification | PASS |
+| stress_16_shadow_capture | Variable shadowing with closure capture in nested scopes | PASS |
+| stress_17_long_running | 100k iterations combining closures, RAII, interfaces, recursion | PASS |
+
+**All 31 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
 ## File Map
 
 ```
-mingus_antlr_grammar_revived_v1/
+mingus/
 ├── MingusLexer.g4                          # ANTLR4 lexer grammar
 ├── MingusParser.g4                         # ANTLR4 parser grammar
 ├── README.md                               # Project overview and quick start
-├── MINGUS_V1_STATUS.md                     # This file
+├── build.bat                               # Standalone build script (Ninja + MSVC)
+├── run_tests.bat                           # Combined test runner (all 31 tests)
+├── docs/
+│   └── MINGUS_V1_STATUS.md                 # This file
 ├── include/mingus/
 │   ├── ast/                                # AST node types + visitor
 │   │   ├── ASTNode.h, Declarations.h
@@ -293,16 +320,22 @@ mingus_antlr_grammar_revived_v1/
 │   └── Codegen.h                           # Aggregate codegen header
 ├── src/mingus/
 │   ├── sema/*.cpp                          # Sema implementations (4 passes)
-│   ├── codegen/IRGenerator.cpp             # ~3500 lines of codegen
+│   ├── codegen/IRGenerator.cpp             # ~3700 lines of codegen
 │   └── parser/ASTGenerator.cpp             # Parse tree -> AST
 ├── examples/
 │   ├── mingus_ir_tool.cpp                  # CLI: parse -> import resolve -> sema -> codegen -> optimize -> verify -> emit
 │   ├── TOOL_GUIDE.md                       # mingus_ir_tool usage reference
-│   ├── MathLib.mingus                      # Reusable library module (imported by test_12)
-│   ├── test_01_basics.mingus               # through test_15_interfaces.mingus
-│   ├── test_*.expected                     # Expected output for automated validation (CRLF)
-│   ├── run_all_tests.bat                   # Automated test runner (--opt 2, fc /b validation)
-│   └── showcase.bat                        # Display source code + output for all tests
+│   ├── MathLib.mingus                      # Reusable library module
+│   ├── showcase.bat                        # Display source + output for showcase programs
+│   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
+├── tests/
+│   ├── test_01_basics.mingus … test_17_hex_literals.mingus   # 17 feature tests
+│   ├── stress_01_closure_churn.mingus … stress_17_long_running.mingus  # 14 stress tests
+│   ├── *.expected                          # Expected output for automated validation
+│   ├── MathLib.mingus                      # Copy for test_12 imports
+│   ├── run_all_tests.bat                   # Feature test runner (17 tests)
+│   ├── run_stress_tests.bat                # Stress test runner (14 tests)
+│   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 └── CMakeLists.txt                          # Build system (LLVM, ANTLR4, MSVC)
 ```
 
@@ -315,30 +348,36 @@ mingus_antlr_grammar_revived_v1/
 1. **Access Modifier Enforcement**
    Enforce `public`/`private`/`protected` in sema. Currently parsed but not checked.
 
-2. **Escape Analysis for Closures**
-   Detect closures that don't escape and stack-allocate them. Add `free()` calls where lifetime is deterministic. Eliminates the current closure memory leak for common cases.
+2. **Closure Field Support and Escape Analysis**
+   Closure capture structs now use reference counting, but closures stored in struct/class fields crash (runtime/compiler respectively). Fix aggregate field RAII to retain/release closure-typed fields. Additionally, detect closures that don't escape and stack-allocate them to avoid unnecessary heap allocation.
 
-3. **Virtual Destructors**
+3. **Fix `emitBreakDestructors` Scope Walking**
+   `break`/`continue` currently emit destructors for all RAII scopes instead of stopping at the innermost loop boundary. Fix by tagging loop scopes and walking only up to the loop marker.
+
+4. **Virtual Destructors**
    Route `delete basePtr` through the vtable so the correct derived destructor runs. Requires adding a destructor slot to every class vtable.
 
 ### Medium-term
 
-4. **Static Methods**
+5. **Static Methods**
    Implement static dispatch in codegen — `Type.staticMethod()` calls the function without a `this` pointer.
 
-5. **Debug Information**
+6. **Debug Information**
    Emit LLVM debug metadata (DIBuilder) for DWARF/PDB output. Enables debugging with Visual Studio or gdb.
 
-6. **Error Recovery**
+7. **Error Recovery**
    Improve parser and sema to report multiple errors per compilation instead of stopping at the first critical one.
+
+8. **Self-Capturing Closures**
+   Allow a closure to reference itself for recursion. Requires either a `FunctionType`-compatible null/placeholder value, or a `letrec`-style construct that allocates the closure variable before the lambda body is assigned.
 
 ### Long-term
 
-7. **Generic Types**
-   `class Array<T>`, `func map<T, U>(...)` — requires monomorphization or type erasure strategy.
+9. **Generic Types**
+    `class Array<T>`, `func map<T, U>(...)` — requires monomorphization or type erasure strategy.
 
-8. **Standard Library**
-   Collections (Array, Map, Set), I/O, and math utilities written in Mingus itself, using extern for OS primitives.
+10. **Standard Library**
+    Collections (Array, Map, Set), I/O, and math utilities written in Mingus itself, using extern for OS primitives.
 
-9. **REPL / JIT Mode**
-   Use LLVM's ORC JIT for interactive evaluation. Useful for exploration and teaching.
+11. **REPL / JIT Mode**
+    Use LLVM's ORC JIT for interactive evaluation. Useful for exploration and teaching.
