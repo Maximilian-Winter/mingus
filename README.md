@@ -354,6 +354,8 @@ Source (.mingus)
 - **Error recovery is minimal** — the first parse or semantic error often stops compilation. Error messages lack detailed context.
 - **Temporary closure leak** — closures passed directly as function arguments without variable storage leak one refcount.
 - **Reference lifetime** — `[&x]` captures that escape their scope produce dangling references (programmer responsibility, same as C++).
+- **Closures with struct/ref params** — closures that take struct-typed or reference (`int&`) parameters have a calling convention mismatch at the IR level. Pass scalar fields instead, or use a non-closure function.
+- **Duplicate cross-module externs** — two modules declaring the same `extern func` causes linker errors. Declare externs in one module only and `import` them in others.
 
 
 # Detailed Current Status

@@ -29,6 +29,21 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 ---
 
+## Compiler Documentation
+
+Detailed technical documentation of the compiler internals:
+
+| Document | Covers |
+|----------|--------|
+| [GRAMMAR_AND_AST.md](GRAMMAR_AND_AST.md) | Grammar rules, operator precedence, AST node inventory, ASTGenerator mapping |
+| [SEMANTIC_ANALYSIS.md](SEMANTIC_ANALYSIS.md) | All 4 sema passes: SymbolTableBuilder, TypeResolver, TypeChecker, SemanticValidator |
+| [MEMORY_AND_LIFETIMES.md](MEMORY_AND_LIFETIMES.md) | Stack vs heap, RAII system, closure reference counting, string memory, zero-init |
+| [TYPE_SYSTEM_AND_DISPATCH.md](TYPE_SYSTEM_AND_DISPATCH.md) | LLVM type representations, vtables, interface dispatch, fat pointers, operators |
+| [CODEGEN_PATTERNS.md](CODEGEN_PATTERNS.md) | Lambda codegen, pipe operator, match expressions, imports, string interpolation |
+| [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) | All known limitations across grammar, sema, codegen, and runtime |
+
+---
+
 ## Working Features
 
 ### Verified by test suite (30 feature tests + 21 stress tests = 51/51 passing)
@@ -282,6 +297,9 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | **Reference lifetime** | `[&x]` captures that escape their scope produce dangling references. This is the programmer's responsibility, same as C++. |
 | **Self-capture lifetime** | Self-capturing closures use an unretained self-reference to avoid RC cycles. The closure is valid only while the owning variable is in scope. |
 | **Temporary closure leak** | Closures passed directly as function arguments without variable storage leak one refcount. |
+| **Closures with struct params** | Closures that take struct-typed parameters have a calling convention mismatch: the generated lambda expects the struct by value (`%Vec2`), but the fat-pointer call site passes a pointer (`ptr`). Workaround: pass struct fields as separate scalar arguments. |
+| **Closures with ref params** | Closures that take reference parameters (`int&`) have a similar mismatch: the caller passes the integer value instead of a pointer to the alloca. Workaround: use regular parameters and return the result, or use a non-closure function. |
+| **Duplicate cross-module externs** | If two modules both declare the same `extern func` (e.g. `sin`), codegen creates duplicate LLVM declarations that get name-mangled (`sin.3`), causing linker errors. Workaround: declare externs in one module only, import them in others. |
 | **ABI** | Struct return by value relies on LLVM's default ABI lowering. Not tested with very large structs. |
 | **Error recovery** | Parser and sema generally stop at the first error. No multi-error recovery or cascading diagnostics. |
 | **Module visibility** | `public`/`private` on module-level symbols is parsed but only partially enforced (whole-module import skips non-public). No separate compilation or linking — all imported files compiled together. |
