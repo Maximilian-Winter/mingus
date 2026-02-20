@@ -3263,6 +3263,26 @@ void IRGenerator::visit(NewExpression& node) {
                 } else {
                     // No constructor — store vtable pointer manually
                     storeVtablePtr(rawPtr, classSym);
+
+                    // Zero-init closure-typed fields to prevent releasing garbage
+                    // when destructor fires (same safety as constructor prologue)
+                    auto userType = registry_.getUserType(classSym->name,
+                        Type::Kind::Class, classSym);
+                    auto* structTy = getStructType(userType.get());
+                    auto* fatPtrTy = getFatPtrType();
+                    for (auto* field : classSym->fields) {
+                        if (field->type && field->type->is<FunctionType>()) {
+                            int gepIdx = getFieldGEPIndex(classSym, field);
+                            if (gepIdx >= 0) {
+                                auto* fieldPtr = builder_.CreateStructGEP(
+                                    structTy, rawPtr, gepIdx,
+                                    field->name + ".new.init");
+                                builder_.CreateStore(
+                                    llvm::ConstantAggregateZero::get(fatPtrTy),
+                                    fieldPtr);
+                            }
+                        }
+                    }
                 }
             }
         }

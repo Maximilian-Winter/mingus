@@ -54,6 +54,9 @@ call :run_test stress_16_shadow_capture     Stress16_main  "Variable Shadow Capt
 call :run_test stress_17_long_running       Stress17_main  "Long-Running Stability (100k)"
 call :run_test stress_18_break_outer_raii   Stress18_main  "Break + Outer RAII"
 call :run_test stress_19_null_closure       Stress19_main  "Null Closure"
+call :run_test stress_20_reentrant_closure  Stress20_main  "Reentrant Closure Storm (20k)"
+call :run_test stress_21_cyclic_capture     Stress21_main  "Cyclic Capture Probe (10k)"
+call :run_test stress_22_destructor_reentrant Stress22_main "Destructor Reentrancy (10k)"
 
 echo.
 echo ============================================================

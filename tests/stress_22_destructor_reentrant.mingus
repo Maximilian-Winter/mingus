@@ -1,0 +1,45 @@
+// Stress Test 22: Destructor Reentrancy
+// Destructor calls a closure stored in a class field, then the destructor
+// epilogue releases that closure. This reveals lifetime ordering bugs:
+// if the epilogue released the closure BEFORE the user body ran, the call
+// would use-after-free. Correct order: user body first, epilogue second.
+
+module Stress22
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    class Trigger
+    {
+        (int) => int fn;
+
+        constructor((int) => int f)
+        {
+            this.fn = f;
+        }
+
+        destructor
+        {
+            // Call the closure inside the destructor body.
+            // The epilogue releases `fn` AFTER this runs.
+            var r = this.fn(1);
+        }
+    }
+
+    func make(int k) => (int) => int
+    {
+        return (int x) => { return x + k; };
+    }
+
+    func main() => int
+    {
+        for (int i = 0; i < 10000; i++)
+        {
+            var t = new Trigger(make(i % 100));
+            delete t;
+        }
+
+        puts("Stress22 done");
+        return 0;
+    }
+}
