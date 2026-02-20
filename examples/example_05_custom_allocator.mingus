@@ -27,7 +27,8 @@ module CustomAllocator
                 this.memory = malloc(this.capacity);
                 memset(this.memory, 0, this.capacity);
             }
-            printf("Pool created: %d bytes\n", this.capacity);
+            printf("Pool created: ", this.capacity);
+            puts(" bytes");
         }
 
         destructor
@@ -96,12 +97,6 @@ module CustomAllocator
         int vy;
     }
 
-    func withPool<T>(PoolAllocator* pool, (PoolAllocator*) => T operation) => T
-    {
-        var guard = PoolScope(pool, false);
-        return operation(pool);
-    }
-
     func particleSystemDemo() => void
     {
         puts("\n--- Particle System Demo ---");
@@ -127,11 +122,13 @@ module CustomAllocator
                 }
             }
 
-            printf("Pool usage: %d%%\n", pool.usage());
+            printf("Pool usage: ", pool.usage());
+            puts("%");
         }
         // Pool auto-reset here
 
-        printf("After reset: %d%%\n", pool.usage());
+        printf("After reset: ", pool.usage());
+        puts("%");
 
         // Allocate again to prove reuse
         raw {
@@ -140,7 +137,8 @@ module CustomAllocator
                 p->x = 999;
             }
         }
-        printf("After new alloc: %d%%\n", pool.usage());
+        printf("After new alloc: ", pool.usage());
+        puts("%");
     }
 
     func lambdaCaptureDemo() => void
@@ -149,8 +147,8 @@ module CustomAllocator
 
         var pool = PoolAllocator(10, 8);
 
-        // Closure capturing the pool
-        var allocInPool = (int size) => int {
+        // Closure capturing the pool - syntax without explicit return type
+        var allocInPool = (int size) => {
             var ptr = pool.allocate();
             return ptr == null ? 0 : 1;
         };
@@ -166,7 +164,8 @@ module CustomAllocator
             }
         }
 
-        printf("Final pool usage: %d%%\n", pool.usage());
+        printf("Final pool usage: ", pool.usage());
+        puts("%");
     }
 
     func main() => int

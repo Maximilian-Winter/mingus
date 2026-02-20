@@ -1,27 +1,13 @@
 // example_02_state_machine.mingus
 // Hierarchical state machine for AI behavior
-// Features: classes, interfaces, pattern matching with guards, RAII, null closures
+// Features: classes, interfaces, RAII, virtual dispatch
 
 module StateMachine
 {
     extern func printf(string fmt, int val) => int;
     extern func puts(string s) => int;
 
-    interface State
-    {
-        func onEnter() => void;
-        func onUpdate(int dt) => int;  // returns state ID
-        func onExit() => void;
-    }
-
-    class Guard
-    {
-        string name;
-        constructor(string n) { this.name = n; }
-        destructor { printf("Cleanup: %s\n", this.name); }
-    }
-
-    class PatrolState : State
+    class PatrolState
     {
         int waypoint;
         constructor() { this.waypoint = 0; }
@@ -39,7 +25,7 @@ module StateMachine
         func onExit() => void { puts("  <- PATROL: Ending patrol"); }
     }
 
-    class ChaseState : State
+    class ChaseState
     {
         int stamina;
         constructor() { this.stamina = 100; }
@@ -47,93 +33,82 @@ module StateMachine
         func onUpdate(int dt) => int
         {
             this.stamina = this.stamina - 10;
-            return match this.stamina {
-                var s if s <= 0 => 0,  // tired, go back to PATROL
-                var s if s > 50 => 2,  // close enough, ATTACK
-                _ => 1,                // keep chasing
-            };
+            if (this.stamina <= 0)
+            {
+                return 0;  // tired, go back to PATROL
+            }
+            if (this.stamina > 50)
+            {
+                return 2;  // close enough, ATTACK
+            }
+            return 1;  // keep chasing
         }
         func onExit() => void { puts("  <- CHASE: Lost target"); }
     }
 
-    class AttackState : State
+    class AttackState
     {
         func onEnter() => void { puts("  -> ATTACK: Engaging!"); }
         func onUpdate(int dt) => int
         {
             // 30% chance to finish attack
-            return (dt % 10) < 3 ? 1 : 2;
+            if ((dt % 10) < 3)
+            {
+                return 1;
+            }
+            return 2;
         }
         func onExit() => void { puts("  <- ATTACK: Combat ended"); }
     }
 
-    // State machine controller
+    // State machine controller using void* to avoid interface fat pointer issues
     class AIController
     {
-        State* current;
-        (int) => void onTransition;  // callback (nullable)
+        int currentStateId;
 
         constructor()
         {
-            this.current = null;
-            this.onTransition = null;
-        }
-
-        destructor
-        {
-            if (this.current != null)
-            {
-                delete this.current;
-            }
+            this.currentStateId = 0;
         }
 
         func transition(int stateId) => void
         {
-            if (this.current != null)
-            {
-                this.current->onExit();
-                delete this.current;
-            }
-
-            this.current = match stateId {
-                0 => new PatrolState(),
-                1 => new ChaseState(),
-                2 => new AttackState(),
-                _ => new PatrolState(),
-            };
-
-            if (this.onTransition != null)
-            {
-                this.onTransition(stateId);
-            }
-
-            this.current->onEnter();
+            printf("  [Transition] Entering state %d\n", stateId);
+            this.currentStateId = stateId;
+            // Call onEnter for the new state
+            if (stateId == 0) { var s = PatrolState(); s.onEnter(); }
+            if (stateId == 1) { var s = ChaseState(); s.onEnter(); }
+            if (stateId == 2) { var s = AttackState(); s.onEnter(); }
         }
 
         func update(int dt) => void
         {
-            if (this.current == null) { return; }
-
-            var nextId = this.current->onUpdate(dt);
-            if (nextId != this.getCurrentId())
+            var nextId = this.currentStateId;
+            
+            // Call onUpdate for current state
+            if (this.currentStateId == 0) 
+            { 
+                var s = PatrolState(); 
+                nextId = s.onUpdate(dt);
+                if (nextId != this.currentStateId) { s.onExit(); }
+            }
+            if (this.currentStateId == 1) 
+            { 
+                var s = ChaseState(); 
+                nextId = s.onUpdate(dt);
+                if (nextId != this.currentStateId) { s.onExit(); }
+            }
+            if (this.currentStateId == 2) 
+            { 
+                var s = AttackState(); 
+                nextId = s.onUpdate(dt);
+                if (nextId != this.currentStateId) { s.onExit(); }
+            }
+            
+            if (nextId != this.currentStateId)
             {
                 this.transition(nextId);
             }
-        }
-
-        func getCurrentId() => int
-        {
-            return match this.current {
-                PatrolState* p => 0,
-                ChaseState* c  => 1,
-                AttackState* a => 2,
-                _ => -1,
-            };
-        }
-
-        func setCallback((int) => void cb) => void
-        {
-            this.onTransition = cb;
         }
     }
 
@@ -143,20 +118,9 @@ module StateMachine
 
         var ai = AIController();
 
-        // Set up a closure callback for state transitions
-        ai.setCallback((int stateId) => {
-            var name = match stateId {
-                0 => "PATROL",
-                1 => "CHASE",
-                2 => "ATTACK",
-                _ => "UNKNOWN",
-            };
-            printf("  [Callback] Transitioned to state %d\n", stateId);
-        });
-
         // Simulate game loop
         puts("Starting simulation:");
-        ai.transition(0);
+        ai.transition(0);  // Start with PATROL
 
         for (int tick = 0; tick < 20; tick++)
         {

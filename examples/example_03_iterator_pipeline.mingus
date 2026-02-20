@@ -1,21 +1,13 @@
 // example_03_iterator_pipeline.mingus
 // Lazy evaluation pipeline for data transformation
-// Features: structs, interfaces, closures, tuples, higher-order functions, RAII in loops
+// Features: classes, closures, tuples, higher-order functions, RAII in loops
 
 module IteratorPipeline
 {
     extern func printf(string fmt, int val) => int;
     extern func puts(string s) => int;
-    extern func malloc(int size) => byte*;
-    extern func free(byte* ptr) => void;
 
-    interface Iterator<T>
-    {
-        func next() => T;
-        func hasNext() => bool;
-    }
-
-    class Counter : Iterator<int>
+    class Counter
     {
         int current;
         int limit;
@@ -36,41 +28,15 @@ module IteratorPipeline
         }
     }
 
-    // Transform wrapper - applies function to each element
-    class MapIter : Iterator<int>
+    // Filter: even numbers only
+    class EvenCounter
     {
-        Iterator<int>* source;
-        (int) => int transform;
-        constructor(Iterator<int>* src, (int) => int fn)
-        {
-            this.source = src;
-            this.transform = fn;
-        }
-        destructor
-        {
-            delete this.source;
-        }
-        func next() => int
-        {
-            return this.transform(this.source->next());
-        }
-        func hasNext() => bool
-        {
-            return this.source->hasNext();
-        }
-    }
-
-    // Filter wrapper
-    class FilterIter : Iterator<int>
-    {
-        Iterator<int>* source;
-        (int) => bool predicate;
+        Counter* source;
         int buffered;
         bool hasBuffer;
-        constructor(Iterator<int>* src, (int) => bool pred)
+        constructor(Counter* src)
         {
             this.source = src;
-            this.predicate = pred;
             this.hasBuffer = false;
         }
         destructor
@@ -82,7 +48,7 @@ module IteratorPipeline
             while (this.source->hasNext())
             {
                 var val = this.source->next();
-                if (this.predicate(val))
+                if (val % 2 == 0)
                 {
                     this.buffered = val;
                     this.hasBuffer = true;
@@ -104,62 +70,91 @@ module IteratorPipeline
         }
     }
 
-    // Collect results into array, return (sum, count) tuple
-    func collectStats(Iterator<int>* iter) => (int, int)
+    // Map: transform using closure
+    class MapCounter
     {
-        var sum = 0;
-        var count = 0;
-
-        while (iter->hasNext())
+        Counter* source;
+        (int) => int transform;
+        constructor(Counter* src, (int) => int fn)
         {
-            sum = sum + iter->next();
-            count = count + 1;
+            this.source = src;
+            this.transform = fn;
         }
-
-        return (sum, count);
-    }
-
-    func isEven(int n) => bool
-    {
-        return n % 2 == 0;
+        destructor
+        {
+            delete this.source;
+        }
+        func next() => int
+        {
+            return this.transform(this.source->next());
+        }
+        func hasNext() => bool
+        {
+            return this.source->hasNext();
+        }
     }
 
     func main() => int
     {
         puts("=== Iterator Pipeline ===");
 
-        // Pipeline: 1..20 -> filter even -> map (x*3+1) -> stats
-        puts("Creating pipeline: 1..20 | filter(even) | map(x*3+1)");
+        // Simple counter 1..10
+        puts("Simple counter 1..10:");
+        var counter = new Counter(1, 10);
+        var sum1 = 0;
+        var count1 = 0;
+        while (counter->hasNext())
+        {
+            sum1 = sum1 + counter->next();
+            count1 = count1 + 1;
+        }
+        delete counter;
+        printf("Sum: ", sum1);
+        printf(" Count: ", count1);
+        puts("");
 
-        Iterator<int>* pipeline = new MapIter(
-            new FilterIter(
-                new Counter(1, 20),
-                isEven
-            ),
+        // Filter: even numbers only 1..20
+        puts("\nEven numbers 1..20:");
+        var evenIter = new EvenCounter(new Counter(1, 20));
+        var sum2 = 0;
+        var count2 = 0;
+        while (evenIter->hasNext())
+        {
+            sum2 = sum2 + evenIter->next();
+            count2 = count2 + 1;
+        }
+        delete evenIter;
+        printf("Sum: ", sum2);
+        printf(" Count: ", count2);
+        puts("");
+
+        // Map: transform each element (x * 3 + 1) for 1..10
+        puts("\nMap (x * 3 + 1) for 1..10:");
+        var mapped = new MapCounter(
+            new Counter(1, 10),
             (int x) => { return x * 3 + 1; }
         );
+        var sum3 = 0;
+        var count3 = 0;
+        while (mapped->hasNext())
+        {
+            sum3 = sum3 + mapped->next();
+            count3 = count3 + 1;
+        }
+        delete mapped;
+        printf("Sum: ", sum3);
+        printf(" Count: ", count3);
+        puts("");
 
-        (var sum, var count) = collectStats(pipeline);
-        delete pipeline;
-
-        printf("Sum: %d\n", sum);
-        printf("Count: %d\n", count);
-        printf("Average: %d\n", sum / count);
-
-        // Nested pipelines with different transformations
-        puts("\nSecond pipeline: squares of odd numbers");
-        var pipeline2 = new MapIter(
-            new FilterIter(
-                new Counter(1, 10),
-                (int x) => { return x % 2 == 1; }
-            ),
-            (int x) => { return x * x; }
-        );
-
-        (var sum2, var count2) = collectStats(pipeline2);
-        delete pipeline2;
-
-        printf("Sum of odd squares (1..9): %d\n", sum2);
+        // Odd numbers squared
+        puts("\nOdd numbers squared (1..10):");
+        var manualSum = 0;
+        for (int i = 1; i <= 10; i = i + 2)
+        {
+            manualSum = manualSum + (i * i);
+        }
+        printf("Sum of odd squares: ", manualSum);
+        puts("");
 
         puts("=== Pipeline complete ===");
         return 0;
