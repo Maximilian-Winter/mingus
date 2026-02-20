@@ -218,8 +218,8 @@ bool TypeRegistry::isCompatible(const Type* from, const Type* to) const {
     // Numeric widening
     if (isNumericWidening(from, to)) return true;
 
-    // Null is compatible with any pointer type
-    if (from->is<NullType>() && to->is<PointerType>()) return true;
+    // Null is compatible with any pointer type or function type (nullable callbacks)
+    if (from->is<NullType>() && (to->is<PointerType>() || to->is<FunctionType>())) return true;
 
     // Enum is compatible with its underlying type (both directions)
     if (from->is<UserType>() && from->as<UserType>()->underlyingKind == Type::Kind::Enum) {

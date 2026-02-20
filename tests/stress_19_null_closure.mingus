@@ -1,0 +1,43 @@
+// Stress Test 19: Null Closure / Nullable Callbacks
+// Tests that FunctionType variables can be initialized with null,
+// reassigned to a real closure, and called normally.
+
+module Stress19
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    func makeDoubler() => (int) => int
+    {
+        return (int x) => { return x * 2; };
+    }
+
+    func makeAdder(int offset) => (int) => int
+    {
+        return (int x) => { return x + offset; };
+    }
+
+    func main() => int
+    {
+        (int) => int f = null;
+
+        // Reassign to a real closure
+        f = makeDoubler();
+        var r1 = f(21);
+        printf("r1=%d\n", r1);
+
+        // Reassign again (release old, store new)
+        f = makeAdder(100);
+        var r2 = f(5);
+        printf("r2=%d\n", r2);
+
+        // Null it out again and assign one more time
+        f = null;
+        f = makeAdder(7);
+        var r3 = f(10);
+        printf("r3=%d\n", r3);
+
+        puts("Stress19 done");
+        return 0;
+    }
+}

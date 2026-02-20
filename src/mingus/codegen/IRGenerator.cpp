@@ -868,12 +868,13 @@ void IRGenerator::emitReturnDestructors() {
 }
 
 void IRGenerator::emitBreakDestructors() {
-    // Emit destructors for scopes between current and loop scope (exclusive)
-    // The outermost scope in the stack that contains the loop is NOT destroyed
-    for (auto scopeIt = raiiScopeStack_.rbegin();
-         scopeIt != raiiScopeStack_.rend(); ++scopeIt) {
-        for (auto it = scopeIt->destructibles.rbegin();
-             it != scopeIt->destructibles.rend(); ++it) {
+    // Emit destructors for scopes created inside the loop body only.
+    // Walk from innermost scope down to loopRAIIScopeDepth_ (exclusive),
+    // which is the stack depth recorded when the loop was entered.
+    for (size_t i = raiiScopeStack_.size(); i > loopRAIIScopeDepth_; --i) {
+        auto& scope = raiiScopeStack_[i - 1];
+        for (auto it = scope.destructibles.rbegin();
+             it != scope.destructibles.rend(); ++it) {
             if (it->second) {
                 builder_.CreateCall(it->second, {it->first});
             }
@@ -1783,13 +1784,16 @@ void IRGenerator::visit(ForStatement& node) {
     builder_.SetInsertPoint(bodyBB);
     auto* prevExitBlock = loopExitBlock_;
     auto* prevIterBlock = loopIterBlock_;
+    auto prevLoopRAIIDepth = loopRAIIScopeDepth_;
     loopExitBlock_ = exitBB;
     loopIterBlock_ = iterBB;
+    loopRAIIScopeDepth_ = raiiScopeStack_.size();
 
     node.body->accept(*this);
 
     loopExitBlock_ = prevExitBlock;
     loopIterBlock_ = prevIterBlock;
+    loopRAIIScopeDepth_ = prevLoopRAIIDepth;
 
     if (!builder_.GetInsertBlock()->getTerminator())
         builder_.CreateBr(iterBB);
@@ -1829,13 +1833,16 @@ void IRGenerator::visit(WhileStatement& node) {
     builder_.SetInsertPoint(bodyBB);
     auto* prevExitBlock = loopExitBlock_;
     auto* prevIterBlock = loopIterBlock_;
+    auto prevLoopRAIIDepth = loopRAIIScopeDepth_;
     loopExitBlock_ = exitBB;
     loopIterBlock_ = condBB;
+    loopRAIIScopeDepth_ = raiiScopeStack_.size();
 
     node.body->accept(*this);
 
     loopExitBlock_ = prevExitBlock;
     loopIterBlock_ = prevIterBlock;
+    loopRAIIScopeDepth_ = prevLoopRAIIDepth;
 
     if (!builder_.GetInsertBlock()->getTerminator())
         builder_.CreateBr(condBB);
@@ -1948,6 +1955,12 @@ void IRGenerator::visit(VariableDeclaration& node) {
                     }
                 }
             }
+            // Convert null → zero fat pointer for FunctionType variables
+            if (varSym->type && varSym->type->is<FunctionType>() &&
+                llvm::isa<llvm::ConstantPointerNull>(lastValue_)) {
+                lastValue_ = llvm::ConstantAggregateZero::get(getFatPtrType());
+            }
+
             builder_.CreateStore(lastValue_, alloca);
         }
     }
@@ -1967,7 +1980,8 @@ void IRGenerator::visit(VariableDeclaration& node) {
     }
 
     // Register RAII for closure-typed variables (release envPtr at scope exit)
-    if (varSym->type && varSym->type->is<FunctionType>() && node.initializer) {
+    // No initializer check — null-initialized closures also need RAII cleanup
+    if (varSym->type && varSym->type->is<FunctionType>()) {
         registerRAII(alloca, getOrCreateClosureReleaseWrapper());
     }
 }
@@ -2205,8 +2219,21 @@ void IRGenerator::visit(MemberAccessExpression& node) {
         return;
     }
 
-    // Check if this is a method access (don't load — will be handled by CallExpression)
+    // Check if this is a method access vs a closure-typed field
     if (node.resolvedType && node.resolvedType->is<FunctionType>()) {
+        // Distinguish closure fields (VariableSymbol) from methods (FunctionSymbol).
+        // Closure fields must be loaded as fat pointer values; methods pass through as GEP.
+        const Type* objType = node.object->resolvedType.get();
+        if (auto* pt = objType->as<PointerType>()) objType = pt->baseType.get();
+        if (auto* ut = objType->as<UserType>()) {
+            auto* typeSym = static_cast<TypeSymbol*>(ut->symbol);
+            auto* fieldSym = typeSym->findField(node.memberName);
+            if (fieldSym && fieldSym->type && fieldSym->type->is<FunctionType>()) {
+                // Closure-typed field — load the fat pointer value
+                lastValue_ = builder_.CreateLoad(getFatPtrType(), fieldPtr, node.memberName);
+                return;
+            }
+        }
         // Method reference — just pass through, CallExpression handles it
         lastValue_ = fieldPtr;
         return;
@@ -2566,6 +2593,12 @@ void IRGenerator::visit(AssignmentExpression& node) {
         // Simple assignment
         node.value->accept(*this);
         if (lastValue_) {
+            // Convert null → zero fat pointer for FunctionType assignments
+            if (node.target->resolvedType && node.target->resolvedType->is<FunctionType>() &&
+                llvm::isa<llvm::ConstantPointerNull>(lastValue_)) {
+                lastValue_ = llvm::ConstantAggregateZero::get(getFatPtrType());
+            }
+
             builder_.CreateStore(lastValue_, targetPtr);
         }
     } else {

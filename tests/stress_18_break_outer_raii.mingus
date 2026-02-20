@@ -1,0 +1,31 @@
+// Stress Test 18: Break/Continue with Outer-Scope RAII
+// Tests that break/continue inside a loop only destroy RAII objects
+// declared inside the loop, NOT objects in outer scopes.
+// Before fix: outer Guard was double-destroyed (during break + at scope exit).
+
+module Stress18
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    class Guard
+    {
+        int id;
+        constructor(int i) { this.id = i; }
+        destructor { printf("drop %d\n", this.id); }
+    }
+
+    func main() => int
+    {
+        var outer = Guard(999);
+
+        for (int i = 0; i < 3; i++)
+        {
+            var inner = Guard(i);
+            if (i == 1) { break; }
+        }
+
+        puts("after loop");
+        return 0;
+    }
+}

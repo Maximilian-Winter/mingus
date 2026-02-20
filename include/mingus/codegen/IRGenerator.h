@@ -179,6 +179,7 @@ private:
     //==========================================================================
     llvm::BasicBlock* loopExitBlock_;
     llvm::BasicBlock* loopIterBlock_;
+    size_t loopRAIIScopeDepth_ = 0;  // RAII stack depth at loop entry
 
     //==========================================================================
     // RAII scope stack

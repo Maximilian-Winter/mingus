@@ -1,0 +1,4 @@
+drop 0
+drop 1
+after loop
+drop 999
