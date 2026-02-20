@@ -7,7 +7,7 @@ module Test10
     // Returns a closure that multiplies by 'factor'
     func makeScaler(double factor) => (double) => double
     {
-        return (double x) => { return x * factor; };
+        return [=](double x) => { return x * factor; };
     }
 
     // Higher-order function that applies f to x
@@ -25,7 +25,7 @@ module Test10
     // Returns a function that computes f(g(x))
     func compose((double) => double f, (double) => double g) => (double) => double
     {
-        return (double x) => { return f(g(x)); };
+        return [=](double x) => { return f(g(x)); };
     }
 
     func main() => int

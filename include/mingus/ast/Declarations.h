@@ -42,12 +42,14 @@ public:
     std::string name;
     NodePtr<TypeNode> type;
     NodePtr<ExpressionNode> defaultValue;  // nullptr if no default
+    bool isReference = false;              // true for int& x reference parameters
 
-    ParameterNode(const std::string& n, 
+    ParameterNode(const std::string& n,
                   NodePtr<TypeNode> t,
                   NodePtr<ExpressionNode> defVal = nullptr,
+                  bool isRef = false,
                   const SourceLocation& loc = SourceLocation())
-        : ASTNode(loc), name(n), type(t), defaultValue(defVal) {}
+        : ASTNode(loc), name(n), type(t), defaultValue(defVal), isReference(isRef) {}
 
     bool hasDefaultValue() const { return defaultValue != nullptr; }
 

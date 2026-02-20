@@ -15,7 +15,7 @@ module Stress10
 
     func make(int k) => (int) => int
     {
-        return (int x) => { return x + k; };
+        return [=](int x) => { return x + k; };
     }
 
     func main() => int

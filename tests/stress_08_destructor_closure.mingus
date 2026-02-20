@@ -18,7 +18,7 @@ module Stress08
     func make(int x) => (int) => int
     {
         var b = Box(x);
-        return (int y) => { return b.value + y; };
+        return [=](int y) => { return b.value + y; };
     }
 
     func main() => int

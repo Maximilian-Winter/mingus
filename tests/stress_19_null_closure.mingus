@@ -9,12 +9,12 @@ module Stress19
 
     func makeDoubler() => (int) => int
     {
-        return (int x) => { return x * 2; };
+        return [](int x) => { return x * 2; };
     }
 
     func makeAdder(int offset) => (int) => int
     {
-        return (int x) => { return x + offset; };
+        return [=](int x) => { return x + offset; };
     }
 
     func main() => int

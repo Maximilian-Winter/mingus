@@ -15,7 +15,7 @@ module Stress20
             return f(1);
         }
 
-        var next = (int x) => {
+        var next = [=](int x) => {
             return f(x) + 1;
         };
 
@@ -24,7 +24,7 @@ module Stress20
 
     func make(int base) => (int) => int
     {
-        return (int x) => { return x + base; };
+        return [=](int x) => { return x + base; };
     }
 
     func main() => int

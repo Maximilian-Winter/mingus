@@ -42,7 +42,8 @@ public:
         Enum,
         Interface,
         Error,
-        Null
+        Null,
+        Reference
     };
 
     virtual ~Type() = default;
@@ -426,6 +427,28 @@ public:
 
     bool equals(const Type& other) const override {
         return other.is<NullType>() || other.is<PointerType>();
+    }
+};
+
+//================================================================================
+// ReferenceType — baseType& (only valid in function parameters and captures)
+// Maps to ptr in LLVM IR. Semantically: transparent alias to original alloca.
+//================================================================================
+class ReferenceType : public Type {
+public:
+    TypePtr<Type> baseType;
+
+    explicit ReferenceType(TypePtr<Type> base) : baseType(base) {}
+
+    Kind getKind() const override { return Kind::Reference; }
+
+    std::string toString() const override {
+        return baseType->toString() + "&";
+    }
+
+    bool equals(const Type& other) const override {
+        if (!other.is<ReferenceType>()) return false;
+        return baseType->equals(*other.as<ReferenceType>()->baseType);
     }
 };
 

@@ -36,6 +36,10 @@ TypePtr<PrimitiveType> TypeRegistry::getPrimitive(PrimitiveType::PrimitiveKind k
     return INT_; // unreachable
 }
 
+TypePtr<ReferenceType> TypeRegistry::getReferenceTo(TypePtr<Type> base) {
+    return std::make_shared<ReferenceType>(base);
+}
+
 TypePtr<PointerType> TypeRegistry::getPointerTo(TypePtr<Type> base) {
     auto* key = base.get();
     auto it = pointerCache_.find(key);
@@ -272,6 +276,16 @@ bool TypeRegistry::isCompatible(const Type* from, const Type* to) const {
 
     // Inheritance: Derived value compatible with Base value
     if (isSubclassOf(from, to)) return true;
+
+    // ReferenceType compatibility
+    if (from->is<ReferenceType>() && to->is<ReferenceType>()) {
+        return isCompatible(from->as<ReferenceType>()->baseType.get(),
+                           to->as<ReferenceType>()->baseType.get());
+    }
+    // T is compatible with T& (implicit address-of at call site)
+    if (to->is<ReferenceType>()) {
+        return isCompatible(from, to->as<ReferenceType>()->baseType.get());
+    }
 
     return false;
 }

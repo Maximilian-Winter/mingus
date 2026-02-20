@@ -8,9 +8,9 @@ module Stress02
 
     func outer(int a) => (int) => int
     {
-        var inner = (int b) => { return a + b; };
+        var inner = [=](int b) => { return a + b; };
 
-        return (int c) => {
+        return [=](int c) => {
             return inner(c) * 2;
         };
     }

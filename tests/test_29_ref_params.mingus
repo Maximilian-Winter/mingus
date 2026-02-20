@@ -1,0 +1,77 @@
+// Test 29: Reference Parameters
+// Verifies func swap(int& a, int& b) => void style reference parameters.
+// Callee receives a pointer to the caller's variable and can modify it.
+
+module Test29
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    // Classic swap using reference parameters
+    func swap(int& a, int& b) => void
+    {
+        var tmp = a;
+        a = b;
+        b = tmp;
+    }
+
+    // Increment through reference
+    func increment(int& x) => void
+    {
+        x = x + 1;
+    }
+
+    // Add to accumulator through reference, return old value
+    func addAndReturn(int& accum, int value) => int
+    {
+        var old = accum;
+        accum = accum + value;
+        return old;
+    }
+
+    // Multiple reference parameters
+    func divmod(int a, int b, int& quotient, int& remainder) => void
+    {
+        quotient = a / b;
+        remainder = a - (quotient * b);
+    }
+
+    func main() => int
+    {
+        puts("=== Test 29: Reference Parameters ===");
+
+        // Test swap
+        var x = 10;
+        var y = 20;
+        swap(x, y);
+        printf("swap: x=%d\n", x);
+        printf("swap: y=%d\n", y);
+
+        // Test increment
+        var counter = 0;
+        increment(counter);
+        increment(counter);
+        increment(counter);
+        printf("increment 3x: %d\n", counter);
+
+        // Test mixed ref and value params
+        var total = 0;
+        var old1 = addAndReturn(total, 10);
+        var old2 = addAndReturn(total, 20);
+        var old3 = addAndReturn(total, 30);
+        printf("total: %d\n", total);
+        printf("old1: %d\n", old1);
+        printf("old2: %d\n", old2);
+        printf("old3: %d\n", old3);
+
+        // Test multiple output parameters
+        var q = 0;
+        var r = 0;
+        divmod(17, 5, q, r);
+        printf("17/5 quotient: %d\n", q);
+        printf("17/5 remainder: %d\n", r);
+
+        puts("=== Test 29 complete ===");
+        return 0;
+    }
+}

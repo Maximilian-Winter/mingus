@@ -246,7 +246,8 @@ private:
     llvm::Function* generateClosureCleanupFn(
         llvm::StructType* closureTy,
         const std::vector<sema::Symbol*>& capturedVars,
-        int headerOffset);
+        int headerOffset,
+        const std::vector<ast::CaptureMode>* captureModes = nullptr);
 
     //==========================================================================
     // Lambda counter

@@ -325,6 +325,8 @@ std::any ASTGenerator::visitTypeIdentifier(MingusParser::TypeIdentifierContext* 
             baseType = std::make_shared<ArrayTypeNode>(baseType, size, loc);
         } else if (modifier->pointerLevel()) {
             baseType = std::make_shared<PointerTypeNode>(baseType, loc);
+        } else if (modifier->referenceLevel()) {
+            baseType = std::make_shared<PointerTypeNode>(baseType, loc, /*isRef=*/true);
         }
     }
     
@@ -772,17 +774,26 @@ std::any ASTGenerator::visitExternFunctionDeclaration(MingusParser::ExternFuncti
 
 std::any ASTGenerator::visitParameter(MingusParser::ParameterContext* ctx) {
     auto loc = getSourceLocation(ctx);
-    
+
+    // Check for reference modifier (&) in the type modifiers
+    bool isRef = false;
+    for (auto* modifier : ctx->typeIdentifier()->typeModifier()) {
+        if (modifier->referenceLevel()) {
+            isRef = true;
+            break;
+        }
+    }
+
     auto type = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
     std::string name = ctx->Identifier()->getText();
-    
+
     NodePtr<ExpressionNode> defaultValue;
     if (ctx->AssignOperator() && ctx->expression()) {
         defaultValue = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
     }
-    
+
     return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ParameterNode>(name, type, defaultValue, loc)
+        std::make_shared<ParameterNode>(name, type, defaultValue, isRef, loc)
     );
 }
 
@@ -1210,31 +1221,63 @@ std::any ASTGenerator::visitAssignment(MingusParser::AssignmentContext* ctx) {
 
 std::any ASTGenerator::visitLambdaExpression(MingusParser::LambdaExpressionContext* ctx) {
     auto loc = getSourceLocation(ctx);
-    
+
+    // ── Parse capture list ──────────────────────────────────────────
+    CaptureDefault capDefault = CaptureDefault::None;
+    std::vector<CaptureItem> capItems;
+
+    if (ctx->captureList()) {
+        auto* capCtx = ctx->captureList();
+
+        // Check for default capture mode: [=] or [&]
+        if (capCtx->captureDefault()) {
+            auto* defCtx = capCtx->captureDefault();
+            if (defCtx->AssignOperator()) {
+                capDefault = CaptureDefault::AllByValue;
+            } else if (defCtx->SingleAndOperator()) {
+                capDefault = CaptureDefault::AllByReference;
+            }
+        }
+
+        // Check for explicit capture items: [x, &y, z]
+        for (auto* itemCtx : capCtx->captureItem()) {
+            std::string name = itemCtx->Identifier()->getText();
+            CaptureMode mode = itemCtx->SingleAndOperator()
+                ? CaptureMode::ByReference
+                : CaptureMode::ByValue;
+            capItems.emplace_back(name, mode);
+        }
+    }
+
+    // ── Parse parameters ────────────────────────────────────────────
     NodeList<ParameterNode> parameters;
     if (ctx->lambdaParameterList()) {
         for (auto* paramCtx : ctx->lambdaParameterList()->lambdaParameter()) {
             std::string name = paramCtx->Identifier()->getText();
             NodePtr<TypeNode> type;
-            
+
             if (paramCtx->typeIdentifier()) {
                 type = anyToNode<TypeNode>(visitTypeIdentifier(paramCtx->typeIdentifier()));
             }
-            
-            parameters.push_back(std::make_shared<ParameterNode>(name, type, nullptr, getSourceLocation(paramCtx)));
+
+            parameters.push_back(std::make_shared<ParameterNode>(name, type, nullptr, false, getSourceLocation(paramCtx)));
         }
     }
-    
+
+    // ── Parse body ──────────────────────────────────────────────────
     NodePtr<ASTNode> body;
     if (ctx->block()) {
         body = anyToNode<BlockStatement>(visitBlock(ctx->block()));
     } else if (ctx->expression()) {
         body = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<LambdaExpression>(parameters, body, loc)
-    );
+
+    // ── Build LambdaExpression node ─────────────────────────────────
+    auto lambda = std::make_shared<LambdaExpression>(parameters, body, loc);
+    lambda->captureDefault = capDefault;
+    lambda->captureItems = std::move(capItems);
+
+    return std::static_pointer_cast<ASTNode>(lambda);
 }
 
 std::any ASTGenerator::visitPipe(MingusParser::PipeContext* ctx) {

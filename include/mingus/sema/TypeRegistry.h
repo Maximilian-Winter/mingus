@@ -45,6 +45,7 @@ public:
                                           TypePtr<Type> returnType);
     TypePtr<UserType> getUserType(const std::string& name, Type::Kind kind,
                                   void* symbol);
+    TypePtr<ReferenceType> getReferenceTo(TypePtr<Type> base);
 
     // Resolve a PrimitiveKind to its singleton
     TypePtr<PrimitiveType> getPrimitive(PrimitiveType::PrimitiveKind kind) const;

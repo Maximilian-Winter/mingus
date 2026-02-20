@@ -1,0 +1,13 @@
+=== Test 28: Explicit Captures ===
+[] no capture: 42
+[=] by value: 15
+[=] value result: 11
+[=] counter unchanged: 0
+[x] explicit value: 21
+[&x] ref capture total: 60
+[=, &x] mixed accum: 16
+[&, x] a modified: 150
+[&, x] result: 350
+[&] accumulated sum: 10
+nested capture: 14
+=== Test 28 complete ===

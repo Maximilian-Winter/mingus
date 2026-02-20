@@ -13,7 +13,9 @@
     Constructors & Destructors      constructor(), destructor
     Functions                       func name(params) => ReturnType { }
     Operator Overloading            func operator+(T other) => T { }
-    Lambdas & Closures              (int x) => { return x * 2; }
+    Lambdas & Closures              [=](int x) => { return x * 2; }
+    Explicit Capture Lists           [x, &y](int z) => x + y + z
+    Reference Parameters             func swap(int& a, int& b) => void
     First-class Function Types      (int, int) => double
     Type Inference                  var x = 42;
     Tuples & Destructuring          (int, string), (var a, var b) = foo()
@@ -501,8 +503,26 @@ assignmentOperator
     ;
 
 lambdaExpression
-    : OpeningRoundBracket lambdaParameterList? ClosingRoundBracket ArrowOperator
+    : captureList
+      OpeningRoundBracket lambdaParameterList? ClosingRoundBracket ArrowOperator
       ( block | expression )
+    ;
+
+captureList
+    : SquareBracketLeft SquareBracketRight
+    | SquareBracketLeft captureDefault SquareBracketRight
+    | SquareBracketLeft captureDefault ( CommaSeparator captureItem )+ SquareBracketRight
+    | SquareBracketLeft captureItem ( CommaSeparator captureItem )* SquareBracketRight
+    ;
+
+captureDefault
+    : AssignOperator
+    | SingleAndOperator
+    ;
+
+captureItem
+    : SingleAndOperator Identifier
+    | Identifier
     ;
 
 lambdaParameterList
@@ -690,6 +710,11 @@ tupleType
 typeModifier
     : arrayDimension
     | pointerLevel
+    | referenceLevel
+    ;
+
+referenceLevel
+    : SingleAndOperator
     ;
 
 arrayDimension

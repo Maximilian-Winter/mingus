@@ -1,0 +1,10 @@
+=== Test 30: Capture Write-Back ===
+counter after 5 calls: 5
+accumulated sum: 60
+min: 10
+max: 90
+scaled total: 20
+[&] a: 11
+[&] b: 12
+count through HOF: 3
+=== Test 30 complete ===

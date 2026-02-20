@@ -74,10 +74,12 @@ public:
 class PointerTypeNode : public TypeNode {
 public:
     NodePtr<TypeNode> baseType;
+    bool isReference = false;  // true when this came from & instead of *
 
     explicit PointerTypeNode(NodePtr<TypeNode> base,
-                             const SourceLocation& loc = SourceLocation())
-        : TypeNode(loc), baseType(base) {}
+                             const SourceLocation& loc = SourceLocation(),
+                             bool isRef = false)
+        : TypeNode(loc), baseType(base), isReference(isRef) {}
 
     void accept(ASTVisitor& visitor) override;
     void accept(ConstASTVisitor& visitor) const override;

@@ -8,7 +8,7 @@ module Stress01
 
     func makeAdder(int base) => (int) => int
     {
-        return (int x) => { return x + base; };
+        return [=](int x) => { return x + base; };
     }
 
     func main() => int

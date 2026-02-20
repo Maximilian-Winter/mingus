@@ -1,5 +1,5 @@
 
-// Generated from ./antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
+// Generated from antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -162,6 +162,12 @@ public:
 
     virtual std::any visitLambdaExpression(MingusParser::LambdaExpressionContext *context) = 0;
 
+    virtual std::any visitCaptureList(MingusParser::CaptureListContext *context) = 0;
+
+    virtual std::any visitCaptureDefault(MingusParser::CaptureDefaultContext *context) = 0;
+
+    virtual std::any visitCaptureItem(MingusParser::CaptureItemContext *context) = 0;
+
     virtual std::any visitLambdaParameterList(MingusParser::LambdaParameterListContext *context) = 0;
 
     virtual std::any visitLambdaParameter(MingusParser::LambdaParameterContext *context) = 0;
@@ -225,6 +231,8 @@ public:
     virtual std::any visitTupleType(MingusParser::TupleTypeContext *context) = 0;
 
     virtual std::any visitTypeModifier(MingusParser::TypeModifierContext *context) = 0;
+
+    virtual std::any visitReferenceLevel(MingusParser::ReferenceLevelContext *context) = 0;
 
     virtual std::any visitArrayDimension(MingusParser::ArrayDimensionContext *context) = 0;
 

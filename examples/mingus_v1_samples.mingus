@@ -393,13 +393,13 @@ module Functional
     // Function that returns a function
     func makeScaler(double factor) => (double) => double
     {
-        return (double x) => { return x * factor; };
+        return [=](double x) => { return x * factor; };
     }
 
     // Composing functions
     func compose((double) => double f, (double) => double g) => (double) => double
     {
-        return (double x) => { return f(g(x)); };
+        return [=](double x) => { return f(g(x)); };
     }
 
     // Array transformation using function parameter
@@ -607,7 +607,7 @@ module Collections
         var fifth = arr[4];
 
         // First-class function + pipe
-        var doubled = arr.map((int x) => { return x * 2; });
+        var doubled = arr.map([](int x) => { return x * 2; });
 
         // Destructor cleans up both arrays at end of scope
     }

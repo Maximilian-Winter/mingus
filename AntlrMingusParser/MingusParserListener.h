@@ -1,5 +1,5 @@
 
-// Generated from MingusParser.g4 by ANTLR 4.13.2
+// Generated from antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -66,6 +66,15 @@ public:
 
   virtual void enterInheritance(MingusParser::InheritanceContext *ctx) = 0;
   virtual void exitInheritance(MingusParser::InheritanceContext *ctx) = 0;
+
+  virtual void enterInterfaceDeclaration(MingusParser::InterfaceDeclarationContext *ctx) = 0;
+  virtual void exitInterfaceDeclaration(MingusParser::InterfaceDeclarationContext *ctx) = 0;
+
+  virtual void enterInterfaceBlock(MingusParser::InterfaceBlockContext *ctx) = 0;
+  virtual void exitInterfaceBlock(MingusParser::InterfaceBlockContext *ctx) = 0;
+
+  virtual void enterInterfaceMember(MingusParser::InterfaceMemberContext *ctx) = 0;
+  virtual void exitInterfaceMember(MingusParser::InterfaceMemberContext *ctx) = 0;
 
   virtual void enterStructDeclaration(MingusParser::StructDeclarationContext *ctx) = 0;
   virtual void exitStructDeclaration(MingusParser::StructDeclarationContext *ctx) = 0;
@@ -220,6 +229,15 @@ public:
   virtual void enterLambdaExpression(MingusParser::LambdaExpressionContext *ctx) = 0;
   virtual void exitLambdaExpression(MingusParser::LambdaExpressionContext *ctx) = 0;
 
+  virtual void enterCaptureList(MingusParser::CaptureListContext *ctx) = 0;
+  virtual void exitCaptureList(MingusParser::CaptureListContext *ctx) = 0;
+
+  virtual void enterCaptureDefault(MingusParser::CaptureDefaultContext *ctx) = 0;
+  virtual void exitCaptureDefault(MingusParser::CaptureDefaultContext *ctx) = 0;
+
+  virtual void enterCaptureItem(MingusParser::CaptureItemContext *ctx) = 0;
+  virtual void exitCaptureItem(MingusParser::CaptureItemContext *ctx) = 0;
+
   virtual void enterLambdaParameterList(MingusParser::LambdaParameterListContext *ctx) = 0;
   virtual void exitLambdaParameterList(MingusParser::LambdaParameterListContext *ctx) = 0;
 
@@ -315,6 +333,9 @@ public:
 
   virtual void enterTypeModifier(MingusParser::TypeModifierContext *ctx) = 0;
   virtual void exitTypeModifier(MingusParser::TypeModifierContext *ctx) = 0;
+
+  virtual void enterReferenceLevel(MingusParser::ReferenceLevelContext *ctx) = 0;
+  virtual void exitReferenceLevel(MingusParser::ReferenceLevelContext *ctx) = 0;
 
   virtual void enterArrayDimension(MingusParser::ArrayDimensionContext *ctx) = 0;
   virtual void exitArrayDimension(MingusParser::ArrayDimensionContext *ctx) = 0;

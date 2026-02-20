@@ -555,13 +555,41 @@ public:
 };
 
 //================================================================================
-// LambdaExpression - (params) => body or (params) { body }
+// Capture list types for C++-style lambda capture specifications
+//================================================================================
+enum class CaptureMode {
+    ByValue,        // [x]  — copy the value into the env struct
+    ByReference     // [&x] — store pointer to original alloca in env struct
+};
+
+enum class CaptureDefault {
+    None,           // [] or explicit list only — no auto-capture
+    AllByValue,     // [=] — capture all referenced outer vars by value
+    AllByReference  // [&] — capture all referenced outer vars by reference
+};
+
+struct CaptureItem {
+    std::string name;
+    CaptureMode mode;
+    CaptureItem(const std::string& n, CaptureMode m) : name(n), mode(m) {}
+};
+
+//================================================================================
+// LambdaExpression - [captures](params) => body
 //================================================================================
 class LambdaExpression : public ExpressionNode {
 public:
     NodeList<ParameterNode> parameters;
     NodePtr<ASTNode> body;  // ExpressionNode or BlockStatement
-    std::vector<mingus::sema::Symbol*> capturedVariables;  // Filled during semantic analysis
+
+    // === Explicit capture list (parsed from source) ===
+    CaptureDefault captureDefault = CaptureDefault::None;
+    std::vector<CaptureItem> captureItems;  // Named captures: [x, &y, z]
+
+    // === Resolved captures (filled during semantic analysis Pass 4) ===
+    std::vector<mingus::sema::Symbol*> capturedVariables;
+    std::vector<CaptureMode> captureModesResolved;  // Parallel to capturedVariables
+
     bool escapes = true;       // Escape analysis: true = heap-alloc, false = stack-alloc
     bool selfCapture = false;  // True if lambda captures its own variable (letrec pattern)
 

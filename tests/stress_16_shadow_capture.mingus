@@ -11,11 +11,11 @@ module Stress16
     {
         var x = 5;
 
-        var f = (int y) => { return x + y; };
+        var f = [=](int y) => { return x + y; };
 
         {
             var x = 100;
-            var g = (int y) => { return x + y; };
+            var g = [=](int y) => { return x + y; };
 
             printf("f(1)=%d\n", f(1));
             printf("g(1)=%d\n", g(1));

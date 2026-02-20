@@ -64,7 +64,7 @@ module AudioEffects
         var prevLeft = 0.0;
         var prevRight = 0.0;
 
-        return (Sample input) => {
+        return [=](Sample input) => {
             var outLeft = input.left + prevLeft * feedback;
             var outRight = input.right + prevRight * feedback;
             prevLeft = outLeft;

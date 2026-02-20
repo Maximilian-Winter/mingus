@@ -61,6 +61,9 @@ call :run_test test_24_static_methods   Test24_main  "Static Methods"
 call :run_test test_25_escape_analysis  Test25_main  "Escape Analysis"
 call :run_test test_26_self_capture     Test26_main  "Self-Capturing Closures"
 call :run_test test_27_debug_info      Test27_main  "Debug Info"
+call :run_test test_28_explicit_captures Test28_main "Explicit Captures"
+call :run_test test_29_ref_params      Test29_main  "Reference Parameters"
+call :run_test test_30_capture_writeback Test30_main "Capture Write-Back"
 
 echo.
 echo ============================================================

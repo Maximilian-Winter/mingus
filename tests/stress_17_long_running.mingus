@@ -29,7 +29,7 @@ module Stress17
 
     func makeAdder(int base) => (int) => int
     {
-        return (int x) => { return x + base; };
+        return [=](int x) => { return x + base; };
     }
 
     func fib(int n) => int

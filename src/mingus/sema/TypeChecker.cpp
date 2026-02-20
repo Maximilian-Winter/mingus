@@ -217,7 +217,11 @@ TypePtr<Type> TypeChecker::resolveTypeNode(TypeNode* node) {
 
     if (auto* ptr = dynamic_cast<PointerTypeNode*>(node)) {
         auto base = resolveTypeNode(ptr->baseType.get());
-        node->resolvedType = registry_.getPointerTo(base);
+        if (ptr->isReference) {
+            node->resolvedType = registry_.getReferenceTo(base);
+        } else {
+            node->resolvedType = registry_.getPointerTo(base);
+        }
         return node->resolvedType;
     }
 

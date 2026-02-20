@@ -94,13 +94,13 @@ module Test19
         printf("length = %d\n", arr.length());
 
         // Map with lambda: double each element
-        var doubled = arr.map((int x) => { return x * 2; });
+        var doubled = arr.map([](int x) => { return x * 2; });
         printf("doubled[0] = %d\n", doubled[0]);
         printf("doubled[4] = %d\n", doubled[4]);
         printf("doubled[9] = %d\n", doubled[9]);
 
         // Map with lambda: square each element
-        var squared = arr.map((int x) => { return x * x; });
+        var squared = arr.map([](int x) => { return x * x; });
         printf("squared[0] = %d\n", squared[0]);
         printf("squared[4] = %d\n", squared[4]);
         printf("squared[9] = %d\n", squared[9]);

@@ -38,7 +38,7 @@ module Test21
         }
 
         // Assign a lambda
-        f = (int x) => { return x * 2; };
+        f = [](int x) => { return x * 2; };
 
         // Test: f != null (should be true after assignment)
         if (f != null) {

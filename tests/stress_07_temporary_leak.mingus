@@ -9,7 +9,7 @@ module Stress07
 
     func make(int k) => (int) => int
     {
-        return (int x) => { return x + k; };
+        return [=](int x) => { return x + k; };
     }
 
     func apply((int) => int f, int x) => int

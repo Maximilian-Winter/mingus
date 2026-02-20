@@ -349,6 +349,10 @@ llvm::Type* IRGenerator::mapType(const Type* type) {
         // Function-typed values are fat pointers: { fnPtr, envPtr }
         result = getFatPtrType();
     }
+    else if (auto* ref = type->as<ReferenceType>()) {
+        // Reference types map to ptr (same as pointer) in LLVM IR
+        result = llvm::PointerType::getUnqual(context_);
+    }
     else if (type->is<ErrorType>() || type->is<NullType>()) {
         result = llvm::PointerType::getUnqual(context_);
     }
@@ -772,7 +776,10 @@ llvm::FunctionType* IRGenerator::buildFunctionType(FunctionSymbol* sym) {
 
     for (auto* param : sym->parameters) {
         llvm::Type* paramTy = mapType(param->type);
-        if (param->type && isUserStructKind(param->type.get())) {
+        if (param->isReference) {
+            // Reference param: caller passes pointer to its alloca
+            paramTy = llvm::PointerType::getUnqual(context_);
+        } else if (param->type && isUserStructKind(param->type.get())) {
             paramTy = llvm::PointerType::getUnqual(context_);
         }
         paramTypes.push_back(paramTy);
@@ -789,7 +796,9 @@ llvm::FunctionType* IRGenerator::buildOperatorType(OperatorSymbol* sym) {
 
     for (auto* param : sym->parameters) {
         llvm::Type* paramTy = mapType(param->type);
-        if (param->type && isUserStructKind(param->type.get())) {
+        if (param->isReference) {
+            paramTy = llvm::PointerType::getUnqual(context_);
+        } else if (param->type && isUserStructKind(param->type.get())) {
             paramTy = llvm::PointerType::getUnqual(context_);
         }
         paramTypes.push_back(paramTy);
@@ -1093,7 +1102,8 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseFn() {
 llvm::Function* IRGenerator::generateClosureCleanupFn(
     llvm::StructType* closureTy,
     const std::vector<sema::Symbol*>& capturedVars,
-    int headerOffset)
+    int headerOffset,
+    const std::vector<ast::CaptureMode>* captureModes)
 {
     auto* ptrTy = llvm::PointerType::getUnqual(context_);
     auto* voidTy = llvm::Type::getVoidTy(context_);
@@ -1110,6 +1120,12 @@ llvm::Function* IRGenerator::generateClosureCleanupFn(
     auto* fatPtrTy = getFatPtrType();
 
     for (size_t i = 0; i < capturedVars.size(); i++) {
+        // By-reference captures don't own the value — skip cleanup
+        if (captureModes && i < captureModes->size() &&
+            (*captureModes)[i] == ast::CaptureMode::ByReference) {
+            continue;
+        }
+
         auto* capSym = capturedVars[i];
         auto* varSym = capSym->as<sema::VariableSymbol>();
         if (!varSym) continue;
@@ -1369,9 +1385,15 @@ void IRGenerator::visit(FunctionDeclaration& node) {
     // Named parameters
     for (auto* paramSym : funcSym->parameters) {
         llvm::Value* argVal = fn->getArg(argIdx++);
+        if (paramSym->isReference) {
+            // Reference parameter: argVal is a pointer to the caller's alloca.
+            // Use it directly — reads/writes go through to the original variable.
+            argVal->setName(paramSym->name + ".ref");
+            namedValues_[paramSym] = argVal;
+        }
         // If param is a struct/class passed by pointer, copy the struct into a local alloca
         // so that GEP field access works correctly on the alloca
-        if (paramSym->type && isUserStructKind(paramSym->type.get())) {
+        else if (paramSym->type && isUserStructKind(paramSym->type.get())) {
             llvm::Type* structTy = mapType(paramSym->type);
             auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->name);
             auto* val = builder_.CreateLoad(structTy, argVal, paramSym->name + ".val");
@@ -1451,7 +1473,10 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
 
     for (auto* paramSym : ctorSym->parameters) {
         llvm::Value* argVal = fn->getArg(argIdx++);
-        if (paramSym->type && isUserStructKind(paramSym->type.get())) {
+        if (paramSym->isReference) {
+            argVal->setName(paramSym->name + ".ref");
+            namedValues_[paramSym] = argVal;
+        } else if (paramSym->type && isUserStructKind(paramSym->type.get())) {
             llvm::Type* structTy = mapType(paramSym->type);
             auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->name);
             auto* val = builder_.CreateLoad(structTy, argVal, paramSym->name + ".val");
@@ -1646,7 +1671,10 @@ void IRGenerator::visit(OperatorDeclaration& node) {
 
     for (auto* paramSym : opSym->parameters) {
         llvm::Value* argVal = fn->getArg(argIdx++);
-        if (paramSym->type && isUserStructKind(paramSym->type.get())) {
+        if (paramSym->isReference) {
+            argVal->setName(paramSym->name + ".ref");
+            namedValues_[paramSym] = argVal;
+        } else if (paramSym->type && isUserStructKind(paramSym->type.get())) {
             llvm::Type* structTy = mapType(paramSym->type);
             auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->name);
             auto* val = builder_.CreateLoad(structTy, argVal, paramSym->name + ".val");
@@ -3084,6 +3112,7 @@ void IRGenerator::visit(CallExpression& node) {
     bool isVirtualCall = false;
     FunctionSymbol* virtualMethodSym = nullptr;
     ClassSymbol* virtualCallClass = nullptr;
+    FunctionSymbol* calleeFuncSym = nullptr;  // tracks resolved callee for ref params
     std::vector<llvm::Value*> args;
 
     // Method call: callee is MemberAccessExpression
@@ -3098,6 +3127,7 @@ void IRGenerator::visit(CallExpression& node) {
                     auto it = functionCache_.find(methodSym);
                     if (it != functionCache_.end()) {
                         calleeFn = it->second;
+                        calleeFuncSym = methodSym;
                     }
                 }
             }
@@ -3267,11 +3297,13 @@ void IRGenerator::visit(CallExpression& node) {
                     isVirtualCall = true;
                     virtualMethodSym = methodSym;
                     virtualCallClass = classSym;
+                    calleeFuncSym = methodSym;
                 } else {
                     // Direct dispatch (structs, static methods)
                     auto it = functionCache_.find(methodSym);
                     if (it != functionCache_.end()) {
                         calleeFn = it->second;
+                        calleeFuncSym = methodSym;
                     }
                     // Static methods don't take 'this'
                     if (methodSym->isStatic) {
@@ -3303,6 +3335,7 @@ void IRGenerator::visit(CallExpression& node) {
                     auto it = functionCache_.find(classSym->constructor);
                     if (it != functionCache_.end()) {
                         calleeFn = it->second;
+                        calleeFuncSym = classSym->constructor;
                         isCtorCall = true;
                         // Allocate storage for the object, pass as this
                         auto userType = registry_.getUserType(classSym->name,
@@ -3339,6 +3372,7 @@ void IRGenerator::visit(CallExpression& node) {
                 auto it = functionCache_.find(funcSym);
                 if (it != functionCache_.end()) {
                     calleeFn = it->second;
+                    calleeFuncSym = funcSym;
                 }
             }
         }
@@ -3356,7 +3390,28 @@ void IRGenerator::visit(CallExpression& node) {
     }
 
     // Emit arguments
-    for (auto& arg : node.arguments) {
+    for (size_t argI = 0; argI < node.arguments.size(); argI++) {
+        auto& arg = node.arguments[argI];
+
+        // Reference parameter: pass lvalue (pointer to alloca) instead of value
+        if (calleeFuncSym && argI < calleeFuncSym->parameters.size() &&
+            calleeFuncSym->parameters[argI]->isReference) {
+            llvm::Value* lval = emitLValue(*arg);
+            if (lval) {
+                args.push_back(lval);
+                continue;
+            }
+            // Fallback: evaluate and store in temp alloca
+            arg->accept(*this);
+            if (lastValue_) {
+                auto* tmp = createEntryBlockAlloca(currentFunction_,
+                    lastValue_->getType(), "ref.tmp");
+                builder_.CreateStore(lastValue_, tmp);
+                args.push_back(tmp);
+            }
+            continue;
+        }
+
         arg->accept(*this);
         if (lastValue_) {
             // Pass user types by pointer
@@ -4135,10 +4190,17 @@ void IRGenerator::visit(LambdaExpression& node) {
         std::vector<llvm::Type*> closureFields;
         closureFields.push_back(i64TyCap);   // refcount  (header field 0)
         closureFields.push_back(ptrTyCap);   // cleanup_fn (header field 1)
-        for (auto* capSym : node.capturedVariables) {
-            auto* varSym = capSym->as<VariableSymbol>();
-            closureFields.push_back(varSym ? mapType(varSym->type)
-                                           : llvm::Type::getInt32Ty(context_));
+        for (size_t i = 0; i < node.capturedVariables.size(); i++) {
+            bool isByRef = (i < node.captureModesResolved.size() &&
+                           node.captureModesResolved[i] == CaptureMode::ByReference);
+            if (isByRef) {
+                // By-reference capture stores a pointer to the original alloca
+                closureFields.push_back(ptrTyCap);
+            } else {
+                auto* varSym = node.capturedVariables[i]->as<VariableSymbol>();
+                closureFields.push_back(varSym ? mapType(varSym->type)
+                                               : llvm::Type::getInt32Ty(context_));
+            }
         }
         auto* closureTy = llvm::StructType::get(context_, closureFields);
 
@@ -4147,15 +4209,27 @@ void IRGenerator::visit(LambdaExpression& node) {
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             auto* capSym = node.capturedVariables[i];
             auto* varSym = capSym->as<VariableSymbol>();
-            llvm::Type* capType = varSym ? mapType(varSym->type)
-                                         : llvm::Type::getInt32Ty(context_);
+            bool isByRef = (i < node.captureModesResolved.size() &&
+                           node.captureModesResolved[i] == CaptureMode::ByReference);
+
             auto* capPtr = builder_.CreateStructGEP(closureTy, envPtr,
                                                      headerOffset + (unsigned)i,
                                                      capSym->name + ".cap");
-            auto* capVal = builder_.CreateLoad(capType, capPtr, capSym->name);
-            auto* capAlloca = createEntryBlockAlloca(lambdaFn, capType, capSym->name);
-            builder_.CreateStore(capVal, capAlloca);
-            namedValues_[capSym] = capAlloca;
+
+            if (isByRef) {
+                // By-reference: env holds ptr to original alloca. Load the ptr and
+                // use it directly — reads/writes go through to the original variable.
+                auto* origPtr = builder_.CreateLoad(ptrTyCap, capPtr, capSym->name + ".ref");
+                namedValues_[capSym] = origPtr;
+            } else {
+                // By-value: load value, copy into local alloca (existing behavior)
+                llvm::Type* capType = varSym ? mapType(varSym->type)
+                                             : llvm::Type::getInt32Ty(context_);
+                auto* capVal = builder_.CreateLoad(capType, capPtr, capSym->name);
+                auto* capAlloca = createEntryBlockAlloca(lambdaFn, capType, capSym->name);
+                builder_.CreateStore(capVal, capAlloca);
+                namedValues_[capSym] = capAlloca;
+            }
         }
     }
 
@@ -4196,10 +4270,16 @@ void IRGenerator::visit(LambdaExpression& node) {
         std::vector<llvm::Type*> closureFields;
         closureFields.push_back(i64TyA);   // refcount  (header field 0)
         closureFields.push_back(ptrTyA);   // cleanup_fn (header field 1)
-        for (auto* capSym : node.capturedVariables) {
-            auto* varSym = capSym->as<VariableSymbol>();
-            closureFields.push_back(varSym ? mapType(varSym->type)
-                                           : llvm::Type::getInt32Ty(context_));
+        for (size_t i = 0; i < node.capturedVariables.size(); i++) {
+            bool isByRef = (i < node.captureModesResolved.size() &&
+                           node.captureModesResolved[i] == CaptureMode::ByReference);
+            if (isByRef) {
+                closureFields.push_back(ptrTyA);  // pointer to original alloca
+            } else {
+                auto* varSym = node.capturedVariables[i]->as<VariableSymbol>();
+                closureFields.push_back(varSym ? mapType(varSym->type)
+                                               : llvm::Type::getInt32Ty(context_));
+            }
         }
         auto* closureTy = llvm::StructType::get(context_, closureFields);
 
@@ -4215,10 +4295,14 @@ void IRGenerator::visit(LambdaExpression& node) {
         auto* rcSlot = builder_.CreateStructGEP(closureTy, closurePtr, 0, "rc.slot");
         builder_.CreateStore(llvm::ConstantInt::get(i64TyA, 1), rcSlot);
 
-        // Check if any captured variable is a closure (needs cleanup function)
+        // Check if any by-value captured variable is a closure (needs cleanup function)
+        // By-reference captures don't own the value — skip them for cleanup
         bool capturesClosures = false;
-        for (auto* capSym : node.capturedVariables) {
-            auto* varSym = capSym->as<VariableSymbol>();
+        for (size_t i = 0; i < node.capturedVariables.size(); i++) {
+            bool isByRef = (i < node.captureModesResolved.size() &&
+                           node.captureModesResolved[i] == CaptureMode::ByReference);
+            if (isByRef) continue;  // ref captures don't own — no cleanup needed
+            auto* varSym = node.capturedVariables[i]->as<VariableSymbol>();
             if (varSym && varSym->type && varSym->type->is<FunctionType>()) {
                 capturesClosures = true;
                 break;
@@ -4228,7 +4312,8 @@ void IRGenerator::visit(LambdaExpression& node) {
         // Store cleanup function pointer (or null if no inner closures)
         auto* cleanupSlot = builder_.CreateStructGEP(closureTy, closurePtr, 1, "cleanup.slot");
         if (capturesClosures) {
-            auto* cleanupFn = generateClosureCleanupFn(closureTy, node.capturedVariables, 2);
+            auto* cleanupFn = generateClosureCleanupFn(closureTy, node.capturedVariables,
+                                                        2, &node.captureModesResolved);
             builder_.CreateStore(cleanupFn, cleanupSlot);
         } else {
             builder_.CreateStore(llvm::ConstantPointerNull::get(ptrTyA), cleanupSlot);
@@ -4239,21 +4324,31 @@ void IRGenerator::visit(LambdaExpression& node) {
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             auto* capSym = node.capturedVariables[i];
             auto* varSym = capSym->as<VariableSymbol>();
+            bool isByRef = (i < node.captureModesResolved.size() &&
+                           node.captureModesResolved[i] == CaptureMode::ByReference);
+
             auto it = savedNamedValues.find(capSym);
             if (it != savedNamedValues.end()) {
-                llvm::Type* capTy = varSym ? mapType(varSym->type)
-                                           : llvm::Type::getInt32Ty(context_);
-                llvm::Value* capVal = builder_.CreateLoad(capTy, it->second, capSym->name + ".val");
                 auto* capSlot = builder_.CreateStructGEP(closureTy, closurePtr,
                                                           headerOffset + (unsigned)i,
                                                           capSym->name + ".slot");
-                builder_.CreateStore(capVal, capSlot);
 
-                // If capturing a closure, retain its envPtr
-                if (varSym && varSym->type && varSym->type->is<FunctionType>()) {
-                    auto* capturedEnv = builder_.CreateExtractValue(capVal, {1},
-                                                                    capSym->name + ".cap.env");
-                    builder_.CreateCall(getOrCreateClosureRetainFn(), {capturedEnv});
+                if (isByRef) {
+                    // By-reference: store the alloca pointer itself (not the value)
+                    builder_.CreateStore(it->second, capSlot);
+                } else {
+                    // By-value: load value from alloca and store into env
+                    llvm::Type* capTy = varSym ? mapType(varSym->type)
+                                               : llvm::Type::getInt32Ty(context_);
+                    llvm::Value* capVal = builder_.CreateLoad(capTy, it->second, capSym->name + ".val");
+                    builder_.CreateStore(capVal, capSlot);
+
+                    // If capturing a closure by value, retain its envPtr
+                    if (varSym && varSym->type && varSym->type->is<FunctionType>()) {
+                        auto* capturedEnv = builder_.CreateExtractValue(capVal, {1},
+                                                                        capSym->name + ".cap.env");
+                        builder_.CreateCall(getOrCreateClosureRetainFn(), {capturedEnv});
+                    }
                 }
             }
         }

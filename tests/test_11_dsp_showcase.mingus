@@ -81,7 +81,7 @@ module Test11
 
     func makeGain(double amount) => (double) => double
     {
-        return (double x) => { return x * amount; };
+        return [=](double x) => { return x * amount; };
     }
 
     func softClip(double x) => double
@@ -95,12 +95,12 @@ module Test11
 
     func makeDrive(double drive) => (double) => double
     {
-        return (double x) => { return softClip(x * drive); };
+        return [=](double x) => { return softClip(x * drive); };
     }
 
     func composeEffect((double) => double f, (double) => double g) => (double) => double
     {
-        return (double x) => { return f(g(x)); };
+        return [=](double x) => { return f(g(x)); };
     }
 
     func applyStereo(Sample s, (double) => double fx) => Sample

@@ -114,6 +114,7 @@ public:
     bool isInferred;            // Declared with 'var'
     bool isInitialized;         // Has initializer expression
     int fieldIndex;             // Position in struct/class layout (-1 if not a field)
+    bool isReference = false;   // true for int& x reference parameters
 
     VariableSymbol(const std::string& n,
                    VariableRole r,

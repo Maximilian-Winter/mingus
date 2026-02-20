@@ -106,10 +106,14 @@ TypePtr<Type> TypeResolver::resolveTypeNode(TypeNode* node) {
         return node->resolvedType;
     }
 
-    // PointerTypeNode
+    // PointerTypeNode (also handles reference types via isReference flag)
     if (auto* ptr = dynamic_cast<PointerTypeNode*>(node)) {
         auto base = resolveTypeNode(ptr->baseType.get());
-        node->resolvedType = registry_.getPointerTo(base);
+        if (ptr->isReference) {
+            node->resolvedType = registry_.getReferenceTo(base);
+        } else {
+            node->resolvedType = registry_.getPointerTo(base);
+        }
         return node->resolvedType;
     }
 
@@ -163,6 +167,15 @@ void TypeResolver::resolveParameters(NodeList<ParameterNode>& params,
     for (size_t i = 0; i < params.size() && i < symbols.size(); ++i) {
         if (params[i] && params[i]->type) {
             symbols[i]->type = resolveTypeNode(params[i]->type.get());
+        }
+        // Propagate reference flag from AST parameter to symbol.
+        // Unwrap ReferenceType — the isReference flag carries the semantic
+        // meaning; codegen needs the base type for loads/stores through the ptr.
+        if (params[i] && params[i]->isReference) {
+            symbols[i]->isReference = true;
+            if (symbols[i]->type && symbols[i]->type->is<ReferenceType>()) {
+                symbols[i]->type = symbols[i]->type->as<ReferenceType>()->baseType;
+            }
         }
     }
 }

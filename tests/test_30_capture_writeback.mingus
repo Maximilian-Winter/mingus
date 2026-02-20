@@ -1,0 +1,101 @@
+// Test 30: Capture Write-Back (By-Reference Captures)
+// The primary goal of this feature: [&x] captures by reference so that
+// writes inside the lambda persist to the outer variable.
+
+module Test30
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    func apply((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func applyVoid(() => void f) => void
+    {
+        f();
+    }
+
+    func main() => int
+    {
+        puts("=== Test 30: Capture Write-Back ===");
+
+        // Basic write-back: counter incremented inside lambda persists
+        var counter = 0;
+        var inc = [&counter]() => {
+            counter = counter + 1;
+        };
+        inc();
+        inc();
+        inc();
+        inc();
+        inc();
+        printf("counter after 5 calls: %d\n", counter);
+
+        // Accumulator pattern: sum values through lambda
+        var sum = 0;
+        var add = [&sum](int x) => {
+            sum = sum + x;
+            return sum;
+        };
+        add(10);
+        add(20);
+        add(30);
+        printf("accumulated sum: %d\n", sum);
+
+        // Multiple ref captures
+        var min = 999;
+        var max = 0;
+        var track = [&min, &max](int x) => {
+            if (x < min) { min = x; }
+            if (x > max) { max = x; }
+            return x;
+        };
+        track(50);
+        track(10);
+        track(90);
+        track(30);
+        track(70);
+        printf("min: %d\n", min);
+        printf("max: %d\n", max);
+
+        // Mixed captures: by-value for read-only, by-reference for mutable
+        var scale = 2;
+        var total = 0;
+        var scaledAdd = [scale, &total](int x) => {
+            total = total + x * scale;
+            return total;
+        };
+        scaledAdd(5);
+        scaledAdd(3);
+        scaledAdd(2);
+        printf("scaled total: %d\n", total);
+
+        // [&] default all by reference
+        var a = 1;
+        var b = 2;
+        var bothRef = [&](int x) => {
+            a = a + x;
+            b = b + x;
+            return a + b;
+        };
+        bothRef(10);
+        printf("[&] a: %d\n", a);
+        printf("[&] b: %d\n", b);
+
+        // Verify write-back through higher-order function
+        var count = 0;
+        var counter2 = [&count](int x) => {
+            count = count + 1;
+            return x;
+        };
+        apply(counter2, 0);
+        apply(counter2, 0);
+        apply(counter2, 0);
+        printf("count through HOF: %d\n", count);
+
+        puts("=== Test 30 complete ===");
+        return 0;
+    }
+}

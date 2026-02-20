@@ -1,0 +1,111 @@
+// Test 28: Explicit Capture Lists
+// Verifies C++-style capture list syntax for lambdas:
+// []  — no captures
+// [=] — all by value
+// [&] — all by reference
+// [x] — explicit by value
+// [&x] — explicit by reference
+// [=, &x] — all by value, x by reference
+// [&, x] — all by reference, x by value
+
+module Test28
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    func apply((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func main() => int
+    {
+        puts("=== Test 28: Explicit Captures ===");
+
+        // [] — no captures
+        var r1 = apply([](int x) => { return x * 2; }, 21);
+        printf("[] no capture: %d\n", r1);
+
+        // [=] — capture all by value
+        var base = 10;
+        var r2 = apply([=](int x) => { return x + base; }, 5);
+        printf("[=] by value: %d\n", r2);
+
+        // Verify by-value doesn't modify outer
+        var counter = 0;
+        var inc = [=](int x) => {
+            // counter here is a copy — mutation doesn't escape
+            return x + counter + 1;
+        };
+        var r3 = inc(10);
+        printf("[=] value result: %d\n", r3);
+        printf("[=] counter unchanged: %d\n", counter);
+
+        // [x] — explicit by value for named variable
+        var multiplier = 3;
+        var r4 = apply([multiplier](int x) => { return x * multiplier; }, 7);
+        printf("[x] explicit value: %d\n", r4);
+
+        // [&x] — explicit by reference (mutation persists)
+        var total = 0;
+        var adder = [&total](int x) => {
+            total = total + x;
+            return total;
+        };
+        adder(10);
+        adder(20);
+        adder(30);
+        printf("[&x] ref capture total: %d\n", total);
+
+        // [=, &x] — mixed: all by value, one by reference
+        var scale = 2;
+        var accum = 0;
+        var mixed = [=, &accum](int x) => {
+            accum = accum + x * scale;
+            return accum;
+        };
+        mixed(5);
+        mixed(3);
+        printf("[=, &x] mixed accum: %d\n", accum);
+
+        // [&, x] — all by ref, one by value
+        var a = 100;
+        var b = 200;
+        var mixedRef = [&, b](int x) => {
+            // a captured by ref, b captured by value
+            a = a + x;
+            return a + b;
+        };
+        var r5 = mixedRef(50);
+        printf("[&, x] a modified: %d\n", a);
+        printf("[&, x] result: %d\n", r5);
+
+        // Multiple calls accumulating via [&]
+        var sum = 0;
+        var accumulate = [&](int x) => {
+            sum = sum + x;
+            return sum;
+        };
+        accumulate(1);
+        accumulate(2);
+        accumulate(3);
+        accumulate(4);
+        printf("[&] accumulated sum: %d\n", sum);
+
+        // Nested lambdas with different capture modes
+        var outer = 5;
+        var inner_result = 0;
+        var outerFn = [=, &inner_result](int x) => {
+            var innerFn = [=, &inner_result](int y) => {
+                inner_result = outer + x + y;
+                return inner_result;
+            };
+            return innerFn(x * 2);
+        };
+        outerFn(3);
+        printf("nested capture: %d\n", inner_result);
+
+        puts("=== Test 28 complete ===");
+        return 0;
+    }
+}

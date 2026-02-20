@@ -1,5 +1,5 @@
 
-// Generated from ./antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
+// Generated from antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -301,6 +301,18 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitCaptureList(MingusParser::CaptureListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCaptureDefault(MingusParser::CaptureDefaultContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCaptureItem(MingusParser::CaptureItemContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitLambdaParameterList(MingusParser::LambdaParameterListContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -426,6 +438,10 @@ public:
   }
 
   virtual std::any visitTypeModifier(MingusParser::TypeModifierContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitReferenceLevel(MingusParser::ReferenceLevelContext *ctx) override {
     return visitChildren(ctx);
   }
 

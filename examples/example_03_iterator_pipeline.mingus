@@ -130,7 +130,7 @@ module IteratorPipeline
         puts("\nMap (x * 3 + 1) for 1..10:");
         var mapped = new MapCounter(
             new Counter(1, 10),
-            (int x) => { return x * 3 + 1; }
+            [](int x) => { return x * 3 + 1; }
         );
         var sum3 = 0;
         var count3 = 0;

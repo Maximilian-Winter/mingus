@@ -25,30 +25,30 @@ module Test25
 
         // Temporary lambda passed directly as argument (non-escaping)
         // This previously leaked — the closure env was malloc'd but never freed
-        var r1 = apply((int x) => { return x + base; }, 5);
+        var r1 = apply([=](int x) => { return x + base; }, 5);
         printf("apply(x+base, 5) = %d", r1);
         puts("");
 
         // Another temporary lambda with captures
         var multiplier = 3;
-        var r2 = apply((int x) => { return x * multiplier; }, 7);
+        var r2 = apply([=](int x) => { return x * multiplier; }, 7);
         printf("apply(x*multiplier, 7) = %d", r2);
         puts("");
 
         // Temporary lambda with double application
-        var r3 = applyTwice((int x) => { return x + 1; }, 0);
+        var r3 = applyTwice([](int x) => { return x + 1; }, 0);
         printf("applyTwice(x+1, 0) = %d", r3);
         puts("");
 
         // Named closure (already has RAII)
-        var addBase = (int x) => { return x + base; };
+        var addBase = [=](int x) => { return x + base; };
         var r4 = apply(addBase, 20);
         printf("apply(addBase, 20) = %d", r4);
         puts("");
 
         // Multiple temporary lambdas in sequence
-        var r5 = apply((int x) => { return x + 100; }, 0);
-        var r6 = apply((int x) => { return x - 50; }, r5);
+        var r5 = apply([](int x) => { return x + 100; }, 0);
+        var r6 = apply([](int x) => { return x - 50; }, r5);
         printf("chain result = %d", r6);
         puts("");
 

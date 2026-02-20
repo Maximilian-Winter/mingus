@@ -30,6 +30,7 @@ NodePtr<ProgramNode> buildFactorialAST() {
         "n",
         std::make_shared<PrimitiveTypeNode>(PrimitiveType::PrimitiveKind::Int, loc),
         nullptr,
+        /*isRef=*/false,
         loc
     );
     NodeList<ParameterNode> params = { paramN };

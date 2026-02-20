@@ -301,16 +301,53 @@ void SemanticValidator::checkLambdaCapture(IdentifierExpression& node) {
     if (!varSym) return;
     if (varSym->role != VariableRole::Local && varSym->role != VariableRole::Parameter) return;
 
-    // Check if this symbol is local to the innermost lambda
-    auto& ctx = lambdaStack_.back();
-    if (ctx.localSymbols.count(node.resolvedSymbol) > 0) return;
+    // Walk the lambda stack from innermost to outermost. Each lambda that
+    // does not own the variable locally must capture it so the inner lambdas
+    // can find it in the enclosing env at runtime.
+    for (int i = static_cast<int>(lambdaStack_.size()) - 1; i >= 0; --i) {
+        auto& ctx = lambdaStack_[i];
 
-    // Not local to the lambda → it's a capture
-    // Avoid duplicates
-    for (auto* existing : ctx.lambda->capturedVariables) {
-        if (existing == node.resolvedSymbol) return;
+        // If this lambda owns the variable locally, we're done — no capture needed.
+        if (ctx.localSymbols.count(node.resolvedSymbol) > 0) break;
+
+        auto* lambda = ctx.lambda;
+
+        // Determine capture mode for this variable in THIS lambda
+        CaptureMode mode = CaptureMode::ByValue;
+        bool allowed = false;
+
+        // Check explicit capture items: [x, &y, z]
+        for (const auto& item : lambda->captureItems) {
+            if (item.name == varSym->name) {
+                mode = item.mode;
+                allowed = true;
+                break;
+            }
+        }
+
+        // If not explicitly listed, fall back to default capture mode
+        if (!allowed) {
+            if (lambda->captureDefault == CaptureDefault::AllByValue) {
+                mode = CaptureMode::ByValue;
+                allowed = true;
+            } else if (lambda->captureDefault == CaptureDefault::AllByReference) {
+                mode = CaptureMode::ByReference;
+                allowed = true;
+            }
+        }
+
+        if (!allowed) break;  // not capturable at this level → stop propagation
+
+        // Avoid duplicates
+        bool alreadyCaptured = false;
+        for (auto* existing : lambda->capturedVariables) {
+            if (existing == node.resolvedSymbol) { alreadyCaptured = true; break; }
+        }
+        if (!alreadyCaptured) {
+            lambda->capturedVariables.push_back(node.resolvedSymbol);
+            lambda->captureModesResolved.push_back(mode);
+        }
     }
-    ctx.lambda->capturedVariables.push_back(node.resolvedSymbol);
 }
 
 //================================================================================

@@ -1,5 +1,5 @@
 
-// Generated from MingusParser.g4 by ANTLR 4.13.2
+// Generated from antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -68,6 +68,15 @@ public:
 
   virtual void enterInheritance(MingusParser::InheritanceContext * /*ctx*/) override { }
   virtual void exitInheritance(MingusParser::InheritanceContext * /*ctx*/) override { }
+
+  virtual void enterInterfaceDeclaration(MingusParser::InterfaceDeclarationContext * /*ctx*/) override { }
+  virtual void exitInterfaceDeclaration(MingusParser::InterfaceDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterInterfaceBlock(MingusParser::InterfaceBlockContext * /*ctx*/) override { }
+  virtual void exitInterfaceBlock(MingusParser::InterfaceBlockContext * /*ctx*/) override { }
+
+  virtual void enterInterfaceMember(MingusParser::InterfaceMemberContext * /*ctx*/) override { }
+  virtual void exitInterfaceMember(MingusParser::InterfaceMemberContext * /*ctx*/) override { }
 
   virtual void enterStructDeclaration(MingusParser::StructDeclarationContext * /*ctx*/) override { }
   virtual void exitStructDeclaration(MingusParser::StructDeclarationContext * /*ctx*/) override { }
@@ -222,6 +231,15 @@ public:
   virtual void enterLambdaExpression(MingusParser::LambdaExpressionContext * /*ctx*/) override { }
   virtual void exitLambdaExpression(MingusParser::LambdaExpressionContext * /*ctx*/) override { }
 
+  virtual void enterCaptureList(MingusParser::CaptureListContext * /*ctx*/) override { }
+  virtual void exitCaptureList(MingusParser::CaptureListContext * /*ctx*/) override { }
+
+  virtual void enterCaptureDefault(MingusParser::CaptureDefaultContext * /*ctx*/) override { }
+  virtual void exitCaptureDefault(MingusParser::CaptureDefaultContext * /*ctx*/) override { }
+
+  virtual void enterCaptureItem(MingusParser::CaptureItemContext * /*ctx*/) override { }
+  virtual void exitCaptureItem(MingusParser::CaptureItemContext * /*ctx*/) override { }
+
   virtual void enterLambdaParameterList(MingusParser::LambdaParameterListContext * /*ctx*/) override { }
   virtual void exitLambdaParameterList(MingusParser::LambdaParameterListContext * /*ctx*/) override { }
 
@@ -317,6 +335,9 @@ public:
 
   virtual void enterTypeModifier(MingusParser::TypeModifierContext * /*ctx*/) override { }
   virtual void exitTypeModifier(MingusParser::TypeModifierContext * /*ctx*/) override { }
+
+  virtual void enterReferenceLevel(MingusParser::ReferenceLevelContext * /*ctx*/) override { }
+  virtual void exitReferenceLevel(MingusParser::ReferenceLevelContext * /*ctx*/) override { }
 
   virtual void enterArrayDimension(MingusParser::ArrayDimensionContext * /*ctx*/) override { }
   virtual void exitArrayDimension(MingusParser::ArrayDimensionContext * /*ctx*/) override { }

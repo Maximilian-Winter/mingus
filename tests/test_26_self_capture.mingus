@@ -10,7 +10,7 @@ module Test26
     func main() => int
     {
         // Self-capturing recursive fibonacci
-        (int) => int fib = (int n) => {
+        (int) => int fib = [=](int n) => {
             if (n <= 1) {
                 return n;
             }
@@ -27,7 +27,7 @@ module Test26
         puts("");
 
         // Self-capturing factorial
-        (int) => int fact = (int n) => {
+        (int) => int fact = [=](int n) => {
             if (n <= 1) {
                 return 1;
             }
@@ -40,7 +40,7 @@ module Test26
         puts("");
 
         // Self-capturing countdown
-        (int) => int count = (int n) => {
+        (int) => int count = [=](int n) => {
             if (n <= 0) {
                 return 0;
             }

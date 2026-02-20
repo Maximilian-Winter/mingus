@@ -490,12 +490,14 @@ NodePtr<ProgramNode> buildSimpleAST() {
         "a",
         std::make_shared<PrimitiveTypeNode>(PrimitiveType::PrimitiveKind::Int, loc),
         nullptr,
+        /*isRef=*/false,
         loc
     );
     auto paramB = std::make_shared<ParameterNode>(
         "b",
         std::make_shared<PrimitiveTypeNode>(PrimitiveType::PrimitiveKind::Int, loc),
         nullptr,
+        /*isRef=*/false,
         loc
     );
     NodeList<ParameterNode> params = { paramA, paramB };
