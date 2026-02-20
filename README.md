@@ -215,7 +215,7 @@ See `examples/mingus_groove.mingus` for the full source.
 ### Steps
 
 ```bash
-git clone https://github.com/your-username/mingus.git
+git clone https://github.com/Maximilian-Winter/mingus.git
 cd mingus
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
