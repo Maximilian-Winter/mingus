@@ -292,7 +292,6 @@ Source (.mingus)
 
 ## Known Limitations
 
-- **Closures leak memory** — heap-allocated capture structs are never freed. Bounded and predictable in practice.
 - **No generics** — no template or generic type support yet.
 - **Strings are heap-allocated** — no small string optimization.
 - **Single compilation unit** — each `.mingus` file compiles independently. Cross-file linking uses `import`.
