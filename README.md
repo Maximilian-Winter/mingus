@@ -306,6 +306,11 @@ Source (.mingus)
 - **No self-capturing closures** — a closure cannot reference itself for recursion (captures are by value).
 - **Temporary closure leak** — closures passed directly as function arguments without variable storage leak one refcount.
 
+
+# Detailed Current Status
+Under docs/MINGUS_STATUS.md is a detailed report about the current limitations and issues, with short- and long-term goals.
+
+
 ## Why "Mingus"?
 
 Charles Mingus composed music that was technically rigorous and emotionally unrestrained at the same time. He demanded discipline from his musicians but insisted they improvise wildly within the structure. The language follows the same philosophy: strict types and RAII provide the structure, while pipes, closures, and pattern matching give you freedom to express solutions naturally.
