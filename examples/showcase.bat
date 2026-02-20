@@ -83,7 +83,7 @@ if "!SHOW_CODE!"=="1" (
 )
 
 :: Step 1: Generate IR with main wrapper
-mingus_ir_tool.exe %FILE%.mingus --emit %FILE%.ll --entry %ENTRY% --opt 2 >nul 2>&1
+.\mingus_ir_tool.exe %FILE%.mingus --emit %FILE%.ll --entry %ENTRY% --opt 2 >nul 2>&1
 if errorlevel 1 (
     echo   FAIL: IR generation failed
     set /a FAILED+=1
