@@ -201,7 +201,26 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - `delete d` on interface pointer correctly extracts and frees the underlying object
 - Passing interface pointer to function: `func renderAll(Drawable* d) => void { d->draw(); }`
 
-#### 16. Optimization Pipeline
+#### 16. Tuples and Destructuring (Test 18)
+- Tuple return types: `func divmod(int a, int b) => (int, int)`
+- Tuple destructuring: `(var quot, var rem) = divmod(17, 5);`
+- Mixed-type tuples: `(string, int, bool)`
+- Tuple construction via `CreateInsertValue`, destructuring via `CreateExtractValue`
+- Works with recursive functions (fibonacci pair returning `(int, int)`)
+
+#### 17. DynamicArray.map and memcpy Interop (Test 19)
+- `DynamicArray.map((int) => int transform)` — returns new array with mapped values
+- Pipe integration inside class methods: `this[i] |> transform`
+- Capacity growth via `memcpy` for efficient buffer reallocation
+- Demonstrates closures, pipes, operator overloading, and RAII together
+
+#### 18. Complex Number Arithmetic (Test 20)
+- `struct Complex` with `operator+` and `operator*` returning `Complex`
+- Operator composition: `(a + b) * b` via chained method calls
+- `magnitude_squared()` returning `double`
+- Demonstrates struct return values and operator overloading for mathematical types
+
+#### 19. Optimization Pipeline
 - LLVM PassBuilder integration with configurable optimization levels
 - `--opt 0` (default): no optimization
 - `--opt 1`: O1 pipeline (basic simplifications, mem2reg)
@@ -258,6 +277,9 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | test_15_interfaces | interfaces (Drawable, Resizable), multiple implementation per class, fat pointer dispatch, interface pointer as function parameter | PASS |
 | test_16_dsp_wav | inheritance + interfaces (Effect, Named) + oscillator classes → WAV file output; demonstrates the full feature stack together | PASS |
 | test_17_hex_literals | hex (`0xFF`), binary (`0b1010`), octal (`0o77`) integer literals; bitwise operations | PASS |
+| test_18_tuples | tuple return types `(int, int)`, destructuring `(var a, var b) = ...`, mixed-type tuples, recursive fibonacci pair | PASS |
+| test_19_dynamic_array_map | DynamicArray with `map()` method, capacity growth via `memcpy`, lambda+pipe integration, operator[] | PASS |
+| test_20_complex_numbers | Complex struct with `operator+`, `operator*`, magnitude squared, chained operator expressions | PASS |
 
 ### Stress Tests (21/21 passing)
 
@@ -285,7 +307,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | stress_21_cyclic_capture | 10k heap objects with closure fields, no explicit ctor/dtor (auto-generated) | PASS |
 | stress_22_destructor_reentrant | 10k destructor bodies calling closure fields before epilogue releases them | PASS |
 
-**All 38 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+**All 41 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
@@ -297,9 +319,9 @@ mingus/
 ├── MingusParser.g4                         # ANTLR4 parser grammar
 ├── README.md                               # Project overview and quick start
 ├── build.bat                               # Standalone build script (Ninja + MSVC)
-├── run_tests.bat                           # Combined test runner (all 38 tests)
+├── run_tests.bat                           # Combined test runner (all 41 tests)
 ├── docs/
-│   └── MINGUS_V1_STATUS.md                 # This file
+│   └── MINGUS_STATUS.md                    # This file
 ├── include/mingus/
 │   ├── ast/                                # AST node types + visitor
 │   │   ├── ASTNode.h, Declarations.h
@@ -332,11 +354,11 @@ mingus/
 │   ├── showcase.bat                        # Display source + output for showcase programs
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 ├── tests/
-│   ├── test_01_basics.mingus … test_17_hex_literals.mingus   # 17 feature tests
+│   ├── test_01_basics.mingus … test_20_complex_numbers.mingus  # 20 feature tests
 │   ├── stress_01_closure_churn.mingus … stress_22_destructor_reentrant.mingus  # 21 stress tests
 │   ├── *.expected                          # Expected output for automated validation
 │   ├── MathLib.mingus                      # Copy for test_12 imports
-│   ├── run_all_tests.bat                   # Feature test runner (17 tests)
+│   ├── run_all_tests.bat                   # Feature test runner (20 tests)
 │   ├── run_stress_tests.bat                # Stress test runner (21 tests)
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 └── CMakeLists.txt                          # Build system (LLVM, ANTLR4, MSVC)
