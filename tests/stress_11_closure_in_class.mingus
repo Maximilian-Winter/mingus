@@ -1,0 +1,42 @@
+// Stress Test 11: Closure Captured in Class Field
+// Heap object holding a closure. Tests whether class destructors
+// properly release closure fields when the object is destroyed.
+
+module Stress11
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    class Box
+    {
+        (int) => int fn;
+
+        constructor((int) => int f)
+        {
+            this.fn = f;
+        }
+
+        func run(int x) => int
+        {
+            return this.fn(x);
+        }
+    }
+
+    func make(int k) => (int) => int
+    {
+        return (int x) => { return x + k; };
+    }
+
+    func main() => int
+    {
+        for (int i = 0; i < 20000; i++)
+        {
+            var b = new Box(make(i));
+            var r = b->run(10);
+            delete b;
+        }
+
+        puts("Stress11 done");
+        return 0;
+    }
+}

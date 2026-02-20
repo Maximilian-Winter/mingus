@@ -1,0 +1,25 @@
+// Stress Test 09: Closure Returned, Reassigned, Then Reassigned Again
+// Tests transfer semantics + release ordering.
+// Each reassignment must release the old env before storing the new one.
+
+module Stress09
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    func make(int k) => (int) => int
+    {
+        return (int x) => { return x + k; };
+    }
+
+    func main() => int
+    {
+        var f = make(1);
+        f = make(2);
+        f = make(3);
+        var r = f(10);
+        printf("r=%d\n", r);
+        puts("Stress09 done");
+        return 0;
+    }
+}

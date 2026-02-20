@@ -1,0 +1,33 @@
+// Stress Test 14: RAII in Match Guards
+// Pattern guards can mess up lifetime injection.
+// Tests that RAII objects declared before match are properly cleaned up.
+
+module Stress14
+{
+    extern func printf(string fmt, int val) => int;
+
+    class Guard
+    {
+        int id;
+        constructor(int i) { this.id = i; }
+        destructor { printf("drop %d\n", this.id); }
+    }
+
+    func test(int x) => int
+    {
+        var g = Guard(x);
+
+        return match x {
+            0 => 1,
+            var v if v > 0 => v,
+            _ => -1,
+        };
+    }
+
+    func main() => int
+    {
+        var r = test(5);
+        printf("result=%d\n", r);
+        return 0;
+    }
+}

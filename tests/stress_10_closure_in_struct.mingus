@@ -1,0 +1,33 @@
+// Stress Test 10: Closure Stored in Struct Field
+// ARC must survive aggregate storage.
+// Known limitation: struct fields don't get individual RAII cleanup,
+// so the closure env may leak. This test documents the behavior.
+
+module Stress10
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    struct Holder
+    {
+        (int) => int fn;
+    }
+
+    func make(int k) => (int) => int
+    {
+        return (int x) => { return x + k; };
+    }
+
+    func main() => int
+    {
+        for (int i = 0; i < 20000; i++)
+        {
+            var h = Holder();
+            h.fn = make(i);
+            var r = h.fn(5);
+        }
+
+        puts("Stress10 done");
+        return 0;
+    }
+}

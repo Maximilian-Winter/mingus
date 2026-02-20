@@ -61,6 +61,14 @@ call :run_test stress_05_interface_closure  Stress05_main  "Interface+Closure (2
 call :run_test stress_06_recursive_match   Stress06_main  "Recursive Match"
 call :run_test stress_07_temporary_leak    Stress07_main  "Temporary Leak (50k)"
 call :run_test stress_08_destructor_closure Stress08_main  "Destructor+Closure"
+call :run_test stress_09_triple_reassign   Stress09_main  "Triple Reassignment"
+call :run_test stress_10_closure_in_struct Stress10_main  "Closure in Struct (20k)"
+call :run_test stress_11_closure_in_class  Stress11_main  "Closure in Class (20k)"
+call :run_test stress_13_break_continue_raii Stress13_main "Break/Continue RAII"
+call :run_test stress_14_match_guard_raii   Stress14_main  "Match Guard RAII"
+call :run_test stress_15_struct_ptr_copy    Stress15_main  "Struct Ptr Copy"
+call :run_test stress_16_shadow_capture     Stress16_main  "Shadow Capture"
+call :run_test stress_17_long_running       Stress17_main  "Long-Running (100k)"
 
 echo.
 echo ============================================================

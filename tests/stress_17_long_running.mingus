@@ -1,0 +1,78 @@
+// Stress Test 17: Long-Running Stability Test
+// Combines closure churn, object creation/destruction, recursion,
+// and interface dispatch in a sustained loop.
+// If memory stays flat and no crash occurs, runtime is stable.
+
+module Stress17
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    interface Transformer
+    {
+        func apply(int x) => int;
+    }
+
+    class Doubler : Transformer
+    {
+        int factor;
+        constructor(int f) { this.factor = f; }
+        func apply(int x) => int { return x * this.factor; }
+    }
+
+    class Counter
+    {
+        int count;
+        constructor() { this.count = 0; }
+        destructor { }
+    }
+
+    func makeAdder(int base) => (int) => int
+    {
+        return (int x) => { return x + base; };
+    }
+
+    func fib(int n) => int
+    {
+        return match n {
+            0 => 0,
+            1 => 1,
+            var x => fib(x - 1) + fib(x - 2),
+        };
+    }
+
+    func main() => int
+    {
+        var total = 0;
+
+        for (int round = 0; round < 100000; round++)
+        {
+            // Closure churn
+            var add = makeAdder(round % 100);
+            total = total + add(1);
+
+            // Reassignment
+            add = makeAdder((round + 1) % 100);
+            total = total + add(2);
+
+            // RAII object creation/destruction
+            {
+                var c = Counter();
+            }
+
+            // Interface dispatch
+            var d = new Doubler(2);
+            Transformer* t = d;
+            total = total + t->apply(1);
+            delete t;
+        }
+
+        // One recursive call to exercise stack
+        var f = fib(10);
+        total = total + f;
+
+        printf("total=%d\n", total);
+        puts("Stress17 done");
+        return 0;
+    }
+}

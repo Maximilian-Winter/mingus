@@ -1,0 +1,35 @@
+// Stress Test 15: Struct Containing Raw Pointer — Shallow Copy Semantics
+// If structs copy by value, this duplicates the owning pointer.
+// Tests that shallow copy semantics are well-defined: only delete once.
+
+module Stress15
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    class C
+    {
+        int v;
+        constructor(int x) { this.v = x; }
+        destructor { printf("drop C %d\n", this.v); }
+    }
+
+    struct S
+    {
+        C* ptr;
+    }
+
+    func main() => int
+    {
+        var s1 = S();
+        s1.ptr = new C(42);
+
+        var s2 = s1;
+        printf("s2.ptr.v=%d\n", s2.ptr->v);
+
+        delete s1.ptr;
+
+        puts("Stress15 done");
+        return 0;
+    }
+}

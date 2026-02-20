@@ -1,0 +1,28 @@
+// Stress Test 16: Variable Shadowing Inside Lambda Capture
+// Ensures correct capture binding when outer and inner scopes
+// have variables with the same name.
+
+module Stress16
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    func main() => int
+    {
+        var x = 5;
+
+        var f = (int y) => { return x + y; };
+
+        {
+            var x = 100;
+            var g = (int y) => { return x + y; };
+
+            printf("f(1)=%d\n", f(1));
+            printf("g(1)=%d\n", g(1));
+        }
+
+        printf("f(2)=%d\n", f(2));
+        puts("Stress16 done");
+        return 0;
+    }
+}
