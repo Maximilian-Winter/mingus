@@ -1,0 +1,182 @@
+// example_05_custom_allocator.mingus
+// Memory pool allocator with RAII guards
+// Features: raw blocks, pointer arithmetic, RAII, destructors, higher-order functions
+
+module CustomAllocator
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memset(byte* ptr, int value, int n) => byte*;
+    extern func memcpy(byte* dest, byte* src, int n) => byte*;
+
+    class PoolAllocator
+    {
+        byte* memory;
+        int capacity;
+        int used;
+        int blockSize;
+
+        constructor(int numBlocks, int blkSize)
+        {
+            this.blockSize = blkSize;
+            this.capacity = numBlocks * blkSize;
+            this.used = 0;
+            raw {
+                this.memory = malloc(this.capacity);
+                memset(this.memory, 0, this.capacity);
+            }
+            printf("Pool created: %d bytes\n", this.capacity);
+        }
+
+        destructor
+        {
+            raw { free(this.memory); }
+            puts("Pool destroyed");
+        }
+
+        func allocate() => byte*
+        {
+            if (this.used + this.blockSize > this.capacity)
+            {
+                return null;  // Out of memory
+            }
+            raw {
+                var ptr = this.memory + this.used;
+                this.used = this.used + this.blockSize;
+                return ptr;
+            }
+        }
+
+        func reset() => void
+        {
+            this.used = 0;
+            raw { memset(this.memory, 0, this.capacity); }
+        }
+
+        func usage() => int
+        {
+            return (this.used * 100) / this.capacity;
+        }
+    }
+
+    // RAII guard for automatic pool reset on scope exit
+    class PoolScope
+    {
+        PoolAllocator* pool;
+        bool shouldReset;
+
+        constructor(PoolAllocator* p, bool autoReset)
+        {
+            this.pool = p;
+            this.shouldReset = autoReset;
+            puts("  [Scope enter]");
+        }
+
+        destructor
+        {
+            if (this.shouldReset)
+            {
+                puts("  [Scope exit - auto reset]");
+                this.pool->reset();
+            }
+            else
+            {
+                puts("  [Scope exit - preserving]");
+            }
+        }
+    }
+
+    struct Particle
+    {
+        int x;
+        int y;
+        int vx;
+        int vy;
+    }
+
+    func withPool<T>(PoolAllocator* pool, (PoolAllocator*) => T operation) => T
+    {
+        var guard = PoolScope(pool, false);
+        return operation(pool);
+    }
+
+    func particleSystemDemo() => void
+    {
+        puts("\n--- Particle System Demo ---");
+
+        // Create a pool for 100 particles (16 bytes each)
+        var pool = PoolAllocator(100, 16);
+
+        {
+            // Scope with automatic reset
+            var scope = PoolScope(&pool, true);
+
+            // Allocate particles
+            for (int i = 0; i < 5; i++)
+            {
+                raw {
+                    var p = (Particle*)pool.allocate();
+                    if (p != null) {
+                        p->x = i * 10;
+                        p->y = i * 20;
+                        p->vx = 1;
+                        p->vy = -1;
+                    }
+                }
+            }
+
+            printf("Pool usage: %d%%\n", pool.usage());
+        }
+        // Pool auto-reset here
+
+        printf("After reset: %d%%\n", pool.usage());
+
+        // Allocate again to prove reuse
+        raw {
+            var p = (Particle*)pool.allocate();
+            if (p != null) {
+                p->x = 999;
+            }
+        }
+        printf("After new alloc: %d%%\n", pool.usage());
+    }
+
+    func lambdaCaptureDemo() => void
+    {
+        puts("\n--- Closure + Pool Demo ---");
+
+        var pool = PoolAllocator(10, 8);
+
+        // Closure capturing the pool
+        var allocInPool = (int size) => int {
+            var ptr = pool.allocate();
+            return ptr == null ? 0 : 1;
+        };
+
+        // Multiple allocations through closure
+        for (int i = 0; i < 12; i++)  // Try to over-allocate
+        {
+            var success = allocInPool(8);
+            if (success == 0)
+            {
+                puts("  Allocation failed (expected)");
+                break;
+            }
+        }
+
+        printf("Final pool usage: %d%%\n", pool.usage());
+    }
+
+    func main() => int
+    {
+        puts("=== Custom Allocator Demo ===");
+
+        particleSystemDemo();
+        lambdaCaptureDemo();
+
+        puts("\n=== Allocator demo complete ===");
+        return 0;
+    }
+}

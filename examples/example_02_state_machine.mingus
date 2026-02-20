@@ -1,0 +1,169 @@
+// example_02_state_machine.mingus
+// Hierarchical state machine for AI behavior
+// Features: classes, interfaces, pattern matching with guards, RAII, null closures
+
+module StateMachine
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    interface State
+    {
+        func onEnter() => void;
+        func onUpdate(int dt) => int;  // returns state ID
+        func onExit() => void;
+    }
+
+    class Guard
+    {
+        string name;
+        constructor(string n) { this.name = n; }
+        destructor { printf("Cleanup: %s\n", this.name); }
+    }
+
+    class PatrolState : State
+    {
+        int waypoint;
+        constructor() { this.waypoint = 0; }
+        func onEnter() => void { puts("  -> PATROL: Starting patrol"); }
+        func onUpdate(int dt) => int
+        {
+            this.waypoint = this.waypoint + 1;
+            if (this.waypoint > 3)
+            {
+                this.waypoint = 0;
+                return 1;  // -> CHASE
+            }
+            return 0;  // stay in PATROL
+        }
+        func onExit() => void { puts("  <- PATROL: Ending patrol"); }
+    }
+
+    class ChaseState : State
+    {
+        int stamina;
+        constructor() { this.stamina = 100; }
+        func onEnter() => void { puts("  -> CHASE: Target spotted!"); }
+        func onUpdate(int dt) => int
+        {
+            this.stamina = this.stamina - 10;
+            return match this.stamina {
+                var s if s <= 0 => 0,  // tired, go back to PATROL
+                var s if s > 50 => 2,  // close enough, ATTACK
+                _ => 1,                // keep chasing
+            };
+        }
+        func onExit() => void { puts("  <- CHASE: Lost target"); }
+    }
+
+    class AttackState : State
+    {
+        func onEnter() => void { puts("  -> ATTACK: Engaging!"); }
+        func onUpdate(int dt) => int
+        {
+            // 30% chance to finish attack
+            return (dt % 10) < 3 ? 1 : 2;
+        }
+        func onExit() => void { puts("  <- ATTACK: Combat ended"); }
+    }
+
+    // State machine controller
+    class AIController
+    {
+        State* current;
+        (int) => void onTransition;  // callback (nullable)
+
+        constructor()
+        {
+            this.current = null;
+            this.onTransition = null;
+        }
+
+        destructor
+        {
+            if (this.current != null)
+            {
+                delete this.current;
+            }
+        }
+
+        func transition(int stateId) => void
+        {
+            if (this.current != null)
+            {
+                this.current->onExit();
+                delete this.current;
+            }
+
+            this.current = match stateId {
+                0 => new PatrolState(),
+                1 => new ChaseState(),
+                2 => new AttackState(),
+                _ => new PatrolState(),
+            };
+
+            if (this.onTransition != null)
+            {
+                this.onTransition(stateId);
+            }
+
+            this.current->onEnter();
+        }
+
+        func update(int dt) => void
+        {
+            if (this.current == null) { return; }
+
+            var nextId = this.current->onUpdate(dt);
+            if (nextId != this.getCurrentId())
+            {
+                this.transition(nextId);
+            }
+        }
+
+        func getCurrentId() => int
+        {
+            return match this.current {
+                PatrolState* p => 0,
+                ChaseState* c  => 1,
+                AttackState* a => 2,
+                _ => -1,
+            };
+        }
+
+        func setCallback((int) => void cb) => void
+        {
+            this.onTransition = cb;
+        }
+    }
+
+    func main() => int
+    {
+        puts("=== AI State Machine ===");
+
+        var ai = AIController();
+
+        // Set up a closure callback for state transitions
+        ai.setCallback((int stateId) => {
+            var name = match stateId {
+                0 => "PATROL",
+                1 => "CHASE",
+                2 => "ATTACK",
+                _ => "UNKNOWN",
+            };
+            printf("  [Callback] Transitioned to state %d\n", stateId);
+        });
+
+        // Simulate game loop
+        puts("Starting simulation:");
+        ai.transition(0);
+
+        for (int tick = 0; tick < 20; tick++)
+        {
+            ai.update(tick);
+        }
+
+        puts("=== Simulation complete ===");
+        return 0;
+    }
+}

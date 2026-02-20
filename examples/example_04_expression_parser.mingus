@@ -1,0 +1,239 @@
+// example_04_expression_parser.mingus
+// Recursive descent parser for arithmetic expressions
+// Features: enums, pattern matching, recursion, string operations, raw blocks, classes
+
+module ExpressionParser
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    enum TokenType : int
+    {
+        Number = 0,
+        Plus = 1,
+        Minus = 2,
+        Mul = 3,
+        Div = 4,
+        LParen = 5,
+        RParen = 6,
+        End = 7,
+    }
+
+    struct Token
+    {
+        int type;
+        int value;
+    }
+
+    class Lexer
+    {
+        string input;
+        int pos;
+        Token current;
+
+        constructor(string src)
+        {
+            this.input = src;
+            this.pos = 0;
+            this.advance();
+        }
+
+        func peek() => Token { return this.current; }
+
+        func consume(int expected) => bool
+        {
+            if (this.current.type == expected)
+            {
+                this.advance();
+                return true;
+            }
+            return false;
+        }
+
+        func advance() => void
+        {
+            this.skipWhitespace();
+
+            if (this.pos >= this.input.length())
+            {
+                this.current = Token();
+                this.current.type = TokenType.End;
+                return;
+            }
+
+            var ch = this.input[this.pos];
+
+            this.current = match ch {
+                43 /* '+' */ => this.makeToken(TokenType.Plus, 0),
+                45 /* '-' */ => this.makeToken(TokenType.Minus, 0),
+                42 /* '*' */ => this.makeToken(TokenType.Mul, 0),
+                47 /* '/' */ => this.makeToken(TokenType.Div, 0),
+                40 /* '(' */ => this.makeToken(TokenType.LParen, 0),
+                41 /* ')' */ => this.makeToken(TokenType.RParen, 0),
+                var c if c >= 48 && c <= 57 => this.parseNumber(),
+                _ => this.makeToken(TokenType.End, 0),
+            };
+        }
+
+        func makeToken(int t, int v) => Token
+        {
+            this.pos = this.pos + 1;
+            var tok = Token();
+            tok.type = t;
+            tok.value = v;
+            return tok;
+        }
+
+        func parseNumber() => Token
+        {
+            var val = 0;
+            while (this.pos < this.input.length())
+            {
+                var ch = this.input[this.pos];
+                if (ch < 48 || ch > 57) { break; }
+
+                val = val * 10 + (ch - 48);
+                this.pos = this.pos + 1;
+            }
+
+            var tok = Token();
+            tok.type = TokenType.Number;
+            tok.value = val;
+            return tok;
+        }
+
+        func skipWhitespace() => void
+        {
+            while (this.pos < this.input.length())
+            {
+                var ch = this.input[this.pos];
+                if (ch != 32 && ch != 9) { break; }
+                this.pos = this.pos + 1;
+            }
+        }
+    }
+
+    class Parser
+    {
+        Lexer lexer;
+
+        constructor(string input)
+        {
+            this.lexer = Lexer(input);
+        }
+
+        func parse() => int
+        {
+            return this.parseExpression();
+        }
+
+        // expression := term (('+' | '-') term)*
+        func parseExpression() => int
+        {
+            var left = this.parseTerm();
+
+            while (true)
+            {
+                var tok = this.lexer.peek();
+                if (tok.type == TokenType.Plus)
+                {
+                    this.lexer.consume(TokenType.Plus);
+                    left = left + this.parseTerm();
+                }
+                else if (tok.type == TokenType.Minus)
+                {
+                    this.lexer.consume(TokenType.Minus);
+                    left = left - this.parseTerm();
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return left;
+        }
+
+        // term := factor (('*' | '/') factor)*
+        func parseTerm() => int
+        {
+            var left = this.parseFactor();
+
+            while (true)
+            {
+                var tok = this.lexer.peek();
+                if (tok.type == TokenType.Mul)
+                {
+                    this.lexer.consume(TokenType.Mul);
+                    left = left * this.parseFactor();
+                }
+                else if (tok.type == TokenType.Div)
+                {
+                    this.lexer.consume(TokenType.Div);
+                    var divisor = this.parseFactor();
+                    left = divisor == 0 ? 0 : left / divisor;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return left;
+        }
+
+        // factor := number | '(' expression ')'
+        func parseFactor() => int
+        {
+            var tok = this.lexer.peek();
+
+            return match tok.type {
+                TokenType.Number => {
+                    this.lexer.consume(TokenType.Number);
+                    tok.value;
+                },
+                TokenType.LParen => {
+                    this.lexer.consume(TokenType.LParen);
+                    var val = this.parseExpression();
+                    this.lexer.consume(TokenType.RParen);
+                    val;
+                },
+                _ => 0,
+            };
+        }
+    }
+
+    func evaluate(string expr) => int
+    {
+        var parser = Parser(expr);
+        return parser.parse();
+    }
+
+    func main() => int
+    {
+        puts("=== Expression Parser ===");
+
+        // Test expressions - note: mingus doesn't have array literals,
+        // so we test them individually
+        puts("Testing: 2 + 3 * 4");
+        printf("Result: %d (expected 14)\n", evaluate("2 + 3 * 4"));
+
+        puts("Testing: (2 + 3) * 4");
+        printf("Result: %d (expected 20)\n", evaluate("(2 + 3) * 4"));
+
+        puts("Testing: 10 - 3 - 2");
+        printf("Result: %d (expected 5)\n", evaluate("10 - 3 - 2"));
+
+        puts("Testing: 100 / 5 / 2");
+        printf("Result: %d (expected 10)\n", evaluate("100 / 5 / 2"));
+
+        puts("Testing: 42");
+        printf("Result: %d (expected 42)\n", evaluate("42"));
+
+        puts("Testing: 1 + 2 + 3 + 4 + 5");
+        printf("Result: %d (expected 15)\n", evaluate("1 + 2 + 3 + 4 + 5"));
+
+        puts("=== Parser complete ===");
+        return 0;
+    }
+}

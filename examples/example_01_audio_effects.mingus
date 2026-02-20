@@ -1,0 +1,99 @@
+// example_01_audio_effects.mingus
+// A tribute to Charles Mingus - modular audio effects processor
+// Features: structs, operator overloading, closures, pipes, pattern matching, enums
+
+module AudioEffects
+{
+    extern func printf(string fmt, double val) => int;
+    extern func puts(string s) => int;
+    extern func sin(double x) => double;
+
+    enum Waveform : int
+    {
+        Sine = 0,
+        Triangle = 1,
+        Saw = 2,
+        Square = 3,
+    }
+
+    struct Sample
+    {
+        double left;
+        double right;
+
+        func operator+(Sample other) => Sample
+        {
+            Sample out;
+            out.left = this.left + other.left;
+            out.right = this.right + other.right;
+            return out;
+        }
+
+        func operator*(double gain) => Sample
+        {
+            Sample out;
+            out.left = this.left * gain;
+            out.right = this.right * gain;
+            return out;
+        }
+    }
+
+    func oscillator(int wave, double phase) => double
+    {
+        return match wave {
+            Waveform.Sine     => sin(phase * 6.283185307),
+            Waveform.Square   => phase < 0.5 ? 1.0 : -1.0,
+            Waveform.Triangle => phase < 0.5 ? phase * 4.0 - 1.0 : 3.0 - phase * 4.0,
+            _                 => phase * 2.0 - 1.0,
+        };
+    }
+
+    func makeDelay(double feedback) => (Sample) => Sample
+    {
+        var prev = Sample();
+        prev.left = 0.0;
+        prev.right = 0.0;
+
+        return (Sample input) => {
+            var out = input + prev * feedback;
+            prev = out;
+            return out;
+        };
+    }
+
+    func processSignal(Sample input, (Sample) => Sample effect) => Sample
+    {
+        return input |> effect;
+    }
+
+    func main() => int
+    {
+        puts("=== Mingus Audio Effects ===");
+
+        // Create a bass tone (like Charles Mingus would play)
+        var bass = Sample();
+        bass.left = oscillator(Waveform.Saw, 0.15);   // ~65Hz
+        bass.right = bass.left;
+        printf("Bass raw: L=%.3f R=%.3f\n", bass.left);
+
+        // Chain effects using closures and pipes
+        var delay = makeDelay(0.5);
+        var distorted = bass * 2.0 |> delay;
+
+        printf("After effects: L=%.3f R=%.3f\n", distorted.left);
+
+        // Layer multiple waveforms
+        var mix = Sample();
+        for (int i = 0; i < 4; i++)
+        {
+            var osc = Sample();
+            osc.left = oscillator(i, 0.25 + i * 0.1);
+            osc.right = osc.left;
+            mix = mix + osc * 0.25;
+        }
+
+        printf("Mixed oscillators: L=%.3f\n", mix.left);
+        puts("=== Audio chain complete ===");
+        return 0;
+    }
+}

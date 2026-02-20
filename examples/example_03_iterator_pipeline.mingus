@@ -1,0 +1,167 @@
+// example_03_iterator_pipeline.mingus
+// Lazy evaluation pipeline for data transformation
+// Features: structs, interfaces, closures, tuples, higher-order functions, RAII in loops
+
+module IteratorPipeline
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+
+    interface Iterator<T>
+    {
+        func next() => T;
+        func hasNext() => bool;
+    }
+
+    class Counter : Iterator<int>
+    {
+        int current;
+        int limit;
+        constructor(int start, int end)
+        {
+            this.current = start;
+            this.limit = end;
+        }
+        func next() => int
+        {
+            var val = this.current;
+            this.current = this.current + 1;
+            return val;
+        }
+        func hasNext() => bool
+        {
+            return this.current < this.limit;
+        }
+    }
+
+    // Transform wrapper - applies function to each element
+    class MapIter : Iterator<int>
+    {
+        Iterator<int>* source;
+        (int) => int transform;
+        constructor(Iterator<int>* src, (int) => int fn)
+        {
+            this.source = src;
+            this.transform = fn;
+        }
+        destructor
+        {
+            delete this.source;
+        }
+        func next() => int
+        {
+            return this.transform(this.source->next());
+        }
+        func hasNext() => bool
+        {
+            return this.source->hasNext();
+        }
+    }
+
+    // Filter wrapper
+    class FilterIter : Iterator<int>
+    {
+        Iterator<int>* source;
+        (int) => bool predicate;
+        int buffered;
+        bool hasBuffer;
+        constructor(Iterator<int>* src, (int) => bool pred)
+        {
+            this.source = src;
+            this.predicate = pred;
+            this.hasBuffer = false;
+        }
+        destructor
+        {
+            delete this.source;
+        }
+        func advance() => void
+        {
+            while (this.source->hasNext())
+            {
+                var val = this.source->next();
+                if (this.predicate(val))
+                {
+                    this.buffered = val;
+                    this.hasBuffer = true;
+                    return;
+                }
+            }
+            this.hasBuffer = false;
+        }
+        func next() => int
+        {
+            if (!this.hasBuffer) { this.advance(); }
+            this.hasBuffer = false;
+            return this.buffered;
+        }
+        func hasNext() => bool
+        {
+            if (!this.hasBuffer) { this.advance(); }
+            return this.hasBuffer;
+        }
+    }
+
+    // Collect results into array, return (sum, count) tuple
+    func collectStats(Iterator<int>* iter) => (int, int)
+    {
+        var sum = 0;
+        var count = 0;
+
+        while (iter->hasNext())
+        {
+            sum = sum + iter->next();
+            count = count + 1;
+        }
+
+        return (sum, count);
+    }
+
+    func isEven(int n) => bool
+    {
+        return n % 2 == 0;
+    }
+
+    func main() => int
+    {
+        puts("=== Iterator Pipeline ===");
+
+        // Pipeline: 1..20 -> filter even -> map (x*3+1) -> stats
+        puts("Creating pipeline: 1..20 | filter(even) | map(x*3+1)");
+
+        Iterator<int>* pipeline = new MapIter(
+            new FilterIter(
+                new Counter(1, 20),
+                isEven
+            ),
+            (int x) => { return x * 3 + 1; }
+        );
+
+        (var sum, var count) = collectStats(pipeline);
+        delete pipeline;
+
+        printf("Sum: %d\n", sum);
+        printf("Count: %d\n", count);
+        printf("Average: %d\n", sum / count);
+
+        // Nested pipelines with different transformations
+        puts("\nSecond pipeline: squares of odd numbers");
+        var pipeline2 = new MapIter(
+            new FilterIter(
+                new Counter(1, 10),
+                (int x) => { return x % 2 == 1; }
+            ),
+            (int x) => { return x * x; }
+        );
+
+        (var sum2, var count2) = collectStats(pipeline2);
+        delete pipeline2;
+
+        printf("Sum of odd squares (1..9): %d\n", sum2);
+
+        puts("=== Pipeline complete ===");
+        return 0;
+    }
+}
