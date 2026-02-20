@@ -1,0 +1,25 @@
+// Stress Test 01: Closure Churn Storm
+// Allocates and releases thousands of capture structs.
+// If refcounts work, memory stays stable. If not — slow death.
+
+module Stress01
+{
+    extern func puts(string s) => int;
+
+    func makeAdder(int base) => (int) => int
+    {
+        return (int x) => { return x + base; };
+    }
+
+    func main() => int
+    {
+        for (int i = 0; i < 50000; i++)
+        {
+            var f = makeAdder(i);
+            var r = f(10);
+        }
+
+        puts("Stress01 done");
+        return 0;
+    }
+}

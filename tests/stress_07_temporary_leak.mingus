@@ -1,0 +1,30 @@
+// Stress Test 07: Temporary Closure Leak Detector
+// Intentionally triggers the known limitation: temporary closures passed
+// directly as arguments without being stored in a named variable.
+// Memory should grow slowly but predictably.
+
+module Stress07
+{
+    extern func puts(string s) => int;
+
+    func make(int k) => (int) => int
+    {
+        return (int x) => { return x + k; };
+    }
+
+    func apply((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func main() => int
+    {
+        for (int i = 0; i < 50000; i++)
+        {
+            var r = apply(make(i), 10);
+        }
+
+        puts("Stress07 done");
+        return 0;
+    }
+}

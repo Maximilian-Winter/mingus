@@ -1,0 +1,53 @@
+// Stress Test 05: Interface + Closure Coexistence
+// Probes separation between closure fat pointers and interface fat pointers.
+// Both use { ptr, ptr } representation — must not cross-contaminate RAII.
+
+module Stress05
+{
+    extern func puts(string s) => int;
+
+    interface Adder
+    {
+        func add(int x) => int;
+    }
+
+    class ConstAdder : Adder
+    {
+        int base;
+        constructor(int b) { this.base = b; }
+        func add(int x) => int { return this.base + x; }
+    }
+
+    func makeClosureAdder(int base) => (int) => int
+    {
+        return (int x) => { return x + base; };
+    }
+
+    func applyInterface(Adder* a, int x) => int
+    {
+        return a->add(x);
+    }
+
+    func applyClosure((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func main() => int
+    {
+        for (int i = 0; i < 20000; i++)
+        {
+            var obj = new ConstAdder(i);
+            Adder* iface = obj;
+            var closureAdd = makeClosureAdder(i);
+
+            var r1 = applyInterface(iface, 5);
+            var r2 = applyClosure(closureAdd, 5);
+
+            delete iface;
+        }
+
+        puts("Stress05 done");
+        return 0;
+    }
+}

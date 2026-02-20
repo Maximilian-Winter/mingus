@@ -1,0 +1,29 @@
+// Stress Test 02: Nested Closure Capture Cascade
+// Closure capturing closure capturing variable.
+// Tests: retain when capturing inner closure, cleanup_fn recursion, release ordering.
+
+module Stress02
+{
+    extern func puts(string s) => int;
+
+    func outer(int a) => (int) => int
+    {
+        var inner = (int b) => { return a + b; };
+
+        return (int c) => {
+            return inner(c) * 2;
+        };
+    }
+
+    func main() => int
+    {
+        for (int i = 0; i < 20000; i++)
+        {
+            var f = outer(i);
+            var r = f(5);
+        }
+
+        puts("Stress02 done");
+        return 0;
+    }
+}

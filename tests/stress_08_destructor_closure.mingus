@@ -1,0 +1,32 @@
+// Stress Test 08: Destructor + Closure Interleave
+// Closure captures a class variable with a destructor by value.
+// The original's destructor fires at scope exit, but the copy in the
+// capture struct survives. Tests that there is no double-free.
+
+module Stress08
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    class Box
+    {
+        int value;
+        constructor(int v) { this.value = v; }
+        destructor { printf("drop %d\n", this.value); }
+    }
+
+    func make(int x) => (int) => int
+    {
+        var b = Box(x);
+        return (int y) => { return b.value + y; };
+    }
+
+    func main() => int
+    {
+        var f = make(5);
+        var r = f(10);
+        printf("result=%d\n", r);
+        puts("Stress08 done");
+        return 0;
+    }
+}

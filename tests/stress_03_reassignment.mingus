@@ -1,0 +1,27 @@
+// Stress Test 03: Reassignment Hammer
+// Specifically targets release-old-before-assign logic.
+// If release-before-store is wrong, this leaks or double-frees.
+
+module Stress03
+{
+    extern func puts(string s) => int;
+
+    func makeMul(int k) => (int) => int
+    {
+        return (int x) => { return x * k; };
+    }
+
+    func main() => int
+    {
+        var f = makeMul(1);
+
+        for (int i = 0; i < 30000; i++)
+        {
+            f = makeMul(i);
+        }
+
+        var r = f(2);
+        puts("Stress03 done");
+        return 0;
+    }
+}

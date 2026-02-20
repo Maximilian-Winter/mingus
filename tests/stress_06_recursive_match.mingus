@@ -1,0 +1,23 @@
+// Stress Test 06: Massive Stack Depth + Nested Match
+// Parser + semantic + RAII stress via recursive match.
+
+module Stress06
+{
+    extern func printf(string fmt, int val) => int;
+
+    func fib(int n) => int
+    {
+        return match n {
+            0 => 0,
+            1 => 1,
+            var x => fib(x - 1) + fib(x - 2),
+        };
+    }
+
+    func main() => int
+    {
+        var r = fib(10);
+        printf("fib=%d\n", r);
+        return 0;
+    }
+}

@@ -1,0 +1,40 @@
+// Stress Test 04: Early Return + RAII Interaction
+// Destructor ordering under branching.
+// Checks: destructor LIFO ordering, early return control-flow RAII correctness.
+
+module Stress04
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    class Guard
+    {
+        int id;
+        constructor(int i) { this.id = i; }
+        destructor { printf("destroy %d\n", this.id); }
+    }
+
+    func test(int v) => int
+    {
+        var g1 = Guard(1);
+        var g2 = Guard(2);
+
+        if (v % 2 == 0)
+        {
+            return 42;
+        }
+
+        return 7;
+    }
+
+    func main() => int
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            test(i);
+        }
+
+        puts("Stress04 done");
+        return 0;
+    }
+}
