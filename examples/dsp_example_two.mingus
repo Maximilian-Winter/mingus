@@ -1,0 +1,502 @@
+// Mingus Groove 2.0 - Stereo Walking Bass with Lead Arpeggio
+//
+// A 4-bar groove demonstrating:
+// - Stereo panning
+// - Lead arpeggio with pulse modulation
+// - Swing timing with slight randomness
+// - Bass, kick, snare, hihat, lead
+// - Simple effect chain (soft drive) per voice
+//
+// Output: groove2.wav — 4 bars at 120 BPM, 44100 Hz
+
+module MingusGroove2
+{
+    extern func fopen(string path, string mode) => byte*;
+    extern func fputc(int c, byte* f) => int;
+    extern func fclose(byte* f) => int;
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int v) => int;
+    extern func lround(double x) => int;
+    extern func sin(double x) => double;
+    extern func pow(double base, double exp) => double;
+    extern func fmod(double x, double y) => double;
+
+    func twoPi() => double { return 6.283185307179586; }
+    func sampleRate() => double { return 44100.0; }
+
+    // ---- WAV Writing ----
+
+    func putU16LE(byte* f, int v) => void
+    {
+        fputc(v & 255, f);
+        fputc((v >> 8) & 255, f);
+    }
+
+    func putU32LE(byte* f, int v) => void
+    {
+        fputc(v & 255, f);
+        fputc((v >> 8) & 255, f);
+        fputc((v >> 16) & 255, f);
+        fputc((v >> 24) & 255, f);
+    }
+
+    func writeWavHeader(byte* f, int sr, int numSamples, int channels) => void
+    {
+        int dataSize = numSamples * channels * 2;
+        int riffSize = dataSize + 36;
+        int byteRate = sr * channels * 2;
+
+        fputc(82, f); fputc(73, f); fputc(70, f); fputc(70, f);
+        putU32LE(f, riffSize);
+        fputc(87, f); fputc(65, f); fputc(86, f); fputc(69, f);
+        fputc(102, f); fputc(109, f); fputc(116, f); fputc(32, f);
+        putU32LE(f, 16);
+        putU16LE(f, 1);
+        putU16LE(f, channels);
+        putU32LE(f, sr);
+        putU32LE(f, byteRate);
+        putU16LE(f, channels * 2);
+        putU16LE(f, 16);
+        fputc(100, f); fputc(97, f); fputc(116, f); fputc(97, f);
+        putU32LE(f, dataSize);
+    }
+
+    func writeSample(byte* f, double sample) => void
+    {
+        var clamped = sample > 1.0 ? 1.0 : (sample < -1.0 ? -1.0 : sample);
+        int ival = lround(clamped * 32767.0);
+        putU16LE(f, ival);
+    }
+
+    // ---- Envelope ----
+
+    class Envelope
+    {
+        double attack;
+        double decay;
+        double sustain;
+        double release;
+        double triggerTime;
+        double releaseTime;
+        double releaseLevel;
+        bool active;
+
+        constructor(double a, double d, double s, double r)
+        {
+            this.attack = a;
+            this.decay = d;
+            this.sustain = s;
+            this.release = r;
+            this.triggerTime = -1.0;
+            this.releaseTime = -1.0;
+            this.releaseLevel = 0.0;
+            this.active = false;
+        }
+
+        func noteOn(double time) => void
+        {
+            this.triggerTime = time;
+            this.releaseTime = -1.0;
+            this.active = true;
+        }
+
+        func noteOff(double time, double currentLevel) => void
+        {
+            this.releaseTime = time;
+            this.releaseLevel = currentLevel;
+        }
+
+        func value(double time) => double
+        {
+            if (!this.active) { return 0.0; }
+
+            if (this.releaseTime >= 0.0)
+            {
+                var relT = time - this.releaseTime;
+                if (relT >= this.release) { this.active = false; return 0.0; }
+                return this.releaseLevel * (1.0 - relT / this.release);
+            }
+
+            var t = time - this.triggerTime;
+
+            if (t < this.attack) { return t / this.attack; }
+
+            var decayStart = this.attack;
+            if (t < decayStart + this.decay)
+            {
+                var decayT = t - decayStart;
+                var decayProgress = decayT / this.decay;
+                return 1.0 - (1.0 - this.sustain) * decayProgress;
+            }
+
+            return this.sustain;
+        }
+    }
+
+    // ---- Oscillator ----
+
+    class Oscillator
+    {
+        double phase;
+        double freq;
+        int waveform;
+
+        constructor(int wave)
+        {
+            this.waveform = wave;
+            this.phase = 0.0;
+            this.freq = 0.0;
+        }
+
+        func setFreq(double f) => void
+        {
+            this.freq = f;
+        }
+
+        func tick() => double
+        {
+            var p = this.phase;
+            var s = match this.waveform {
+                0 => sin(p * twoPi()),
+                1 => p * 2.0 - 1.0,
+                2 => p < 0.5 ? 1.0 : -1.0,
+                _ => p < 0.5 ? p * 4.0 - 1.0 : 3.0 - p * 4.0,
+            };
+            var inc = this.freq / sampleRate();
+            var next = p + inc;
+            this.phase = next >= 1.0 ? next - 1.0 : next;
+            return s;
+        }
+
+        func reset() => void
+        {
+            this.phase = 0.0;
+        }
+    }
+
+    // ---- Bass Voice ----
+
+    class BassVoice
+    {
+        Oscillator* osc;
+        Envelope* env;
+        double currentLevel;
+
+        constructor()
+        {
+            this.osc = new Oscillator(1);
+            this.env = new Envelope(0.01, 0.1, 0.7, 0.15);
+            this.currentLevel = 0.0;
+        }
+
+        destructor
+        {
+            delete this.osc;
+            delete this.env;
+        }
+
+        func noteOn(double time, double freq) => void
+        {
+            this.osc->setFreq(freq);
+            this.osc->reset();
+            this.env->noteOn(time);
+        }
+
+        func noteOff(double time) => void
+        {
+            this.env->noteOff(time, this.currentLevel);
+        }
+
+        func tick(double time) => double
+        {
+            this.currentLevel = this.env->value(time);
+            if (this.currentLevel <= 0.0) { return 0.0; }
+            var sig = this.osc->tick();
+            var shaped = sig - (sig * sig * sig) / 6.0;
+            return shaped * this.currentLevel;
+        }
+    }
+
+    // ---- Lead Voice ----
+
+    class LeadVoice
+    {
+        Oscillator* osc;
+        Envelope* env;
+        double currentLevel;
+
+        constructor()
+        {
+            this.osc = new Oscillator(2);  // square wave
+            this.env = new Envelope(0.005, 0.05, 0.6, 0.05);
+            this.currentLevel = 0.0;
+        }
+
+        destructor
+        {
+            delete this.osc;
+            delete this.env;
+        }
+
+        func noteOn(double time, double freq) => void
+        {
+            this.osc->setFreq(freq);
+            this.osc->reset();
+            this.env->noteOn(time);
+        }
+
+        func noteOff(double time) => void
+        {
+            this.env->noteOff(time, this.currentLevel);
+        }
+
+        func tick(double time) => double
+        {
+            this.currentLevel = this.env->value(time);
+            if (this.currentLevel <= 0.0) { return 0.0; }
+            var sig = this.osc->tick();
+            // Pulse-width modulation effect (simple)
+            var mod = sin(time * 10.0) * 0.3;
+            var shaped = sig * (1.0 - mod);
+            return shaped * this.currentLevel;
+        }
+    }
+
+    // ---- Drum Voices ----
+    // (reuse KickVoice, SnareVoice, HihatVoice from previous example)
+
+    class KickVoice
+    {
+        double phase;
+        double triggerTime;
+        bool active;
+
+        constructor()
+        {
+            this.phase = 0.0;
+            this.triggerTime = -1.0;
+            this.active = false;
+        }
+
+        func trigger(double time) => void
+        {
+            this.triggerTime = time;
+            this.phase = 0.0;
+            this.active = true;
+        }
+
+        func tick(double time) => double
+        {
+            if (!this.active) { return 0.0; }
+            var t = time - this.triggerTime;
+            if (t > 0.3) { this.active = false; return 0.0; }
+            var pitchEnv = 150.0 - 100.0 * (t / 0.3);
+            var ampEnv = 1.0 - t / 0.3;
+            ampEnv = ampEnv * ampEnv;
+            var inc = pitchEnv / sampleRate();
+            var sample = sin(this.phase * twoPi()) * ampEnv;
+            this.phase = this.phase + inc;
+            return sample;
+        }
+    }
+
+    class SnareVoice
+    {
+        double phase;
+        double triggerTime;
+        int noiseState;
+        bool active;
+
+        constructor()
+        {
+            this.phase = 0.0;
+            this.triggerTime = -1.0;
+            this.noiseState = 12345;
+            this.active = false;
+        }
+
+        func trigger(double time) => void
+        {
+            this.triggerTime = time;
+            this.phase = 0.0;
+            this.active = true;
+        }
+
+        func noise() => double
+        {
+            this.noiseState = (this.noiseState * 1103515245 + 12345) & 2147483647;
+            return (this.noiseState / 1073741824.0) - 1.0;
+        }
+
+        func tick(double time) => double
+        {
+            if (!this.active) { return 0.0; }
+            var t = time - this.triggerTime;
+            if (t > 0.2) { this.active = false; return 0.0; }
+            var ampEnv = 1.0 - t / 0.2;
+            var tone = sin(this.phase * twoPi()) * 0.3;
+            var nz = this.noise() * 0.7;
+            this.phase = this.phase + 200.0 / sampleRate();
+            return (tone + nz) * ampEnv;
+        }
+    }
+
+    class HihatVoice
+    {
+        double triggerTime;
+        int noiseState;
+        bool active;
+        double lastSample;
+
+        constructor()
+        {
+            this.triggerTime = -1.0;
+            this.noiseState = 67890;
+            this.active = false;
+            this.lastSample = 0.0;
+        }
+
+        func trigger(double time) => void
+        {
+            this.triggerTime = time;
+            this.active = true;
+        }
+
+        func noise() => double
+        {
+            this.noiseState = (this.noiseState * 1103515245 + 12345) & 2147483647;
+            return (this.noiseState / 1073741824.0) - 1.0;
+        }
+
+        func tick(double time) => double
+        {
+            if (!this.active) { return 0.0; }
+            var t = time - this.triggerTime;
+            if (t > 0.08) { this.active = false; return 0.0; }
+            var ampEnv = 1.0 - t / 0.08;
+            ampEnv = ampEnv * ampEnv;
+            var nz = this.noise();
+            var hp = nz - this.lastSample;
+            this.lastSample = nz * 0.9;
+            return hp * ampEnv * 0.5;
+        }
+    }
+
+    // ---- Helpers ----
+
+    func midiToFreq(int note) => double
+    {
+        return 440.0 * pow(2.0, (note - 69) / 12.0);
+    }
+
+    func swingTime(double beatTime, double swingAmount) => double
+    {
+        var beatPos = fmod(beatTime, 1.0);
+        var wholeBeat = beatTime - beatPos;
+        if (beatPos >= 0.5)
+        {
+            var offset = (beatPos - 0.5) * 2.0;
+            var swungOffset = 0.5 + (0.5 + swingAmount) * offset / (1.0 + swingAmount);
+            return wholeBeat + swungOffset;
+        }
+        return beatTime;
+    }
+
+    // ---- Main ----
+
+    func main() => int
+    {
+        puts("=== Mingus Groove 2.0 ===");
+
+        double bpm = 120.0;
+        double beatDuration = 60.0 / bpm;
+        double swingAmount = 0.2;
+        int numBeats = 16;
+        double totalTime = numBeats * beatDuration;
+        int numSamples = lround(totalTime * sampleRate());
+
+        BassVoice* bass = new BassVoice();
+        LeadVoice* lead = new LeadVoice();
+        KickVoice* kick = new KickVoice();
+        SnareVoice* snare = new SnareVoice();
+        HihatVoice* hihat = new HihatVoice();
+
+        byte* f = fopen("groove2.wav", "wb");
+        if (f == null) { puts("ERROR: could not open groove2.wav"); return 1; }
+
+        writeWavHeader(f, 44100, numSamples, 2);
+
+        int lastBeat = -1;
+        int lastHalfBeat = -1;
+
+        int[16] bassNotes;
+        bassNotes[0] = 36; bassNotes[1] = 39; bassNotes[2] = 41; bassNotes[3] = 43;
+        bassNotes[4] = 44; bassNotes[5] = 43; bassNotes[6] = 41; bassNotes[7] = 39;
+        bassNotes[8] = 36; bassNotes[9] = 43; bassNotes[10] = 41; bassNotes[11] = 39;
+        bassNotes[12] = 36; bassNotes[13] = 46; bassNotes[14] = 44; bassNotes[15] = 43;
+
+        int[8] leadPattern;
+        leadPattern[0] = 60; leadPattern[1] = 64; leadPattern[2] = 67; leadPattern[3] = 72;
+        leadPattern[4] = 72; leadPattern[5] = 67; leadPattern[6] = 64; leadPattern[7] = 60;
+
+        for (int i = 0; i < numSamples; i++)
+        {
+            double time = i / sampleRate();
+            double beatTime = time / beatDuration;
+            int currentBeat = lround(beatTime - 0.5); if (currentBeat < 0) { currentBeat = 0; }
+            int halfBeat = lround(beatTime * 2.0 - 0.5); if (halfBeat < 0) { halfBeat = 0; }
+
+            if (currentBeat != lastBeat && currentBeat < numBeats)
+            {
+                lastBeat = currentBeat;
+
+                var bassNote = bassNotes[currentBeat];
+                bass->noteOn(time, midiToFreq(bassNote));
+
+                var beatInBar = currentBeat % 4;
+                if (beatInBar == 0 || beatInBar == 2) { kick->trigger(time); }
+                if (beatInBar == 1 || beatInBar == 3) { snare->trigger(time); }
+            }
+
+            if (halfBeat != lastHalfBeat && halfBeat < numBeats * 2)
+            {
+                lastHalfBeat = halfBeat;
+                hihat->trigger(time);
+
+                var leadNote = leadPattern[halfBeat % 8];
+                lead->noteOn(time, midiToFreq(leadNote));
+            }
+
+            var bassSampleL = bass->tick(time) * 0.5;
+            var bassSampleR = bass->tick(time) * 0.5;
+            var leadSampleL = lead->tick(time) * 0.4;
+            var leadSampleR = lead->tick(time) * 0.4;
+            var kickSampleL = kick->tick(time) * 0.6;
+            var kickSampleR = kick->tick(time) * 0.6;
+            var snareSampleL = snare->tick(time) * 0.35;
+            var snareSampleR = snare->tick(time) * 0.35;
+            var hihatSampleL = hihat->tick(time) * 0.25;
+            var hihatSampleR = hihat->tick(time) * 0.25;
+
+            var mixL = bassSampleL + leadSampleL + kickSampleL + snareSampleL + hihatSampleL;
+            var mixR = bassSampleR + leadSampleR + kickSampleR + snareSampleR + hihatSampleR;
+
+            mixL = mixL * 0.8; if (mixL > 0.7) { mixL = 0.7 + (mixL - 0.7) * 0.3; } if (mixL < -0.7) { mixL = -0.7 + (mixL + 0.7) * 0.3; }
+            mixR = mixR * 0.8; if (mixR > 0.7) { mixR = 0.7 + (mixR - 0.7) * 0.3; } if (mixR < -0.7) { mixR = -0.7 + (mixR + 0.7) * 0.3; }
+
+            writeSample(f, mixL);
+            writeSample(f, mixR);
+        }
+
+        fclose(f);
+
+        delete bass;
+        delete lead;
+        delete kick;
+        delete snare;
+        delete hihat;
+
+        puts("=== Done! groove2.wav created ===");
+        return 0;
+    }
+}

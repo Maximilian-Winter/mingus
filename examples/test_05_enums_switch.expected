@@ -1,0 +1,10 @@
+=== Test 05: Enums and Switch ===
+prec(Plus) = 1 (expect 1)
+prec(Star) = 2 (expect 2)
+prec(Number) = 0 (expect 0)
+Plus is operator: PASS
+Number is not operator: PASS
+tokenName(Plus) = 300 (expect 300)
+tokenName(Number) = 100 (expect 100)
+switch: two (expect this)
+=== Test 05 complete ===

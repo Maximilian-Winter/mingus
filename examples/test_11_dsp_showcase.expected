@@ -1,0 +1,21 @@
+=== Test 11: DSP Showcase ===
+--- Oscillators ---
+sine(0.25)     = 1.000000
+square(0.25)   = 1.000000
+triangle(0.25) = 0.000000
+saw(0.75)      = 0.500000
+--- Stereo Mix ---
+tone = 1.000000
+buzz = 0.500000
+mix  = 0.750000
+rms  = 0.750000
+panL = 0.000000
+panR = 1.000000
+--- Effects ---
+boost(0.3)  = 0.600000
+clip(0.75)  = 0.609375
+drive(0.5)  = 0.666667
+--- Signal Chain ---
+chain L = 1.218750
+chain R = 1.218750
+=== Test 11 complete ===

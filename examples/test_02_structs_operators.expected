@@ -1,0 +1,14 @@
+=== Test 02: Structs & Operators ===
+(1,0,0) + (0,1,0) x = 1.000000
+(1,0,0) + (0,1,0) y = 1.000000
+(1,0,0) + (0,1,0) z = 0.000000
+scaled x = 2.500000 (expect 2.5)
+scaled y = 2.500000 (expect 2.5)
+chained x = 2.500000 (expect 2.5)
+chained y = 2.500000 (expect 2.5)
+a.dot(b) = 0.000000 (expect 0.0)
+a.dot(a) = 1.000000 (expect 1.0)
+a x b = (0.000000, 0.000000, 1.000000) (expect 0,0,1)
+|(3,4,0)| = 5.000000 (expect 5.0)
+norm z = 1.000000 (expect 1.0)
+=== Test 02 complete ===

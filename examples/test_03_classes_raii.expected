@@ -1,0 +1,13 @@
+=== Test 03: Classes & RAII ===
+Creating DynamicArray(4)...
+arr.length() = 10 (expect 10)
+arr[0] = 0 (expect 0)
+arr[3] = 30 (expect 30)
+arr[9] = 90 (expect 90)
+Leaving scope...
+  [DynamicArray destructor called]
+
+Building tree: 10(5(2,7),15)...
+Tree sum = 39 (expect 39)
+Deleting tree...
+=== Test 03 complete ===

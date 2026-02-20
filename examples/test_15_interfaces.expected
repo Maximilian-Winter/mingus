@@ -1,0 +1,10 @@
+=== Test 15: Interfaces ===
+--- Direct calls ---
+Circle drawn
+Square drawn
+--- Interface dispatch ---
+Circle drawn
+Square drawn
+--- Resizable ---
+resize(3) = 12
+=== Test 15 complete ===

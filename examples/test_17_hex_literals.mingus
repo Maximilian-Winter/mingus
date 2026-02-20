@@ -1,0 +1,45 @@
+// Test 17: Hex, Binary, and Octal Literals
+//
+// Verifies that all three non-decimal integer literal notations
+// are parsed and converted correctly:
+//   0xFF   — hexadecimal
+//   0b1010 — binary
+//   0o777  — octal (Mingus-style prefix, not C-style leading zero)
+//
+// Also exercises bitwise masking with hex constants, which is the
+// primary real-world use case (WAV byte manipulation, LCG noise, etc.)
+
+module HexTest
+{
+    extern func printf(string fmt, int a, int b, int c) => int;
+
+    func main() => int
+    {
+        // Hex literals
+        int h1 = 0xFF;
+        int h2 = 0xDEAD;
+        int h3 = 0x7FFFFFFF;
+        printf("hex:    %d %d %d\n", h1, h2, h3);
+
+        // Binary literals
+        int b1 = 0b1010;
+        int b2 = 0b11111111;
+        int b3 = 0b10101010;
+        printf("binary: %d %d %d\n", b1, b2, b3);
+
+        // Octal literals
+        int o1 = 0o10;
+        int o2 = 0o777;
+        int o3 = 0o666;
+        printf("octal:  %d %d %d\n", o1, o2, o3);
+
+        // Bitwise operations using hex masks (the original motivation)
+        int v = 255;
+        int masked   = v & 0xFF;
+        int shifted  = v & 0xFF00;
+        int combined = (v & 0xFF) | (0 & 0xFF00);
+        printf("ops:    %d %d %d\n", masked, shifted, combined);
+
+        return 0;
+    }
+}

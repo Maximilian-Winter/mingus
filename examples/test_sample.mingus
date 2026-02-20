@@ -1,0 +1,63 @@
+module TestModule {
+    import io, utils from std;
+    
+    // Simple function
+    public func add(int a, int b) => int {
+        return a + b;
+    }
+    
+    // Recursive factorial
+    public func factorial(int n) => int {
+        if (n <= 1) {
+            return 1;
+        } else {
+            return n * factorial(n - 1);
+        }
+    }
+    
+    // Expression-bodied function
+    public func square(int x) => int => x * x;
+    
+    // Class with constructor and method
+    public class Point {
+        public int x;
+        public int y;
+        
+        public constructor(int x, int y) {
+            this.x = x;
+            this.y = y;
+        }
+        
+        public func distance(Point other) => double {
+            var dx = this.x - other.x;
+            var dy = this.y - other.y;
+            return 0.0;
+        }
+    }
+    
+    // Struct
+    public struct Vector3 {
+        public float x;
+        public float y;
+        public float z;
+    }
+    
+    // Enum
+    public enum Color {
+        Red, Green, Blue
+    }
+    
+    // Pattern matching example
+    public func describe(int n) => string {
+        return match n {
+            0 => "zero",
+            1 => "one",
+            _ => "other"
+        };
+    }
+    
+    // Pipe example
+    public func process(int value) => int {
+        return value |> add(5);
+    }
+}

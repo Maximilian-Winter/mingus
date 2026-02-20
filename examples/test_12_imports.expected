@@ -1,0 +1,5 @@
+=== Test 12: Imports ===
+add(3, 4) = 7
+square(5) = 25
+add(square(3), square(4)) = 25
+=== Test 12 complete ===

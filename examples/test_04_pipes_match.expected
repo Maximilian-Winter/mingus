@@ -1,0 +1,14 @@
+=== Test 04: Pipes & Pattern Matching ===
+0.5 |> applyGain(2.0) = 1.000000 (expect 1.0)
+0.7 |> gain(1.5) |> clip = 1.000000 (expect 1.0)
+processSample(0.3) = 0.419625
+softClip(0.5) = 0.458333 (expect ~0.458)
+softClip(2.0) = 1.000000 (expect 1.0)
+softClip(-2.0) = -1.000000 (expect -1.0)
+softClip(0.0) = 0.000000 (expect 0.0)
+
+Classification results:
+  classify(0.95) = 4.000000 (expect 4=clipping)
+  classify(0.50) = 2.000000 (expect 2=nominal)
+  classify(0.001) = 0.000000 (expect 0=silent)
+=== Test 04 complete ===

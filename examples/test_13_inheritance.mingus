@@ -1,0 +1,119 @@
+// Test 13: Inheritance, virtual dispatch, super constructor, destructor chaining
+module Test13
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+
+    // Base class with virtual methods
+    class Animal
+    {
+        int legs;
+
+        constructor(int l)
+        {
+            this.legs = l;
+        }
+
+        func speak() => void
+        {
+            puts("...");
+        }
+
+        func getLegs() => int
+        {
+            return this.legs;
+        }
+    }
+
+    // Derived class overriding speak()
+    class Dog : Animal
+    {
+        constructor() : super(4)
+        {
+        }
+
+        func speak() => void
+        {
+            puts("Woof!");
+        }
+    }
+
+    // Another derived class
+    class Cat : Animal
+    {
+        constructor() : super(4)
+        {
+        }
+
+        func speak() => void
+        {
+            puts("Meow!");
+        }
+    }
+
+    // Derived class with different leg count
+    class Snake : Animal
+    {
+        constructor() : super(0)
+        {
+        }
+
+        func speak() => void
+        {
+            puts("Hiss!");
+        }
+    }
+
+    // Test polymorphic dispatch through base pointer
+    func makeAnimalSpeak(Animal* a) => void
+    {
+        a->speak();
+    }
+
+    func main() => int
+    {
+        puts("=== Test 13: Inheritance ===");
+
+        // Stack-allocated objects
+        puts("\n--- Stack allocation ---");
+        var dog = Dog();
+        var cat = Cat();
+        var snake = Snake();
+
+        puts("Dog says:");
+        dog.speak();
+        puts("Cat says:");
+        cat.speak();
+        puts("Snake says:");
+        snake.speak();
+
+        // Inherited field access
+        printf("Dog legs: %d\n", dog.getLegs());
+        printf("Cat legs: %d\n", cat.getLegs());
+        printf("Snake legs: %d\n", snake.getLegs());
+
+        // Heap-allocated + polymorphic dispatch
+        puts("\n--- Polymorphic dispatch ---");
+        var animals0 = new Dog();
+        var animals1 = new Cat();
+        var animals2 = new Snake();
+
+        puts("Through Animal*:");
+        makeAnimalSpeak(animals0);
+        makeAnimalSpeak(animals1);
+        makeAnimalSpeak(animals2);
+
+        printf("animals0 legs: %d\n", animals0->getLegs());
+        printf("animals2 legs: %d\n", animals2->getLegs());
+
+        // Clean up
+        delete animals0;
+        delete animals1;
+        delete animals2;
+
+        puts("\n=== Test 13 complete ===");
+        return 0;
+    }
+}

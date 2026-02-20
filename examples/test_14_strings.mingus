@@ -1,0 +1,50 @@
+// Test 14: String Operations — concatenation, comparison, methods, RAII
+module Test14
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    func main() => int
+    {
+        puts("=== Test 14: String Operations ===");
+
+        // Concatenation
+        puts("\n--- Concatenation ---");
+        var hello = "Hello";
+        var world = " World";
+        var greeting = hello + world;
+        puts(greeting);
+
+        // Content comparison
+        puts("\n--- Comparison ---");
+        var a = "abc";
+        var b = "abc";
+        var c = "xyz";
+        if (a == b) { puts("a == b: true"); }
+        if (a != c) { puts("a != c: true"); }
+
+        // Length
+        puts("\n--- Length ---");
+        printf("greeting length: %d\n", greeting.length());
+
+        // Substring — also exercises concat for the label
+        puts("\n--- Substring ---");
+        var sub = greeting.substring(0, 5);
+        puts("substring(0,5): " + sub);
+
+        // String +=
+        puts("\n--- Concat Assign ---");
+        var s = "foo";
+        s += "bar";
+        puts("s: " + s);
+
+        // Interpolation
+        puts("\n--- Interpolation ---");
+        var x = 42;
+        var msg = "value=${x}";
+        puts(msg);
+
+        puts("\n=== Test 14 complete ===");
+        return 0;
+    }
+}

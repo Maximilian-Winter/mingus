@@ -1,0 +1,22 @@
+=== Test 13: Inheritance ===
+
+--- Stack allocation ---
+Dog says:
+Woof!
+Cat says:
+Meow!
+Snake says:
+Hiss!
+Dog legs: 4
+Cat legs: 4
+Snake legs: 0
+
+--- Polymorphic dispatch ---
+Through Animal*:
+Woof!
+Meow!
+Hiss!
+animals0 legs: 4
+animals2 legs: 0
+
+=== Test 13 complete ===

@@ -1,0 +1,63 @@
+// Test 8: Pointers, raw blocks, pointer arithmetic, casts
+module Test08
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+
+    func main() => int
+    {
+        puts("=== Test 08: Pointers & Raw Blocks ===");
+
+        // Stack array with pointer access
+        int[10] arr;
+        for (int i = 0; i < 10; i++)
+        {
+            arr[i] = i * i;
+        }
+        printf("arr[0] = %d (expect 0)\n", arr[0]);
+        printf("arr[3] = %d (expect 9)\n", arr[3]);
+        printf("arr[9] = %d (expect 81)\n", arr[9]);
+
+        // Pointer to array element
+        var ptr = &arr[0];
+        raw
+        {
+            var val = *(ptr + 5);
+            printf("*(ptr+5) = %d (expect 25)\n", val);
+        }
+
+        // Heap allocation via raw block
+        raw
+        {
+            var data = (int*)malloc(5 * sizeof(int));
+            *(data + 0) = 100;
+            *(data + 1) = 200;
+            *(data + 2) = 300;
+            *(data + 3) = 400;
+            *(data + 4) = 500;
+
+            printf("heap[0] = %d (expect 100)\n", *(data + 0));
+            printf("heap[2] = %d (expect 300)\n", *(data + 2));
+            printf("heap[4] = %d (expect 500)\n", *(data + 4));
+
+            free((byte*)data);
+        }
+        puts("Heap freed OK");
+
+        // Null pointer check
+        int* p = null;
+        if (p == null)
+        {
+            puts("null check: PASS");
+        }
+        else
+        {
+            puts("null check: FAIL");
+        }
+
+        puts("=== Test 08 complete ===");
+        return 0;
+    }
+}

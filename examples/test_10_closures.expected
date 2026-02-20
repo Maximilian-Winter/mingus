@@ -1,0 +1,7 @@
+=== Test 10: Closures ===
+doubler(5.0) = 10.000000 (expect 10.0)
+tripler(5.0) = 15.000000 (expect 15.0)
+double twice(3.0) = 12.000000 (expect 12.0)
+times6(7.0) = 42.000000 (expect 42.0)
+10 |> doubler = 20.000000 (expect 20.0)
+=== Test 10 complete ===

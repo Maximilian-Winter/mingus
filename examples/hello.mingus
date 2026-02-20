@@ -1,0 +1,35 @@
+// Mingus v1 — First compilable test program
+module Hello
+{
+    extern func printf(string format) => int;
+
+    func run() => int
+    {
+        printf("Hello from Mingus!\n");
+        printf("The Mingus compiler generated this LLVM IR.\n");
+
+        var x = 10;
+        var y = 20;
+        var sum = x + y;
+
+        // Test control flow
+        if (sum > 25)
+        {
+            printf("sum is greater than 25\n");
+        }
+        else
+        {
+            printf("sum is 25 or less\n");
+        }
+
+        // Test a loop
+        for (int i = 0; i < 5; i++)
+        {
+            printf("*");
+        }
+        printf("\n");
+
+        printf("Done!\n");
+        return 0;
+    }
+}

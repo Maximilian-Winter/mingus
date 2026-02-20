@@ -1,0 +1,11 @@
+=== DSP WAV Example ===
+Effect chain:
+Gain
+Drive
+SoftClip
+Writing 132300 samples to output.wav...
+Done.
+Sample rate : 44100 Hz
+Samples     : 132300
+Output      : output.wav
+=== Complete ===

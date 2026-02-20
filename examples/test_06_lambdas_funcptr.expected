@@ -1,0 +1,7 @@
+=== Test 06: Lambdas & Function Pointers ===
+doubler(21.0) = 42.000000 (expect 42.0)
+apply(5.0, x=>x*x) = 25.000000 (expect 25.0)
+apply(10.0, x=>x+7) = 17.000000 (expect 17.0)
+applyTwice(3.0, x=>x*2) = 12.000000 (expect 12.0)
+7.0 |> apply(x=>x+3) = 10.000000 (expect 10.0)
+=== Test 06 complete ===

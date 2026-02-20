@@ -1,0 +1,55 @@
+// Test 10: Closures (lambdas with captures) via fat pointer { fnPtr, envPtr }
+module Test10
+{
+    extern func printf(string fmt, double val) => int;
+    extern func puts(string s) => int;
+
+    // Returns a closure that multiplies by 'factor'
+    func makeScaler(double factor) => (double) => double
+    {
+        return (double x) => { return x * factor; };
+    }
+
+    // Higher-order function that applies f to x
+    func apply(double x, (double) => double f) => double
+    {
+        return f(x);
+    }
+
+    // Applies f twice: f(f(x))
+    func applyTwice(double x, (double) => double f) => double
+    {
+        return f(f(x));
+    }
+
+    // Returns a function that computes f(g(x))
+    func compose((double) => double f, (double) => double g) => (double) => double
+    {
+        return (double x) => { return f(g(x)); };
+    }
+
+    func main() => int
+    {
+        puts("=== Test 10: Closures ===");
+
+        // Basic closure
+        var doubler = makeScaler(2.0);
+        var tripler = makeScaler(3.0);
+        printf("doubler(5.0) = %f (expect 10.0)\n", apply(5.0, doubler));
+        printf("tripler(5.0) = %f (expect 15.0)\n", apply(5.0, tripler));
+
+        // Closure with applyTwice
+        printf("double twice(3.0) = %f (expect 12.0)\n", applyTwice(3.0, doubler));
+
+        // Compose: doubler(tripler(x)) = 6x
+        var times6 = compose(doubler, tripler);
+        printf("times6(7.0) = %f (expect 42.0)\n", apply(7.0, times6));
+
+        // Pipe with closure
+        var result = 10.0 |> apply(doubler);
+        printf("10 |> doubler = %f (expect 20.0)\n", result);
+
+        puts("=== Test 10 complete ===");
+        return 0;
+    }
+}

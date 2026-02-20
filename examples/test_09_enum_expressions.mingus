@@ -1,0 +1,91 @@
+module Test09
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    enum Color : int
+    {
+        Red = 0,
+        Green = 1,
+        Blue = 2,
+    }
+
+    enum TokenKind : int
+    {
+        Number = 0,
+        Plus = 2,
+        Star = 4,
+    }
+
+    enum SmallFlags : byte
+    {
+        None = 0,
+        Read = 1,
+        Write = 2,
+        Execute = 4,
+    }
+
+    enum HttpMethod : string
+    {
+        Get = "GET",
+        Post = "POST",
+        Delete = "DELETE",
+    }
+
+    func main() => int
+    {
+        // Direct enum member access
+        var r = Color.Red;
+        var g = Color.Green;
+        var b = Color.Blue;
+
+        printf("Red = %d (expect 0)\n", r);
+        printf("Green = %d (expect 1)\n", g);
+        printf("Blue = %d (expect 2)\n", b);
+
+        // Enum in arithmetic (underlying type is int)
+        var next = r + 1;
+        printf("Red + 1 = %d (expect 1)\n", next);
+
+        // Enum comparison
+        if (r == Color.Red)
+        {
+            printf("r is Red: %d (expect 1)\n", 1);
+        }
+
+        // Enum as function argument
+        printf("Blue value = %d (expect 2)\n", Color.Blue);
+
+        // Enum in match (verify still works)
+        var name = match b {
+            Color.Red   => 10,
+            Color.Green => 20,
+            Color.Blue  => 30,
+            _ => -1,
+        };
+        printf("match Blue = %d (expect 30)\n", name);
+
+        // Different enum
+        var tok = TokenKind.Star;
+        printf("Star = %d (expect 4)\n", tok);
+
+        // Byte-backed enum
+        var sf = SmallFlags.Write;
+        printf("Write = %d (expect 2)\n", sf);
+        printf("Execute = %d (expect 4)\n", SmallFlags.Execute);
+
+        // Byte enum arithmetic
+        var combined = SmallFlags.Read + SmallFlags.Write;
+        printf("Read+Write = %d (expect 3)\n", combined);
+
+        // String-backed enum
+        puts(HttpMethod.Get);
+        puts(HttpMethod.Post);
+        puts(HttpMethod.Delete);
+
+        var method = HttpMethod.Post;
+        puts(method);
+
+        return 0;
+    }
+}

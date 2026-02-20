@@ -1,0 +1,15 @@
+Red = 0 (expect 0)
+Green = 1 (expect 1)
+Blue = 2 (expect 2)
+Red + 1 = 1 (expect 1)
+r is Red: 1 (expect 1)
+Blue value = 2 (expect 2)
+match Blue = 30 (expect 30)
+Star = 4 (expect 4)
+Write = 2 (expect 2)
+Execute = 4 (expect 4)
+Read+Write = 3 (expect 3)
+GET
+POST
+DELETE
+POST

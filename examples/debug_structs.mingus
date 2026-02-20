@@ -1,0 +1,53 @@
+// Minimal struct debug test
+module Debug
+{
+    extern func printf(string fmt, double val) => int;
+
+    struct Vec3
+    {
+        double x;
+        double y;
+        double z;
+
+        func operator+(Vec3 other) => Vec3
+        {
+            Vec3 result;
+            result.x = this.x + other.x;
+            result.y = this.y + other.y;
+            result.z = this.z + other.z;
+            return result;
+        }
+
+        func dot(Vec3 other) => double
+        {
+            return this.x * other.x + this.y * other.y + this.z * other.z;
+        }
+    }
+
+    func main() => int
+    {
+        Vec3 a;
+        a.x = 1.0;
+        a.y = 2.0;
+        a.z = 3.0;
+
+        printf("a.x = %f (expect 1.0)\n", a.x);
+        printf("a.y = %f (expect 2.0)\n", a.y);
+        printf("a.z = %f (expect 3.0)\n", a.z);
+
+        Vec3 b;
+        b.x = 10.0;
+        b.y = 20.0;
+        b.z = 30.0;
+
+        var c = a + b;
+        printf("c.x = %f (expect 11.0)\n", c.x);
+        printf("c.y = %f (expect 22.0)\n", c.y);
+        printf("c.z = %f (expect 33.0)\n", c.z);
+
+        var d = a.dot(b);
+        printf("a.dot(b) = %f (expect 140.0)\n", d);
+
+        return 0;
+    }
+}

@@ -1,0 +1,32 @@
+module Main
+{
+    extern func printf(string fmt, double val) => int;
+
+    func applyGain(double sample, double gain) => double
+    {
+        return sample * gain;
+    }
+
+    func softClip(double sample) => double
+    {
+        return match sample {
+            var x if x > 1.0  => 1.0,
+            var x if x < -1.0 => -1.0,
+            var x => x - (x * x * x) / 3.0,
+        };
+    }
+
+    func main() => int
+    {
+        var sample = 0.7;
+
+        var processed = sample
+            |> applyGain(1.5)
+            |> softClip;
+
+        printf("Input:  %f\n", sample);
+        printf("Output: %f\n", processed);
+
+        return 0;
+    }
+}

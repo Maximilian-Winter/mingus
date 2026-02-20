@@ -1,0 +1,12 @@
+=== Test 01: Basics ===
+10 + 20 = 30
+20 - 10 = 10
+10 * 20 = 200
+20 / 10 = 2
+20 % 3  = 2
+sum > 25: PASS
+diff == 10: PASS
+sum(0..9) = 45 (expect 45)
+2^k >= 100: k = 7 (expect 7)
+matrix sum = 36 (expect 36)
+=== Test 01 complete ===

@@ -1,0 +1,614 @@
+// ============================================================================
+// Mingus v1 — Complete Feature Showcase
+// Every feature that ships, demonstrated in real code
+// ============================================================================
+
+
+// ============================================================================
+// 1. Extern — Talking to the outside world
+// ============================================================================
+
+module Core
+{
+    // Single extern declarations
+    extern func printf(string fmt) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memcpy(byte* dest, byte* src, int n) => byte*;
+
+    // Grouped extern block
+    extern
+    {
+        func sin(double x) => double;
+        func cos(double x) => double;
+        func sqrt(double x) => double;
+        func pow(double x, double y) => double;
+    }
+}
+
+
+// ============================================================================
+// 2. Operator Overloading — Math that reads like math
+// ============================================================================
+
+module Math
+{
+    extern func sqrt(double x) => double;
+
+    struct Vec3
+    {
+        double x;
+        double y;
+        double z;
+
+        func operator+(Vec3 other) => Vec3
+        {
+            Vec3 result;
+            result.x = this.x + other.x;
+            result.y = this.y + other.y;
+            result.z = this.z + other.z;
+            return result;
+        }
+
+        func operator-(Vec3 other) => Vec3
+        {
+            Vec3 result;
+            result.x = this.x - other.x;
+            result.y = this.y - other.y;
+            result.z = this.z - other.z;
+            return result;
+        }
+
+        func operator*(double scalar) => Vec3
+        {
+            Vec3 result;
+            result.x = this.x * scalar;
+            result.y = this.y * scalar;
+            result.z = this.z * scalar;
+            return result;
+        }
+
+        func dot(Vec3 other) => double
+        {
+            return this.x * other.x + this.y * other.y + this.z * other.z;
+        }
+
+        func cross(Vec3 other) => Vec3
+        {
+            Vec3 result;
+            result.x = this.y * other.z - this.z * other.y;
+            result.y = this.z * other.x - this.x * other.z;
+            result.z = this.x * other.y - this.y * other.x;
+            return result;
+        }
+
+        func length() => double
+        {
+            return sqrt(this.dot(this));
+        }
+
+        func normalize() => Vec3
+        {
+            var len = this.length();
+            return this * (1.0 / len);
+        }
+    }
+
+    struct Complex
+    {
+        double real;
+        double imag;
+
+        func operator+(Complex other) => Complex
+        {
+            Complex result;
+            result.real = this.real + other.real;
+            result.imag = this.imag + other.imag;
+            return result;
+        }
+
+        func operator*(Complex other) => Complex
+        {
+            Complex result;
+            result.real = this.real * other.real - this.imag * other.imag;
+            result.imag = this.real * other.imag + this.imag * other.real;
+            return result;
+        }
+
+        func magnitude() => double
+        {
+            return sqrt(this.real * this.real + this.imag * this.imag);
+        }
+    }
+
+    // Natural mathematical expression
+    func demo() => void
+    {
+        Vec3 a;
+        a.x = 1.0;
+        a.y = 0.0;
+        a.z = 0.0;
+
+        Vec3 b;
+        b.x = 0.0;
+        b.y = 1.0;
+        b.z = 0.0;
+
+        var c = a + b;
+        var d = (a + b) * 2.5;
+        var n = a.cross(b).normalize();
+    }
+}
+
+
+// ============================================================================
+// 3. RAII — Destructors and resource safety
+// ============================================================================
+
+module Resources
+{
+    extern func fopen(string path, string mode) => byte*;
+    extern func fclose(byte* handle) => int;
+    extern func fread(byte* buffer, int size, int count, byte* stream) => int;
+    extern func fwrite(byte* buffer, int size, int count, byte* stream) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+
+    class File
+    {
+        private byte* handle;
+        private string path;
+
+        constructor(string path, string mode)
+        {
+            this.path = path;
+            this.handle = fopen(path, mode);
+        }
+
+        destructor
+        {
+            if (this.handle != null)
+            {
+                fclose(this.handle);
+            }
+        }
+
+        func read(byte* buffer, int size) => int
+        {
+            return fread(buffer, 1, size, this.handle);
+        }
+
+        func write(byte* data, int size) => int
+        {
+            return fwrite(data, 1, size, this.handle);
+        }
+
+        func isOpen() => bool
+        {
+            return this.handle != null;
+        }
+    }
+
+    // Usage — destructor runs at end of scope
+    func processFile(string path) => int
+    {
+        File file = File(path, "r");
+
+        if (!file.isOpen())
+        {
+            return -1;
+        }
+
+        byte[4096] buffer;
+        var bytesRead = file.read(&buffer[0], 4096);
+        return bytesRead;
+    }   // file.destructor() called here automatically
+
+
+    // Dynamic buffer with RAII
+    class Buffer
+    {
+        private byte* data;
+        private int size;
+
+        constructor(int size)
+        {
+            this.size = size;
+            this.data = malloc(size);
+        }
+
+        destructor
+        {
+            if (this.data != null)
+            {
+                free(this.data);
+            }
+        }
+
+        func operator[](int index) => byte
+        {
+            raw
+            {
+                return *(this.data + index);
+            }
+        }
+
+        func ptr() => byte*
+        {
+            return this.data;
+        }
+    }
+}
+
+
+// ============================================================================
+// 4. New & Delete — Explicit heap control
+// ============================================================================
+
+module HeapManagement
+{
+    class Node
+    {
+        int value;
+        Node* left;
+        Node* right;
+
+        constructor(int value)
+        {
+            this.value = value;
+            this.left = null;
+            this.right = null;
+        }
+
+        destructor
+        {
+            if (this.left != null)
+            {
+                delete this.left;
+            }
+            if (this.right != null)
+            {
+                delete this.right;
+            }
+        }
+    }
+
+    func buildTree() => Node*
+    {
+        var root = new Node(10);
+        root->left = new Node(5);
+        root->right = new Node(15);
+        root->left->left = new Node(2);
+        root->left->right = new Node(7);
+        return root;
+    }
+
+    func sumTree(Node* node) => int
+    {
+        if (node == null)
+        {
+            return 0;
+        }
+        return node->value + sumTree(node->left) + sumTree(node->right);
+    }
+
+    // Usage
+    func demo() => void
+    {
+        var tree = buildTree();
+        var total = sumTree(tree);
+        delete tree;    // Recursively cleans up via destructors
+    }
+}
+
+
+// ============================================================================
+// 5. Pipes + Raw + Pattern Matching — The Mingus trinity
+// ============================================================================
+
+module SignalProcessing
+{
+    extern func sin(double x) => double;
+
+    // Pipe-friendly transform functions
+    func applyGain(double sample, double gain) => double
+    {
+        return sample * gain;
+    }
+
+    func softClip(double sample) => double
+    {
+        return match sample {
+            var x if x > 1.0  => 1.0,
+            var x if x < -1.0 => -1.0,
+            var x => x - (x * x * x) / 3.0,
+        };
+    }
+
+    func quantize(double sample, int bits) => double
+    {
+        var levels = (1 << bits) - 1;
+        var scaled = (sample + 1.0) * 0.5 * levels;
+        var quantized = (int)scaled;
+        return (quantized * 2.0 / levels) - 1.0;
+    }
+
+    // Full processing chain using pipes
+    func processSample(double sample) => double
+    {
+        return sample
+            |> applyGain(0.8)
+            |> softClip
+            |> quantize(16);
+    }
+
+    // Raw block for direct buffer manipulation
+    func generateAndProcess(double* output, int numSamples, double freq, double sampleRate) => void
+    {
+        var phaseInc = 2.0 * 3.14159265 * freq / sampleRate;
+
+        raw
+        {
+            var phase = 0.0;
+            for (int i = 0; i < numSamples; i++)
+            {
+                var raw_sample = sin(phase);
+                *(output + i) = raw_sample |> processSample;
+                phase += phaseInc;
+            }
+        }
+    }
+
+    // Analysis using tuples and pattern matching
+    func analyzeSample(double sample) => (string, double)
+    {
+        var abs_val = sample;
+        if (abs_val < 0.0) { abs_val = -abs_val; }
+
+        var category = match sample {
+            var x if x > 0.9   => "clipping",
+            var x if x > 0.7   => "hot",
+            var x if x > 0.3   => "nominal",
+            var x if x > 0.01  => "quiet",
+            _                  => "silent",
+        };
+
+        return (category, abs_val);
+    }
+}
+
+
+// ============================================================================
+// 6. First-class Functions — Functions as values
+// ============================================================================
+
+module Functional
+{
+    // Function type in variable declaration
+    func apply(double x, (double) => double transform) => double
+    {
+        return transform(x);
+    }
+
+    // Function that returns a function
+    func makeScaler(double factor) => (double) => double
+    {
+        return (double x) => { return x * factor; };
+    }
+
+    // Composing functions
+    func compose((double) => double f, (double) => double g) => (double) => double
+    {
+        return (double x) => { return f(g(x)); };
+    }
+
+    // Array transformation using function parameter
+    func mapArray(double[] input, double[] output, int n, (double) => double f) => void
+    {
+        for (int i = 0; i < n; i++)
+        {
+            output[i] = f(input[i]);
+        }
+    }
+
+    // Usage
+    func demo() => void
+    {
+        var doubler = makeScaler(2.0);
+        var halver = makeScaler(0.5);
+        var identity = compose(doubler, halver);
+
+        var result = 21.0 |> doubler;     // 42.0
+
+        // Pipe with first-class function arguments
+        var value = 10.0
+            |> apply(doubler)
+            |> apply(halver);
+    }
+}
+
+
+// ============================================================================
+// 7. Enums, Tuples, and Pattern Matching — Working together
+// ============================================================================
+
+module Compiler
+{
+    extern func printf(string fmt) => int;
+
+    enum TokenKind : int
+    {
+        Number     = 0,
+        Identifier = 1,
+        Plus       = 2,
+        Minus      = 3,
+        Star       = 4,
+        Slash      = 5,
+        LeftParen  = 6,
+        RightParen = 7,
+        Equals     = 8,
+        EndOfFile  = 9,
+    }
+
+    struct Token
+    {
+        TokenKind kind;
+        string text;
+        int line;
+        int col;
+    }
+
+    func tokenPrecedence(Token tok) => int
+    {
+        return match tok.kind {
+            TokenKind.Plus  => 1,
+            TokenKind.Minus => 1,
+            TokenKind.Star  => 2,
+            TokenKind.Slash => 2,
+            _ => 0,
+        };
+    }
+
+    func tokenInfo(Token tok) => (string, int, bool)
+    {
+        var name = match tok.kind {
+            TokenKind.Number     => "NUMBER",
+            TokenKind.Identifier => "IDENT",
+            TokenKind.Plus       => "PLUS",
+            TokenKind.Minus      => "MINUS",
+            TokenKind.Star       => "STAR",
+            TokenKind.Slash      => "SLASH",
+            TokenKind.LeftParen  => "LPAREN",
+            TokenKind.RightParen => "RPAREN",
+            TokenKind.Equals     => "ASSIGN",
+            TokenKind.EndOfFile  => "EOF",
+            _ => "UNKNOWN",
+        };
+
+        var prec = tokenPrecedence(tok);
+
+        var isOperator = match tok.kind {
+            TokenKind.Plus  => true,
+            TokenKind.Minus => true,
+            TokenKind.Star  => true,
+            TokenKind.Slash => true,
+            _ => false,
+        };
+
+        return (name, prec, isOperator);
+    }
+
+    // Destructure the result
+    func printTokenInfo(Token tok) => void
+    {
+        (var name, var precedence, var isOp) = tokenInfo(tok);
+        printf("Token: ${name}, precedence: ${precedence}");
+    }
+}
+
+
+// ============================================================================
+// 8. Classes with Full Feature Integration
+// ============================================================================
+
+module Collections
+{
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memcpy(byte* dest, byte* src, int n) => byte*;
+
+    class DynamicArray
+    {
+        private int* data;
+        private int size;
+        private int capacity;
+
+        constructor(int initialCapacity)
+        {
+            this.capacity = initialCapacity;
+            this.size = 0;
+            raw { this.data = (int*)malloc(initialCapacity * sizeof(int)); }
+        }
+
+        destructor
+        {
+            if (this.data != null)
+            {
+                raw { free((byte*)this.data); }
+            }
+        }
+
+        func push(int value) => void
+        {
+            if (this.size >= this.capacity)
+            {
+                this.grow();
+            }
+
+            raw
+            {
+                *(this.data + this.size) = value;
+            }
+
+            this.size++;
+        }
+
+        func operator[](int index) => int
+        {
+            raw
+            {
+                return *(this.data + index);
+            }
+        }
+
+        func length() => int
+        {
+            return this.size;
+        }
+
+        func map((int) => int transform) => DynamicArray
+        {
+            var result = DynamicArray(this.capacity);
+            for (int i = 0; i < this.size; i++)
+            {
+                var val = this[i] |> transform;
+                result.push(val);
+            }
+            return result;
+        }
+
+        private func grow() => void
+        {
+            var newCapacity = this.capacity * 2;
+
+            raw
+            {
+                var newData = (int*)malloc(newCapacity * sizeof(int));
+                memcpy((byte*)newData, (byte*)this.data, this.size * sizeof(int));
+                free((byte*)this.data);
+                this.data = newData;
+            }
+
+            this.capacity = newCapacity;
+        }
+    }
+
+    // Usage — RAII, operator overloading, pipes, lambdas, raw
+    func demo() => void
+    {
+        var arr = DynamicArray(8);
+
+        for (int i = 0; i < 20; i++)
+        {
+            arr.push(i);
+        }
+
+        // Operator overloading for indexing
+        var fifth = arr[4];
+
+        // First-class function + pipe
+        var doubled = arr.map((int x) => { return x * 2; });
+
+        // Destructor cleans up both arrays at end of scope
+    }
+}

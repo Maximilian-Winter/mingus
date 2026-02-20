@@ -1,0 +1,116 @@
+// Test 2: Structs, methods, operator overloading
+module Test02
+{
+    extern func printf(string fmt, double val) => int;
+    extern func puts(string s) => int;
+    extern func sqrt(double x) => double;
+
+    struct Vec3
+    {
+        double x;
+        double y;
+        double z;
+
+        func operator+(Vec3 other) => Vec3
+        {
+            Vec3 result;
+            result.x = this.x + other.x;
+            result.y = this.y + other.y;
+            result.z = this.z + other.z;
+            return result;
+        }
+
+        func operator*(double scalar) => Vec3
+        {
+            Vec3 result;
+            result.x = this.x * scalar;
+            result.y = this.y * scalar;
+            result.z = this.z * scalar;
+            return result;
+        }
+
+        func dot(Vec3 other) => double
+        {
+            return this.x * other.x + this.y * other.y + this.z * other.z;
+        }
+
+        func cross(Vec3 other) => Vec3
+        {
+            Vec3 result;
+            result.x = this.y * other.z - this.z * other.y;
+            result.y = this.z * other.x - this.x * other.z;
+            result.z = this.x * other.y - this.y * other.x;
+            return result;
+        }
+
+        func length() => double
+        {
+            return sqrt(this.dot(this));
+        }
+
+        func normalize() => Vec3
+        {
+            var len = this.length();
+            return this * (1.0 / len);
+        }
+    }
+
+    func main() => int
+    {
+        puts("=== Test 02: Structs & Operators ===");
+
+        // Create vectors
+        Vec3 a;
+        a.x = 1.0;
+        a.y = 0.0;
+        a.z = 0.0;
+
+        Vec3 b;
+        b.x = 0.0;
+        b.y = 1.0;
+        b.z = 0.0;
+
+        // operator+
+        var c = a + b;
+        printf("(1,0,0) + (0,1,0) x = %f\n", c.x);
+        printf("(1,0,0) + (0,1,0) y = %f\n", c.y);
+        printf("(1,0,0) + (0,1,0) z = %f\n", c.z);
+
+        // operator* (scalar)
+        var d = c * 2.5;
+        printf("scaled x = %f (expect 2.5)\n", d.x);
+        printf("scaled y = %f (expect 2.5)\n", d.y);
+
+        // Chained: (a + b) * 2.5
+        var e = (a + b) * 2.5;
+        printf("chained x = %f (expect 2.5)\n", e.x);
+        printf("chained y = %f (expect 2.5)\n", e.y);
+
+        // Dot product
+        var dot_ab = a.dot(b);
+        printf("a.dot(b) = %f (expect 0.0)\n", dot_ab);
+        var dot_aa = a.dot(a);
+        printf("a.dot(a) = %f (expect 1.0)\n", dot_aa);
+
+        // Cross product
+        var cross = a.cross(b);
+        printf("a x b = (%f,", cross.x);
+        printf(" %f,", cross.y);
+        printf(" %f) (expect 0,0,1)\n", cross.z);
+
+        // Length
+        Vec3 v;
+        v.x = 3.0;
+        v.y = 4.0;
+        v.z = 0.0;
+        var len = v.length();
+        printf("|(3,4,0)| = %f (expect 5.0)\n", len);
+
+        // Normalize + chained method call on temp
+        var n = a.cross(b).normalize();
+        printf("norm z = %f (expect 1.0)\n", n.z);
+
+        puts("=== Test 02 complete ===");
+        return 0;
+    }
+}

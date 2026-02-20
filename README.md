@@ -1,0 +1,310 @@
+# Mingus
+
+A compiled systems programming language that combines low-level control with expressive high-level abstractions. Named after Charles Mingus — bold, structured, uncompromising.
+
+Mingus compiles to native code via LLVM. It has pipes for data flow, pattern matching with guards, RAII resource management, closures, operator overloading, interfaces, inheritance with virtual dispatch, and raw blocks for when you need to get close to the metal.
+
+```
+func processSample(double sample) => double
+{
+    return sample
+        |> applyGain(1.5)
+        |> softClip;
+}
+
+func softClip(double sample) => double
+{
+    return match sample {
+        var x if x > 1.0  => 1.0,
+        var x if x < -1.0 => -1.0,
+        var x => x - (x * x * x) / 3.0,
+    };
+}
+```
+
+## What It Looks Like
+
+### Structs with operator overloading
+
+```
+struct Vec3
+{
+    double x;
+    double y;
+    double z;
+
+    func operator+(Vec3 other) => Vec3
+    {
+        Vec3 result;
+        result.x = this.x + other.x;
+        result.y = this.y + other.y;
+        result.z = this.z + other.z;
+        return result;
+    }
+
+    func dot(Vec3 other) => double
+    {
+        return this.x * other.x + this.y * other.y + this.z * other.z;
+    }
+
+    func length() => double
+    {
+        return sqrt(this.dot(this));
+    }
+}
+```
+
+### Classes with RAII
+
+```
+class DynamicArray
+{
+    private int* data;
+    private int size;
+    private int capacity;
+
+    constructor(int initialCapacity)
+    {
+        this.capacity = initialCapacity;
+        this.size = 0;
+        raw { this.data = (int*)malloc(initialCapacity * sizeof(int)); }
+    }
+
+    destructor
+    {
+        if (this.data != null)
+        {
+            raw { free((byte*)this.data); }
+        }
+    }
+
+    func push(int value) => void
+    {
+        if (this.size >= this.capacity) { this.grow(); }
+        raw { *(this.data + this.size) = value; }
+        this.size++;
+    }
+
+    func operator[](int index) => int
+    {
+        raw { return *(this.data + index); }
+    }
+}
+```
+
+Destructors run automatically at scope exit. No garbage collector, no manual free — resources clean up when they go out of scope.
+
+```
+{
+    var arr = DynamicArray(8);
+    arr.push(10);
+    arr.push(20);
+    // arr.destructor called automatically here
+}
+```
+
+### Closures and higher-order functions
+
+```
+func makeScaler(double factor) => (double) => double
+{
+    return (double x) => { return x * factor; };
+}
+
+func compose((double) => double f, (double) => double g) => (double) => double
+{
+    return (double x) => { return f(g(x)); };
+}
+
+var doubler = makeScaler(2.0);
+var tripler = makeScaler(3.0);
+var times6  = compose(doubler, tripler);
+
+var result = 7.0 |> apply(times6);   // 42.0
+```
+
+### Interfaces
+
+```
+interface Drawable
+{
+    func draw() => void;
+}
+
+interface Resizable
+{
+    func resize(int factor) => int;
+}
+
+class Circle : Drawable, Resizable
+{
+    int radius;
+    constructor(int r) { this.radius = r; }
+    func draw() => void { puts("Circle drawn"); }
+    func resize(int factor) => int { return this.radius * factor; }
+}
+
+func renderAll(Drawable* d) => void
+{
+    d->draw();  // virtual dispatch through interface
+}
+```
+
+### Enums and pattern matching
+
+```
+enum Wave : int
+{
+    Sine     = 0,
+    Square   = 1,
+    Triangle = 2,
+    Saw      = 3,
+}
+
+func oscillator(int wave, double phase) => double
+{
+    return match wave {
+        Wave.Sine     => sin(phase * twoPi()),
+        Wave.Square   => phase < 0.5 ? 1.0 : -1.0,
+        Wave.Triangle => phase < 0.5
+            ? phase * 4.0 - 1.0
+            : 3.0 - phase * 4.0,
+        _ => phase * 2.0 - 1.0,
+    };
+}
+```
+
+### Raw blocks for unsafe operations
+
+Safe by default. When you need pointer arithmetic, you ask for it explicitly:
+
+```
+raw
+{
+    var data = (int*)malloc(5 * sizeof(int));
+    *(data + 0) = 100;
+    *(data + 2) = 300;
+    free((byte*)data);
+}
+```
+
+Pointer dereference for assignment and pointer arithmetic only compile inside `raw` blocks. Address-of (`&`), null checks, and arrow access (`->`) work everywhere.
+
+## The Showcase: A Walking Bass Line
+
+The `examples/` directory includes a synthesizer written entirely in Mingus that generates a 4-bar groove as a WAV file. It uses ADSR envelopes, multiple oscillator waveforms, a walking bass line in C minor, kick/snare/hihat patterns with swing timing, and soft saturation for warmth. Every major language feature appears in a single musical program.
+
+```
+var chain = composeEffect(makeGain(2.0), makeDrive(1.5));
+var sig = stereoOsc(Wave.Triangle, 0.375);
+var processed = applyStereo(sig, chain);
+```
+
+See `examples/mingus_groove.mingus` for the full source.
+
+## Building
+
+### Requirements
+
+- **CMake** 3.20+
+- **C++17 compiler** (MSVC 19+ on Windows, GCC 11+ or Clang 14+ on Linux/Mac)
+- **LLVM 21** (development libraries and headers)
+- **ANTLR4** C++ runtime
+- **Clang** (from the LLVM distribution, for compiling generated `.ll` files to native)
+
+### Steps
+
+```bash
+git clone https://github.com/your-username/mingus.git
+cd mingus
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build . --config Release
+```
+
+This produces `mingus_ir_tool.exe` (or `mingus_ir_tool` on Linux/Mac).
+
+> **Windows:** MSVC is required. Run from a Visual Studio developer command prompt, or pass the appropriate generator to CMake (e.g. `-G "Visual Studio 17 2022"`). The bundled LLVM distribution targets `x86_64-pc-windows-msvc`.
+
+### Compiling a Mingus program
+
+```bash
+# Generate LLVM IR
+mingus_ir_tool.exe hello.mingus --emit hello.ll
+
+# Compile to native executable
+clang hello.ll -o hello.exe -O2
+
+# Run
+./hello.exe
+```
+
+### Running the test suite
+
+```bash
+cd examples
+run_all_tests.bat       # Windows
+# ./run_all_tests.sh    # Linux/Mac (if provided)
+```
+
+All 17 tests should pass.
+
+## Feature Summary
+
+| Feature | Status |
+|---------|--------|
+| Integer and float arithmetic | ✓ |
+| Type inference (`var x = 42`) | ✓ |
+| Control flow (if/else, for, while, switch) | ✓ |
+| Functions with typed parameters and returns | ✓ |
+| Structs with methods and operator overloading | ✓ |
+| Classes with constructors and destructors | ✓ |
+| RAII (automatic destructor calls at scope exit) | ✓ |
+| Heap allocation (`new` / `delete`) | ✓ |
+| Inheritance with virtual dispatch | ✓ |
+| Interfaces with multiple implementation | ✓ |
+| Pipe operator (`\|>`) | ✓ |
+| Pattern matching with guards | ✓ |
+| Enums with underlying types | ✓ |
+| Lambdas and closures (fat pointer) | ✓ |
+| Higher-order functions and composition | ✓ |
+| Pointers and raw blocks | ✓ |
+| Fixed-size arrays | ✓ |
+| String operations (concat, compare, length, substring) | ✓ |
+| String interpolation (`"value=${x}"`) | ✓ |
+| C interop via `extern` declarations | ✓ |
+| Multi-module imports | ✓ |
+
+## Architecture
+
+```
+Source (.mingus)
+  → ANTLR4 Lexer/Parser
+  → AST (62 node types)
+  → Semantic Analysis (4 passes)
+      Pass 1: Symbol table building
+      Pass 2: Type resolution
+      Pass 3: Type checking + overload resolution
+      Pass 4: RAII analysis + control flow validation
+  → LLVM IR Generation
+  → Clang → Native executable
+```
+
+## Known Limitations
+
+- **Closures leak memory** — heap-allocated capture structs are never freed. Bounded and predictable in practice.
+- **No generics** — no template or generic type support yet.
+- **Strings are heap-allocated** — no small string optimization.
+- **Single compilation unit** — each `.mingus` file compiles independently. Cross-file linking uses `import`.
+- **No debug info** — no DWARF/PDB emission. Debugging is through printf and IR inspection.
+- **Error recovery is minimal** — the first error often stops compilation.
+
+## Why "Mingus"?
+
+Charles Mingus composed music that was technically rigorous and emotionally unrestrained at the same time. He demanded discipline from his musicians but insisted they improvise wildly within the structure. The language follows the same philosophy: strict types and RAII provide the structure, while pipes, closures, and pattern matching give you freedom to express solutions naturally.
+
+> "Making the simple complicated is commonplace; making the complicated simple, awesomely simple, that's creativity." — Charles Mingus
+
+## License
+
+MIT

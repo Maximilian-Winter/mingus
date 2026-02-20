@@ -1,0 +1,22 @@
+=== Test 14: String Operations ===
+
+--- Concatenation ---
+Hello World
+
+--- Comparison ---
+a == b: true
+a != c: true
+
+--- Length ---
+greeting length: 11
+
+--- Substring ---
+substring(0,5): Hello
+
+--- Concat Assign ---
+s: foobar
+
+--- Interpolation ---
+value=42
+
+=== Test 14 complete ===

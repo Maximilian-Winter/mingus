@@ -1,0 +1,24 @@
+// test_12_imports.mingus -- Multi-module import test
+// Tests: selective import, aliased import, whole-module import
+
+module Test12
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    // Selective import: bring in specific symbols from MathLib
+    import add, square from MathLib;
+
+    func main() => int
+    {
+        puts("=== Test 12: Imports ===");
+
+        // Use imported functions directly by name
+        printf("add(3, 4) = %d\n", add(3, 4));
+        printf("square(5) = %d\n", square(5));
+        printf("add(square(3), square(4)) = %d\n", add(square(3), square(4)));
+
+        puts("=== Test 12 complete ===");
+        return 0;
+    }
+}

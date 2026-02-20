@@ -1,0 +1,151 @@
+// Test 3: Classes, constructors, destructors, RAII, new/delete
+module Test03
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memcpy(byte* dest, byte* src, int n) => byte*;
+
+    class DynamicArray
+    {
+        private int* data;
+        private int size;
+        private int capacity;
+
+        constructor(int initialCapacity)
+        {
+            this.capacity = initialCapacity;
+            this.size = 0;
+            raw { this.data = (int*)malloc(initialCapacity * sizeof(int)); }
+        }
+
+        destructor
+        {
+            if (this.data != null)
+            {
+                raw { free((byte*)this.data); }
+            }
+            puts("  [DynamicArray destructor called]");
+        }
+
+        func push(int value) => void
+        {
+            if (this.size >= this.capacity)
+            {
+                this.grow();
+            }
+
+            raw
+            {
+                *(this.data + this.size) = value;
+            }
+
+            this.size++;
+        }
+
+        func operator[](int index) => int
+        {
+            raw
+            {
+                return *(this.data + index);
+            }
+        }
+
+        func length() => int
+        {
+            return this.size;
+        }
+
+        private func grow() => void
+        {
+            var newCapacity = this.capacity * 2;
+
+            raw
+            {
+                var newData = (int*)malloc(newCapacity * sizeof(int));
+                memcpy((byte*)newData, (byte*)this.data, this.size * sizeof(int));
+                free((byte*)this.data);
+                this.data = newData;
+            }
+
+            this.capacity = newCapacity;
+        }
+    }
+
+    class Node
+    {
+        int value;
+        Node* left;
+        Node* right;
+
+        constructor(int value)
+        {
+            this.value = value;
+            this.left = null;
+            this.right = null;
+        }
+
+        destructor
+        {
+            if (this.left != null)
+            {
+                delete this.left;
+            }
+            if (this.right != null)
+            {
+                delete this.right;
+            }
+        }
+    }
+
+    func sumTree(Node* node) => int
+    {
+        if (node == null)
+        {
+            return 0;
+        }
+        return node->value + sumTree(node->left) + sumTree(node->right);
+    }
+
+    func main() => int
+    {
+        puts("=== Test 03: Classes & RAII ===");
+
+        // Test DynamicArray with constructor + push + operator[]
+        puts("Creating DynamicArray(4)...");
+        {
+            var arr = DynamicArray(4);
+
+            for (int i = 0; i < 10; i++)
+            {
+                arr.push(i * 10);
+            }
+
+            printf("arr.length() = %d (expect 10)\n", arr.length());
+            printf("arr[0] = %d (expect 0)\n", arr[0]);
+            printf("arr[3] = %d (expect 30)\n", arr[3]);
+            printf("arr[9] = %d (expect 90)\n", arr[9]);
+
+            puts("Leaving scope...");
+        }
+        // Destructor should have been called
+
+        // Test new/delete with tree
+        puts("\nBuilding tree: 10(5(2,7),15)...");
+        var root = new Node(10);
+        root->left = new Node(5);
+        root->right = new Node(15);
+        root->left->left = new Node(2);
+        root->left->right = new Node(7);
+
+        var total = sumTree(root);
+        printf("Tree sum = %d (expect 39)\n", total);
+
+        puts("Deleting tree...");
+        delete root;
+
+        puts("=== Test 03 complete ===");
+        return 0;
+    }
+}

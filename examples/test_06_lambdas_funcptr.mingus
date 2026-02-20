@@ -1,0 +1,47 @@
+// Test 6: Lambdas (no captures), first-class functions, higher-order functions
+// NOTE: Closures with captures (e.g. makeScaler) require fat pointer support
+//       which is planned for a future update.
+module Test06
+{
+    extern func printf(string fmt, double val) => int;
+    extern func puts(string s) => int;
+
+    func apply(double x, (double) => double transform) => double
+    {
+        return transform(x);
+    }
+
+    func applyTwice(double x, (double) => double f) => double
+    {
+        return f(f(x));
+    }
+
+    func main() => int
+    {
+        puts("=== Test 06: Lambdas & Function Pointers ===");
+
+        // Simple lambda (no captures)
+        var doubler = (double x) => { return x * 2.0; };
+        var result = doubler(21.0);
+        printf("doubler(21.0) = %f (expect 42.0)\n", result);
+
+        // Pass lambda to higher-order function
+        var applied = apply(5.0, (double x) => { return x * x; });
+        printf("apply(5.0, x=>x*x) = %f (expect 25.0)\n", applied);
+
+        // Another higher-order function call
+        var added = apply(10.0, (double x) => { return x + 7.0; });
+        printf("apply(10.0, x=>x+7) = %f (expect 17.0)\n", added);
+
+        // Apply twice: f(f(x))
+        var doubled2 = applyTwice(3.0, (double x) => { return x * 2.0; });
+        printf("applyTwice(3.0, x=>x*2) = %f (expect 12.0)\n", doubled2);
+
+        // Pipe with lambda
+        var piped = 7.0 |> apply((double x) => { return x + 3.0; });
+        printf("7.0 |> apply(x=>x+3) = %f (expect 10.0)\n", piped);
+
+        puts("=== Test 06 complete ===");
+        return 0;
+    }
+}

@@ -1,0 +1,11 @@
+=== Test 08: Pointers & Raw Blocks ===
+arr[0] = 0 (expect 0)
+arr[3] = 9 (expect 9)
+arr[9] = 81 (expect 81)
+*(ptr+5) = 25 (expect 25)
+heap[0] = 100 (expect 100)
+heap[2] = 300 (expect 300)
+heap[4] = 500 (expect 500)
+Heap freed OK
+null check: PASS
+=== Test 08 complete ===

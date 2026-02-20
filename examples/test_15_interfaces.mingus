@@ -1,0 +1,65 @@
+// Test 15: Interfaces — contracts, fat pointer dispatch, multiple implementation
+module Test15
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    interface Drawable
+    {
+        func draw() => void;
+    }
+
+    interface Resizable
+    {
+        func resize(int factor) => int;
+    }
+
+    class Circle : Drawable, Resizable
+    {
+        int radius;
+        constructor(int r) { this.radius = r; }
+        func draw() => void { puts("Circle drawn"); }
+        func resize(int factor) => int { return this.radius * factor; }
+    }
+
+    class Square : Drawable, Resizable
+    {
+        int side;
+        constructor(int s) { this.side = s; }
+        func draw() => void { puts("Square drawn"); }
+        func resize(int factor) => int { return this.side * factor; }
+    }
+
+    func renderAll(Drawable* d) => void
+    {
+        d->draw();
+    }
+
+    func main() => int
+    {
+        puts("=== Test 15: Interfaces ===");
+
+        puts("--- Direct calls ---");
+        var c = Circle(5);
+        var sq = Square(3);
+        c.draw();
+        sq.draw();
+
+        puts("--- Interface dispatch ---");
+        Drawable* d0 = new Circle(10);
+        Drawable* d1 = new Square(7);
+        renderAll(d0);
+        renderAll(d1);
+
+        puts("--- Resizable ---");
+        Resizable* r = new Circle(4);
+        printf("resize(3) = %d\n", r->resize(3));
+
+        delete d0;
+        delete d1;
+        delete r;
+
+        puts("=== Test 15 complete ===");
+        return 0;
+    }
+}

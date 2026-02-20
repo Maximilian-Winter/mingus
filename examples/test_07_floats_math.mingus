@@ -1,0 +1,46 @@
+// Test 7: Floating point, math functions, type widening
+module Test07
+{
+    extern func printf(string fmt, double val) => int;
+    extern func puts(string s) => int;
+    extern func sin(double x) => double;
+    extern func cos(double x) => double;
+    extern func sqrt(double x) => double;
+    extern func pow(double base, double exp) => double;
+
+    func main() => int
+    {
+        puts("=== Test 07: Floats & Math ===");
+
+        // Basic float arithmetic
+        var a = 3.14159265;
+        var b = 2.71828183;
+        printf("pi = %f\n", a);
+        printf("e  = %f\n", b);
+        printf("pi + e = %f\n", a + b);
+        printf("pi * e = %f\n", a * b);
+
+        // Math functions
+        printf("sin(0) = %f (expect 0.0)\n", sin(0.0));
+        printf("cos(0) = %f (expect 1.0)\n", cos(0.0));
+        printf("sqrt(144) = %f (expect 12.0)\n", sqrt(144.0));
+        printf("pow(2,10) = %f (expect 1024.0)\n", pow(2.0, 10.0));
+
+        // Integer-to-float widening
+        var intVal = 7;
+        var floatResult = intVal * 2.0;
+        printf("7 * 2.0 = %f (expect 14.0)\n", floatResult);
+
+        // Ternary expression
+        var x = 5.0;
+        var abs_x = x > 0.0 ? x : -x;
+        printf("|5.0| = %f\n", abs_x);
+
+        var y = -3.5;
+        var abs_y = y > 0.0 ? y : -y;
+        printf("|-3.5| = %f\n", abs_y);
+
+        puts("=== Test 07 complete ===");
+        return 0;
+    }
+}

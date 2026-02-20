@@ -1,0 +1,170 @@
+// Test 11: DSP Showcase — A musical tribute to Charles Mingus
+// Weaves together: structs + operators, enums + match, closures, pipes, math
+module Test11
+{
+    extern func printf(string fmt, double val) => int;
+    extern func puts(string s) => int;
+    extern func sin(double x) => double;
+    extern func sqrt(double x) => double;
+
+    // ── Stereo sample: struct + operator overloading ──
+
+    struct Sample
+    {
+        double left;
+        double right;
+
+        func operator+(Sample other) => Sample
+        {
+            Sample out;
+            out.left  = this.left  + other.left;
+            out.right = this.right + other.right;
+            return out;
+        }
+
+        func operator*(double gain) => Sample
+        {
+            Sample out;
+            out.left  = this.left  * gain;
+            out.right = this.right * gain;
+            return out;
+        }
+
+        func rms() => double
+        {
+            return sqrt((this.left * this.left + this.right * this.right) / 2.0);
+        }
+
+        func pan(double p) => Sample
+        {
+            Sample out;
+            out.left  = this.left  * (1.0 - p) / 2.0;
+            out.right = this.right * (1.0 + p) / 2.0;
+            return out;
+        }
+    }
+
+    // ── Waveform selection: enum + match ──
+
+    enum Wave : int
+    {
+        Sine     = 0,
+        Square   = 1,
+        Triangle = 2,
+        Saw      = 3,
+    }
+
+    func twoPi() => double { return 6.28318530717959; }
+
+    func oscillator(int wave, double phase) => double
+    {
+        return match wave {
+            Wave.Sine     => sin(phase * twoPi()),
+            Wave.Square   => phase < 0.5 ? 1.0 : -1.0,
+            Wave.Triangle => phase < 0.5
+                ? phase * 4.0 - 1.0
+                : 3.0 - phase * 4.0,
+            _ => phase * 2.0 - 1.0,
+        };
+    }
+
+    func stereoOsc(int wave, double phase) => Sample
+    {
+        var mono = oscillator(wave, phase);
+        Sample s;
+        s.left  = mono;
+        s.right = mono;
+        return s;
+    }
+
+    // ── Effects: closures + higher-order functions ──
+
+    func makeGain(double amount) => (double) => double
+    {
+        return (double x) => { return x * amount; };
+    }
+
+    func softClip(double x) => double
+    {
+        return match x {
+            var v if v >  1.0 =>  1.0,
+            var v if v < -1.0 => -1.0,
+            var v => v - (v * v * v) / 3.0,
+        };
+    }
+
+    func makeDrive(double drive) => (double) => double
+    {
+        return (double x) => { return softClip(x * drive); };
+    }
+
+    func composeEffect((double) => double f, (double) => double g) => (double) => double
+    {
+        return (double x) => { return f(g(x)); };
+    }
+
+    func applyStereo(Sample s, (double) => double fx) => Sample
+    {
+        Sample out;
+        out.left  = fx(s.left);
+        out.right = fx(s.right);
+        return out;
+    }
+
+    func transform(double x, (double) => double f) => double
+    {
+        return f(x);
+    }
+
+    // ── Main: the full signal chain ──
+
+    func main() => int
+    {
+        puts("=== Test 11: DSP Showcase ===");
+
+        // --- Oscillators (enum + match + math) ---
+        puts("--- Oscillators ---");
+        printf("sine(0.25)     = %f\n", oscillator(Wave.Sine, 0.25));
+        printf("square(0.25)   = %f\n", oscillator(Wave.Square, 0.25));
+        printf("triangle(0.25) = %f\n", oscillator(Wave.Triangle, 0.25));
+        printf("saw(0.75)      = %f\n", oscillator(Wave.Saw, 0.75));
+
+        // --- Stereo mixing (struct + operators) ---
+        puts("--- Stereo Mix ---");
+        var tone = stereoOsc(Wave.Sine, 0.25);
+        var buzz = stereoOsc(Wave.Triangle, 0.375);
+        printf("tone = %f\n", tone.left);
+        printf("buzz = %f\n", buzz.left);
+
+        var mixed = tone * 0.5 + buzz * 0.5;
+        printf("mix  = %f\n", mixed.left);
+        printf("rms  = %f\n", mixed.rms());
+
+        var panned = tone.pan(1.0);
+        printf("panL = %f\n", panned.left);
+        printf("panR = %f\n", panned.right);
+
+        // --- Effects (closures + pipes) ---
+        puts("--- Effects ---");
+        var boost = makeGain(2.0);
+        var boosted = 0.3 |> transform(boost);
+        printf("boost(0.3)  = %f\n", boosted);
+
+        printf("clip(0.75)  = %f\n", softClip(0.75));
+
+        var crunch = makeDrive(2.0);
+        var crunched = 0.5 |> transform(crunch);
+        printf("drive(0.5)  = %f\n", crunched);
+
+        // --- Signal chain (compose + closure + stereo) ---
+        puts("--- Signal Chain ---");
+        var chain = composeEffect(makeGain(2.0), makeDrive(1.5));
+        var sig = stereoOsc(Wave.Triangle, 0.375);
+        var processed = applyStereo(sig, chain);
+        printf("chain L = %f\n", processed.left);
+        printf("chain R = %f\n", processed.right);
+
+        puts("=== Test 11 complete ===");
+        return 0;
+    }
+}

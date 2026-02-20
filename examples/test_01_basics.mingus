@@ -1,0 +1,77 @@
+// Test 1: Basic types, arithmetic, control flow, loops
+module Test01
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    func main() => int
+    {
+        puts("=== Test 01: Basics ===");
+
+        // Integer arithmetic
+        var x = 10;
+        var y = 20;
+        var sum = x + y;
+        var diff = y - x;
+        var prod = x * y;
+        var quot = y / x;
+        var rem = y % 3;
+
+        printf("10 + 20 = %d\n", sum);
+        printf("20 - 10 = %d\n", diff);
+        printf("10 * 20 = %d\n", prod);
+        printf("20 / 10 = %d\n", quot);
+        printf("20 %% 3  = %d\n", rem);
+
+        // If / else
+        if (sum > 25)
+        {
+            puts("sum > 25: PASS");
+        }
+        else
+        {
+            puts("sum > 25: FAIL");
+        }
+
+        if (diff == 10)
+        {
+            puts("diff == 10: PASS");
+        }
+        else
+        {
+            puts("diff == 10: FAIL");
+        }
+
+        // For loop
+        var total = 0;
+        for (int i = 0; i < 10; i++)
+        {
+            total = total + i;
+        }
+        printf("sum(0..9) = %d (expect 45)\n", total);
+
+        // While loop
+        var count = 0;
+        var n = 1;
+        while (n < 100)
+        {
+            n = n * 2;
+            count++;
+        }
+        printf("2^k >= 100: k = %d (expect 7)\n", count);
+
+        // Nested loops
+        var matrix_sum = 0;
+        for (int row = 0; row < 3; row++)
+        {
+            for (int col = 0; col < 3; col++)
+            {
+                matrix_sum = matrix_sum + (row * 3 + col);
+            }
+        }
+        printf("matrix sum = %d (expect 36)\n", matrix_sum);
+
+        puts("=== Test 01 complete ===");
+        return 0;
+    }
+}

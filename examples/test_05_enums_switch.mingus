@@ -1,0 +1,104 @@
+// Test 5: Enums in match expressions, switch statements
+module Test05
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    enum TokenKind : int
+    {
+        Number     = 0,
+        Identifier = 1,
+        Plus       = 2,
+        Minus      = 3,
+        Star       = 4,
+        Slash      = 5,
+    }
+
+    func tokenPrecedence(int kind) => int
+    {
+        return match kind {
+            TokenKind.Plus  => 1,
+            TokenKind.Minus => 1,
+            TokenKind.Star  => 2,
+            TokenKind.Slash => 2,
+            _ => 0,
+        };
+    }
+
+    func isOperator(int kind) => bool
+    {
+        return match kind {
+            TokenKind.Plus  => true,
+            TokenKind.Minus => true,
+            TokenKind.Star  => true,
+            TokenKind.Slash => true,
+            _ => false,
+        };
+    }
+
+    func tokenName(int kind) => int
+    {
+        // Return a code for the token name (match with enum patterns)
+        return match kind {
+            TokenKind.Number     => 100,
+            TokenKind.Identifier => 200,
+            TokenKind.Plus       => 300,
+            TokenKind.Minus      => 400,
+            TokenKind.Star       => 500,
+            TokenKind.Slash      => 600,
+            _ => 0,
+        };
+    }
+
+    func main() => int
+    {
+        puts("=== Test 05: Enums and Switch ===");
+
+        // Use enum values as integers (enum underlying type is int)
+        // TokenKind.Plus = 2, TokenKind.Star = 4, TokenKind.Number = 0
+        var p_plus = tokenPrecedence(2);
+        var p_star = tokenPrecedence(4);
+        var p_num  = tokenPrecedence(0);
+        printf("prec(Plus) = %d (expect 1)\n", p_plus);
+        printf("prec(Star) = %d (expect 2)\n", p_star);
+        printf("prec(Number) = %d (expect 0)\n", p_num);
+
+        // Boolean match result
+        if (isOperator(2))
+        {
+            puts("Plus is operator: PASS");
+        }
+        else
+        {
+            puts("Plus is operator: FAIL");
+        }
+
+        if (isOperator(0))
+        {
+            puts("Number is not operator: FAIL");
+        }
+        else
+        {
+            puts("Number is not operator: PASS");
+        }
+
+        // Token name match
+        var name_plus = tokenName(2);
+        var name_num  = tokenName(0);
+        printf("tokenName(Plus) = %d (expect 300)\n", name_plus);
+        printf("tokenName(Number) = %d (expect 100)\n", name_num);
+
+        // Switch statement (integer)
+        var val = 2;
+        switch (val)
+        {
+            case 1: puts("switch: one");
+            case 2: puts("switch: two (expect this)");
+            case 3: puts("switch: three");
+            default: puts("switch: other");
+        }
+
+        puts("=== Test 05 complete ===");
+        return 0;
+    }
+}

@@ -1,0 +1,262 @@
+// Test 16: DSP WAV Synthesis
+//
+// A synthesizer that writes a real WAV file.
+// Demonstrates: interfaces (Effect, Named), single inheritance
+// (AudioEffect → GainEffect / DriveEffect / SoftClipEffect),
+// class-based oscillator with mutable state, pattern matching,
+// and fat-pointer interface dispatch in a real-time render loop.
+//
+// Output: output.wav — 3 seconds, mono, 44100 Hz, 16-bit PCM
+//         A3 sine (220 Hz) + E4 triangle (330 Hz) through
+//         a Gain → Drive → SoftClip effect chain.
+
+module DspWav
+{
+    // ---- C standard library ----------------------------------------------------------------------------------------
+
+    extern func fopen(string path, string mode) => byte*;
+    extern func fputc(int c, byte* f) => int;
+    extern func fclose(byte* f) => int;
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int v) => int;
+    extern func lround(double x) => int;
+    extern func sin(double x) => double;
+
+    // ---- WAV writing primitives --------------------------------------------------------------------------------
+
+    func putU16LE(byte* f, int v) => void
+    {
+        fputc(v & 255, f);
+        fputc((v >> 8) & 255, f);
+    }
+
+    func putU32LE(byte* f, int v) => void
+    {
+        fputc(v & 255, f);
+        fputc((v >> 8) & 255, f);
+        fputc((v >> 16) & 255, f);
+        fputc((v >> 24) & 255, f);
+    }
+
+    // Write a 44-byte PCM WAV header (mono, 16-bit).
+    // ASCII codes used for chunk IDs to avoid string cast complexity.
+    func writeWavHeader(byte* f, int sampleRate, int numSamples) => void
+    {
+        int dataSize = numSamples * 2;       // 1 channel * 2 bytes per sample
+        int riffSize = dataSize + 36;
+        int byteRate = sampleRate * 2;
+
+        // "RIFF"
+        fputc(82, f); fputc(73, f); fputc(70, f); fputc(70, f);
+        putU32LE(f, riffSize);
+        // "WAVE"
+        fputc(87, f); fputc(65, f); fputc(86, f); fputc(69, f);
+        // "fmt "
+        fputc(102, f); fputc(109, f); fputc(116, f); fputc(32, f);
+        putU32LE(f, 16);        // PCM sub-chunk size
+        putU16LE(f, 1);         // PCM audio format
+        putU16LE(f, 1);         // mono
+        putU32LE(f, sampleRate);
+        putU32LE(f, byteRate);
+        putU16LE(f, 2);         // block align (1 ch * 2 bytes)
+        putU16LE(f, 16);        // bits per sample
+        // "data"
+        fputc(100, f); fputc(97, f); fputc(116, f); fputc(97, f);
+        putU32LE(f, dataSize);
+    }
+
+    // Clamp, scale, and write one 16-bit PCM sample (little-endian).
+    func writeSample(byte* f, double sample) => void
+    {
+        var clamped = sample > 1.0 ? 1.0 : (sample < -1.0 ? -1.0 : sample);
+        int ival = lround(clamped * 32767.0);
+        putU16LE(f, ival);
+    }
+
+    // ---- Interfaces --------------------------------------------------------------------------------------------------------
+
+    interface Effect
+    {
+        func process(double s) => double;
+    }
+
+    interface Named
+    {
+        func name() => string;
+    }
+
+    // ---- Abstract base class --------------------------------------------------------------------------------------
+    //
+    // Holds a single 'param' double used differently by each effect.
+    // Cannot be instantiated; subclasses must implement Effect and Named.
+
+    abstract class AudioEffect
+    {
+        double param;
+        constructor(double p) { this.param = p; }
+        // A virtual method is required so that AudioEffect gets a vtable pointer
+        // in its struct layout — { ptr, double } — matching the layout of every
+        // derived class and ensuring super() stores 'param' at the correct offset.
+        func paramValue() => double { return this.param; }
+    }
+
+    // ---- Concrete effects --------------------------------------------------------------------------------------------
+
+    // GainEffect: simple linear amplitude scaling.
+    class GainEffect : AudioEffect, Effect, Named
+    {
+        constructor(double g) : super(g) { }
+        func process(double s) => double { return s * this.param; }
+        func name() => string { return "Gain"; }
+    }
+
+    // DriveEffect: soft saturation — x - x³/3.
+    // param is the drive multiplier applied before the curve.
+    class DriveEffect : AudioEffect, Effect, Named
+    {
+        constructor(double d) : super(d) { }
+        func process(double s) => double
+        {
+            var x = s * this.param;
+            return x - (x * x * x) / 3.0;
+        }
+        func name() => string { return "Drive"; }
+    }
+
+    // SoftClipEffect: hard limit at ±threshold with a cubic roll-off inside.
+    class SoftClipEffect : AudioEffect, Effect, Named
+    {
+        constructor(double threshold) : super(threshold) { }
+        func process(double s) => double
+        {
+            var t = this.param;
+            return match s {
+                var x if x >  t =>  t,
+                var x if x < -t => -t,
+                var x           => x - (x * x * x) / 3.0,
+            };
+        }
+        func name() => string { return "SoftClip"; }
+    }
+
+    // ---- Oscillator --------------------------------------------------------------------------------------------------------
+    //
+    // Class (reference type) so that phase state can be mutated
+    // between tick() calls without passing pointers manually.
+
+    class Oscillator
+    {
+        double phase;
+        double phaseInc;
+        int    waveform;    // 0=sine  1=square  2=saw  3=triangle
+
+        constructor(int wave, double freq, double rate)
+        {
+            this.waveform = wave;
+            this.phase    = 0.0;
+            this.phaseInc = freq / rate;
+        }
+
+        func tick() => double
+        {
+            var p = this.phase;
+            var s = match this.waveform {
+                0 => sin(p * 6.283185307),
+                1 => p < 0.5 ? 1.0 : -1.0,
+                2 => p * 2.0 - 1.0,
+                _ => p < 0.5 ? p * 4.0 - 1.0 : 3.0 - p * 4.0,
+            };
+            var next = p + this.phaseInc;
+            this.phase = next >= 1.0 ? next - 1.0 : next;
+            return s;
+        }
+    }
+
+    // ---- Signal chain ----------------------------------------------------------------------------------------------------
+    //
+    // Three Effect* fat pointers dispatched in sequence.
+    // Each call resolves through the class's itable at runtime.
+
+    func applyChain(double s, Effect* e0, Effect* e1, Effect* e2) => double
+    {
+        var s0 = e0->process(s);
+        var s1 = e1->process(s0);
+        return e2->process(s1);
+    }
+
+    // Print the name of an effect through the Named interface.
+    func printEffectName(Named* n) => void
+    {
+        puts(n->name());
+    }
+
+    // ---- Main --------------------------------------------------------------------------------------------------------------------
+
+    func main() => int
+    {
+        puts("=== DSP WAV Example ===");
+
+        // Construct the effect chain
+        GainEffect*     gain  = new GainEffect(0.7);
+        DriveEffect*    drive = new DriveEffect(1.8);
+        SoftClipEffect* clip  = new SoftClipEffect(0.9);
+
+        // Print effect chain via Named interface
+        puts("Effect chain:");
+        Named* n0 = gain;
+        Named* n1 = drive;
+        Named* n2 = clip;
+        printEffectName(n0);
+        printEffectName(n1);
+        printEffectName(n2);
+
+        // Effect interface pointers for the render loop
+        Effect* e0 = gain;
+        Effect* e1 = drive;
+        Effect* e2 = clip;
+
+        // Two oscillators: A3 sine + E4 triangle (a perfect fifth)
+        Oscillator* osc1 = new Oscillator(0, 220.0, 44100.0);
+        Oscillator* osc2 = new Oscillator(3, 330.0, 44100.0);
+
+        // WAV parameters
+        int sampleRate = 44100;
+        int numSamples = 132300;    // 3 seconds
+
+        // Open output file
+        byte* f = fopen("output.wav", "wb");
+        if (f == null) {
+            puts("ERROR: could not open output.wav for writing");
+            return 1;
+        }
+
+        writeWavHeader(f, sampleRate, numSamples);
+
+        printf("Writing %d samples to output.wav...\n", numSamples);
+
+        for (int i = 0; i < numSamples; i++)
+        {
+            var s1 = osc1->tick();
+            var s2 = osc2->tick();
+            var mixed   = s1 * 0.65 + s2 * 0.35;
+            var out     = applyChain(mixed, e0, e1, e2);
+            writeSample(f, out);
+        }
+
+        fclose(f);
+
+        puts("Done.");
+        printf("Sample rate : %d Hz\n", sampleRate);
+        printf("Samples     : %d\n", numSamples);
+        puts("Output      : output.wav");
+        puts("=== Complete ===");
+
+        delete gain;
+        delete drive;
+        delete clip;
+        delete osc1;
+        delete osc2;
+
+        return 0;
+    }
+}

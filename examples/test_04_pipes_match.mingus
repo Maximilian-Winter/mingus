@@ -1,0 +1,82 @@
+// Test 4: Pipes, pattern matching with guards, match expressions
+module Test04
+{
+    extern func printf(string fmt, double val) => int;
+    extern func puts(string s) => int;
+
+    func applyGain(double sample, double gain) => double
+    {
+        return sample * gain;
+    }
+
+    func softClip(double sample) => double
+    {
+        return match sample {
+            var x if x > 1.0  => 1.0,
+            var x if x < -1.0 => -1.0,
+            var x => x - (x * x * x) / 3.0,
+        };
+    }
+
+    func classify(double value) => int
+    {
+        // Returns a category: 0=silent, 1=quiet, 2=nominal, 3=hot, 4=clipping
+        return match value {
+            var x if x > 0.9  => 4,
+            var x if x > 0.7  => 3,
+            var x if x > 0.3  => 2,
+            var x if x > 0.01 => 1,
+            _ => 0,
+        };
+    }
+
+    func processSample(double sample) => double
+    {
+        return sample
+            |> applyGain(1.5)
+            |> softClip;
+    }
+
+    func main() => int
+    {
+        puts("=== Test 04: Pipes & Pattern Matching ===");
+
+        // Simple pipe
+        var x = 0.5;
+        var gained = x |> applyGain(2.0);
+        printf("0.5 |> applyGain(2.0) = %f (expect 1.0)\n", gained);
+
+        // Chained pipe
+        var result = 0.7 |> applyGain(1.5) |> softClip;
+        printf("0.7 |> gain(1.5) |> clip = %f (expect 1.0)\n", result);
+
+        // Pipe through processSample
+        var p1 = 0.3 |> processSample;
+        printf("processSample(0.3) = %f\n", p1);
+
+        // Match: softClip cases
+        var c1 = softClip(0.5);
+        printf("softClip(0.5) = %f (expect ~0.458)\n", c1);
+
+        var c2 = softClip(2.0);
+        printf("softClip(2.0) = %f (expect 1.0)\n", c2);
+
+        var c3 = softClip(-2.0);
+        printf("softClip(-2.0) = %f (expect -1.0)\n", c3);
+
+        var c4 = softClip(0.0);
+        printf("softClip(0.0) = %f (expect 0.0)\n", c4);
+
+        // Integer match for classification
+        printf("\nClassification results:\n", 0.0);
+        var cat1 = classify(0.95);
+        printf("  classify(0.95) = %f (expect 4=clipping)\n", cat1 * 1.0);
+        var cat2 = classify(0.5);
+        printf("  classify(0.50) = %f (expect 2=nominal)\n", cat2 * 1.0);
+        var cat3 = classify(0.001);
+        printf("  classify(0.001) = %f (expect 0=silent)\n", cat3 * 1.0);
+
+        puts("=== Test 04 complete ===");
+        return 0;
+    }
+}
