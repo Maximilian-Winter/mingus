@@ -1,0 +1,236 @@
+// example_07_data_structures.mingus
+// Linked list and stack with RAII, heap allocation, and reference parameters
+// Features: classes, constructors, destructors, new/delete, raw blocks, pointers, ref params, RAII
+
+module DataStructures
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+
+    // --- Node: a singly-linked list node ---
+    class Node
+    {
+        int value;
+        Node* next;
+
+        constructor(int v)
+        {
+            this.value = v;
+            this.next = null;
+        }
+
+        destructor
+        {
+            printf("  ~Node(%d)\n", this.value);
+        }
+    }
+
+    // --- LinkedList: push-front singly-linked list ---
+    class LinkedList
+    {
+        Node* head;
+        int count;
+
+        constructor()
+        {
+            this.head = null;
+            this.count = 0;
+        }
+
+        destructor
+        {
+            puts("  ~LinkedList: freeing nodes...");
+            var current = this.head;
+            while (current != null)
+            {
+                var next = current->next;
+                delete current;
+                current = next;
+            }
+        }
+
+        func pushFront(int value) => void
+        {
+            var node = new Node(value);
+            node->next = this.head;
+            this.head = node;
+            this.count = this.count + 1;
+        }
+
+        func popFront(int& out) => int
+        {
+            if (this.head == null)
+            {
+                out = 0;
+                return 0;
+            }
+            var node = this.head;
+            out = node->value;
+            this.head = node->next;
+            this.count = this.count - 1;
+            delete node;
+            return 1;
+        }
+
+        func sum() => int
+        {
+            var total = 0;
+            var current = this.head;
+            while (current != null)
+            {
+                total = total + current->value;
+                current = current->next;
+            }
+            return total;
+        }
+
+        func printList() => void
+        {
+            var current = this.head;
+            while (current != null)
+            {
+                printf("%d ", current->value);
+                current = current->next;
+            }
+            puts("");
+        }
+    }
+
+    // --- Stack: LIFO wrapper around a heap-allocated LinkedList ---
+    class Stack
+    {
+        LinkedList* list;
+        string name;
+
+        constructor(string label)
+        {
+            this.name = label;
+            this.list = new LinkedList();
+            puts("Stack created");
+        }
+
+        destructor
+        {
+            puts("~Stack");
+            delete this.list;
+        }
+
+        func push(int value) => void
+        {
+            this.list->pushFront(value);
+        }
+
+        func pop(int& out) => int
+        {
+            return this.list->popFront(out);
+        }
+
+        func size() => int
+        {
+            return this.list->count;
+        }
+    }
+
+    // --- Utility: swap via reference parameters ---
+    func swap(int& a, int& b) => void
+    {
+        var tmp = a;
+        a = b;
+        b = tmp;
+    }
+
+    // --- Utility: divmod returns quotient, sets remainder via ref ---
+    func divmod(int a, int b, int& remainder) => int
+    {
+        remainder = a - (a / b) * b;
+        return a / b;
+    }
+
+    func main() => int
+    {
+        puts("=== Data Structures ===");
+        puts("");
+
+        // -------------------------------------------------------
+        // LinkedList with RAII
+        // -------------------------------------------------------
+        puts("--- Linked List ---");
+        {
+            var list = LinkedList();
+            list.pushFront(10);
+            list.pushFront(20);
+            list.pushFront(30);
+            list.pushFront(40);
+
+            printf("count: %d\n", list.count);
+            printf("sum: %d\n", list.sum());
+
+            puts("contents:");
+            list.printList();
+
+            var val = 0;
+            list.popFront(val);
+            printf("popped: %d\n", val);
+            printf("count after pop: %d\n", list.count);
+            printf("sum after pop: %d\n", list.sum());
+
+            puts("RAII cleanup:");
+            // list destructor runs here, frees all remaining nodes
+        }
+
+        puts("");
+
+        // -------------------------------------------------------
+        // Stack (wraps heap LinkedList)
+        // -------------------------------------------------------
+        puts("--- Stack ---");
+        {
+            var stack = Stack("operands");
+
+            stack.push(100);
+            stack.push(200);
+            stack.push(300);
+            printf("stack size: %d\n", stack.size());
+
+            var a = 0;
+            var b = 0;
+            stack.pop(a);
+            stack.pop(b);
+            printf("popped a=%d\n", a);
+            printf("popped b=%d\n", b);
+            printf("a + b = %d\n", a + b);
+
+            stack.push(a + b);
+            printf("pushed sum, size: %d\n", stack.size());
+
+            puts("RAII cleanup:");
+            // stack destructor → deletes internal LinkedList → frees remaining nodes
+        }
+
+        puts("");
+
+        // -------------------------------------------------------
+        // Reference parameters
+        // -------------------------------------------------------
+        puts("--- Reference Params ---");
+
+        var x = 10;
+        var y = 20;
+        printf("before swap: x=%d\n", x);
+        printf("before swap: y=%d\n", y);
+        swap(x, y);
+        printf("after swap: x=%d\n", x);
+        printf("after swap: y=%d\n", y);
+
+        var rem = 0;
+        var quot = divmod(17, 5, rem);
+        printf("17/5 quotient: %d\n", quot);
+        printf("17/5 remainder: %d\n", rem);
+
+        puts("");
+        puts("=== Data Structures Complete ===");
+        return 0;
+    }
+}

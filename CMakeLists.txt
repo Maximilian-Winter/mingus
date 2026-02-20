@@ -217,10 +217,10 @@ install(FILES ${SEMA_HEADERS} DESTINATION include/mingus/sema)
 install(FILES ${CODEGEN_HEADERS} DESTINATION include/mingus/codegen)
 install(FILES include/mingus/AST.h include/mingus/Sema.h include/mingus/Codegen.h DESTINATION include/mingus)
 
-# Optional: Build examples
-option(BUILD_EXAMPLES "Build example programs" ON)
+# Optional: Build tools (compiler, AST/sema tools, parser examples)
+option(BUILD_TOOLS "Build tool programs" ON)
 
-if(BUILD_EXAMPLES)
-    add_subdirectory(examples)
+if(BUILD_TOOLS)
+    add_subdirectory(tools)
 endif()
 

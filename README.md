@@ -224,17 +224,24 @@ raw
 
 Pointer dereference for assignment and pointer arithmetic only compile inside `raw` blocks. Address-of (`&`), null checks, and arrow access (`->`) work everywhere.
 
-## The Showcase: A Walking Bass Line
+## Examples
 
-The `examples/` directory includes a synthesizer written entirely in Mingus that generates a 4-bar groove as a WAV file. It uses ADSR envelopes, multiple oscillator waveforms, a walking bass line in C minor, kick/snare/hihat patterns with swing timing, and soft saturation for warmth. Every major language feature appears in a single musical program.
+The `examples/` directory contains 8 showcase programs demonstrating every major feature:
 
-```
-var chain = composeEffect(makeGain(2.0), makeDrive(1.5));
-var sig = stereoOsc(Wave.Triangle, 0.375);
-var processed = applyStereo(sig, chain);
-```
+| Example | Features shown |
+|---------|---------------|
+| Audio Effects (DSP Pipeline) | Structs, operator overloading, closures, pipes, enums |
+| AI State Machine | Enums, pattern matching, closures, structs |
+| Iterator Pipeline | Higher-order functions, pipes, closures, composition |
+| Expression Parser | Classes, RAII, raw blocks, recursion, enums |
+| Custom Allocator | Raw blocks, pointer arithmetic, RAII, classes |
+| Capture List Showcase | All capture modes (`[]`, `[=]`, `[&]`, `[x]`, `[&x]`, mixed), composition |
+| Data Structures (List & Stack) | Classes, `new`/`delete`, destructors, ref params, RAII |
+| Particle Simulation | Structs, classes, RAII, raw blocks, closures, ref params |
 
-See `examples/mingus_groove.mingus` for the full source.
+Run them all: `cd examples && showcase.bat`
+
+The `tools/` directory contains the compiler source and C++ API examples (see `tools/README.md`).
 
 ## Building
 

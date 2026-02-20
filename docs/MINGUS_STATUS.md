@@ -25,7 +25,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
 **Test Runner:** `run_tests.bat` (combined 51 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
-**Showcase:** `examples/showcase.bat` — displays source code and program output for showcase programs
+**Showcase:** `examples/showcase.bat` — 8 example programs; `tools/README.md` — compiler and API tools
 
 ---
 
@@ -389,12 +389,21 @@ mingus/
 │   ├── sema/*.cpp                          # Sema implementations (4 passes)
 │   ├── codegen/IRGenerator.cpp             # ~4400 lines of codegen
 │   └── parser/ASTGenerator.cpp             # Parse tree -> AST
-├── examples/
-│   ├── mingus_ir_tool.cpp                  # CLI: parse -> sema -> codegen -> optimize -> verify -> emit (--debug flag)
+├── tools/
+│   ├── mingus_ir_tool.cpp                  # CLI: parse -> sema -> codegen -> optimize -> verify -> emit
+│   ├── mingus_sema_tool.cpp                # Semantic analysis dump tool
+│   ├── mingus_ast_tool.cpp                 # AST dump tool
+│   ├── simple_example.cpp                  # Minimal AST construction API example
+│   ├── factorial_example.cpp               # Factorial AST + IR generation API example
+│   ├── parser_example.cpp                  # Parser API example
 │   ├── TOOL_GUIDE.md                       # mingus_ir_tool usage reference
-│   ├── MathLib.mingus                      # Reusable library module
-│   ├── showcase.bat                        # Display source + output for showcase programs
-│   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
+│   ├── README.md                           # Tools overview and build guide
+│   └── CMakeLists.txt                      # Build config for all tools
+├── examples/
+│   ├── example_01–08_*.mingus              # 8 showcase programs (DSP, state machine, iterators, parser, allocator, captures, data structures, particles)
+│   ├── showcase.bat                        # Run all 8 examples: source, IR, or output
+│   ├── mingus_ir_tool.exe                  # Copied here by CMake post-build
+│   └── archive/                            # Retired scratch/debug .mingus files
 ├── tests/
 │   ├── test_01_basics.mingus … test_30_capture_writeback.mingus  # 30 feature tests
 │   ├── stress_01_closure_churn.mingus … stress_22_destructor_reentrant.mingus  # 21 stress tests

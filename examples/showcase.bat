@@ -40,6 +40,9 @@ call :run_example example_02_state_machine    StateMachine_main      "AI State M
 call :run_example example_03_iterator_pipeline IteratorPipeline_main "Iterator Pipeline"
 call :run_example example_04_expression_parser ExpressionParser_main "Expression Parser"
 call :run_example example_05_custom_allocator  CustomAllocator_main   "Custom Allocator"
+call :run_example example_06_capture_showcase  CaptureShowcase_main   "Capture List Showcase"
+call :run_example example_07_data_structures   DataStructures_main    "Data Structures - List and Stack"
+call :run_example example_08_particle_sim      ParticleSim_main       "Particle Simulation"
 
 echo.
 echo ============================================================

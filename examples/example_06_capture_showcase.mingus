@@ -1,0 +1,187 @@
+// example_06_capture_showcase.mingus
+// All C++-style capture modes in practical scenarios
+// Features: closures, capture lists ([], [=], [&], [x], [&x], [=,&x], [&,x]), higher-order functions, pipes
+
+module CaptureShowcase
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    func apply((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func applyTwice((int) => int f, int x) => int
+    {
+        return f(f(x));
+    }
+
+    func compose((int) => int f, (int) => int g) => (int) => int
+    {
+        return [=](int x) => { return f(g(x)); };
+    }
+
+    func main() => int
+    {
+        puts("=== Capture Showcase ===");
+        puts("");
+
+        // -------------------------------------------------------
+        // [] — No captures: pure functions
+        // -------------------------------------------------------
+        puts("--- [] Pure functions ---");
+        var doubled = apply([](int x) => { return x * 2; }, 21);
+        printf("double(21) = %d\n", doubled);
+
+        var negated = apply([](int x) => { return 0 - x; }, 7);
+        printf("negate(7) = %d\n", negated);
+
+        // -------------------------------------------------------
+        // [=] — All by value: frozen state
+        // -------------------------------------------------------
+        puts("--- [=] Frozen state ---");
+        var rate = 3;
+        var tax = 5;
+        var withTax = [=](int price) => { return price + price * tax / 100; };
+        var scaled  = [=](int price) => { return price * rate; };
+
+        // rate and tax are frozen — changing them doesn't affect the lambdas
+        rate = 999;
+        tax = 999;
+
+        printf("withTax(200) = %d\n", withTax(200));
+        printf("scaled(200) = %d\n", scaled(200));
+
+        // Compose two frozen-state functions
+        var pipeline = compose(withTax, scaled);
+        printf("pipeline(100) = %d\n", pipeline(100));
+
+        // -------------------------------------------------------
+        // [&] — All by reference: live access
+        // -------------------------------------------------------
+        puts("--- [&] Live access ---");
+        var count = 0;
+        var sum = 0;
+        var tracker = [&](int val) => {
+            count = count + 1;
+            sum = sum + val;
+            return sum;
+        };
+        tracker(10);
+        tracker(20);
+        tracker(30);
+        printf("count = %d\n", count);
+        printf("sum = %d\n", sum);
+
+        // -------------------------------------------------------
+        // [&x] — Explicit by reference: accumulator pattern
+        // -------------------------------------------------------
+        puts("--- [&x] Accumulator ---");
+        var total = 0;
+        var accumulate = [&total](int x) => {
+            total = total + x;
+            return total;
+        };
+        var running1 = accumulate(5);
+        var running2 = accumulate(15);
+        var running3 = accumulate(30);
+        printf("running totals: %d\n", running1);
+        printf("running totals: %d\n", running2);
+        printf("running totals: %d\n", running3);
+        printf("final total: %d\n", total);
+
+        // -------------------------------------------------------
+        // [=, &x] — Mixed: frozen config, mutable state
+        // -------------------------------------------------------
+        puts("--- [=, &x] Mixed mode ---");
+        var step = 10;
+        var position = 0;
+        var moveForward = [=, &position](int times) => {
+            var i = 0;
+            while (i < times)
+            {
+                position = position + step;
+                i = i + 1;
+            }
+            return position;
+        };
+        moveForward(3);
+        printf("after 3 steps: position = %d\n", position);
+        step = 999;
+        moveForward(2);
+        printf("after 2 more (step frozen at 10): position = %d\n", position);
+
+        // -------------------------------------------------------
+        // [&, x] — All by ref, one frozen
+        // -------------------------------------------------------
+        puts("--- [&, x] Reverse mixed ---");
+        var lo = 100;
+        var hi = 0;
+        var threshold = 50;
+        var classify = [&, threshold](int val) => {
+            // threshold is frozen at 50, lo and hi are live
+            if (val < threshold)
+            {
+                lo = lo + val;
+            }
+            else
+            {
+                hi = hi + val;
+            }
+            return val;
+        };
+        classify(20);
+        classify(80);
+        classify(30);
+        classify(60);
+        threshold = 999;
+        classify(10);
+        printf("lo (below 50): %d\n", lo);
+        printf("hi (50 and above): %d\n", hi);
+
+        // -------------------------------------------------------
+        // Higher-order: compose frozen lambdas
+        // -------------------------------------------------------
+        puts("--- Higher-order composition ---");
+        var add10 = [](int x) => { return x + 10; };
+        var mul3  = [](int x) => { return x * 3; };
+        var chain = compose(add10, mul3);
+        var result = chain(5);
+        printf("compose(add10, mul3)(5) = %d\n", result);
+
+        var doubleAndAdd = compose(add10, [](int x) => { return x * 2; });
+        printf("compose(add10, double)(7) = %d\n", doubleAndAdd(7));
+
+        // -------------------------------------------------------
+        // Nested lambdas with capture propagation
+        // -------------------------------------------------------
+        puts("--- Nested captures ---");
+        var outer_val = 100;
+        var captured_result = 0;
+        var outerFn = [=, &captured_result](int x) => {
+            var innerFn = [=, &captured_result](int y) => {
+                captured_result = outer_val + x + y;
+                return captured_result;
+            };
+            return innerFn(x * 3);
+        };
+        outerFn(5);
+        printf("nested: 100 + 5 + 15 = %d\n", captured_result);
+
+        // -------------------------------------------------------
+        // Capture-time vs call-time semantics (classic C++ test)
+        // -------------------------------------------------------
+        puts("--- Capture vs call time ---");
+        var x = 1;
+        var valueLambda = [=]() => { return x; };
+        var refLambda   = [&]() => { return x; };
+        x = 42;
+        printf("[=] frozen at 1: %d\n", valueLambda());
+        printf("[&] sees 42: %d\n", refLambda());
+
+        puts("");
+        puts("=== Capture Showcase Complete ===");
+        return 0;
+    }
+}

@@ -65,7 +65,7 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/hello.mingus
 add_custom_command(TARGET mingus_ir_tool POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:mingus_ir_tool>
-        ${CMAKE_CURRENT_SOURCE_DIR}/mingus_ir_tool.exe
+        ${CMAKE_SOURCE_DIR}/examples/mingus_ir_tool.exe
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:mingus_ir_tool>
         ${CMAKE_SOURCE_DIR}/tests/mingus_ir_tool.exe

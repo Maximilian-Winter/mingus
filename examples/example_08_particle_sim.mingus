@@ -1,0 +1,286 @@
+// example_08_particle_sim.mingus
+// A simple particle simulation with forces, RAII emitter, and closure-based analysis
+// Features: structs, operator overloading, classes, RAII, closures ([&]), raw blocks, ref params
+
+module ParticleSim
+{
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+
+    // --- Vec2: 2D integer vector ---
+    struct Vec2
+    {
+        int x;
+        int y;
+
+        func operator+(Vec2 other) => Vec2
+        {
+            Vec2 result;
+            result.x = this.x + other.x;
+            result.y = this.y + other.y;
+            return result;
+        }
+    }
+
+    func makeVec(int x, int y) => Vec2
+    {
+        Vec2 v;
+        v.x = x;
+        v.y = y;
+        return v;
+    }
+
+    func applyGravity(int vx, int vy, int strength, int& outX, int& outY) => void
+    {
+        outX = vx;
+        outY = vy + strength;
+    }
+
+    func applyWind(int vx, int vy, int strength, int& outX, int& outY) => void
+    {
+        outX = vx + strength;
+        outY = vy;
+    }
+
+    // --- Emitter: manages a fixed array of particles in flat storage ---
+    class Emitter
+    {
+        int* data;       // flat: [pos.x, pos.y, vel.x, vel.y, life, maxLife] per particle
+        int count;
+        int capacity;
+
+        constructor(int cap)
+        {
+            this.capacity = cap;
+            this.count = 0;
+            raw {
+                this.data = (int*)malloc(cap * 6 * sizeof(int));
+            }
+            printf("Emitter created, capacity: %d\n", cap);
+        }
+
+        destructor
+        {
+            printf("~Emitter (had %d particles)\n", this.count);
+            raw {
+                free((byte*)this.data);
+            }
+        }
+
+        func emit(int px, int py, int vx, int vy, int maxLife) => void
+        {
+            if (this.count >= this.capacity) { return; }
+            var base = this.count * 6;
+            raw {
+                *(this.data + base + 0) = px;
+                *(this.data + base + 1) = py;
+                *(this.data + base + 2) = vx;
+                *(this.data + base + 3) = vy;
+                *(this.data + base + 4) = 0;
+                *(this.data + base + 5) = maxLife;
+            }
+            this.count = this.count + 1;
+        }
+
+        func stepGravity(int strength) => void
+        {
+            var i = 0;
+            while (i < this.count)
+            {
+                var base = i * 6;
+                var vx = 0;
+                var vy = 0;
+                var life = 0;
+                raw {
+                    vx = *(this.data + base + 2);
+                    vy = *(this.data + base + 3);
+                    life = *(this.data + base + 4);
+                }
+                var nvx = 0;
+                var nvy = 0;
+                applyGravity(vx, vy, strength, nvx, nvy);
+                raw {
+                    *(this.data + base + 0) = *(this.data + base + 0) + nvx;
+                    *(this.data + base + 1) = *(this.data + base + 1) + nvy;
+                    *(this.data + base + 2) = nvx;
+                    *(this.data + base + 3) = nvy;
+                    *(this.data + base + 4) = life + 1;
+                }
+                i = i + 1;
+            }
+        }
+
+        func stepWind(int strength) => void
+        {
+            var i = 0;
+            while (i < this.count)
+            {
+                var base = i * 6;
+                var vx = 0;
+                var vy = 0;
+                var life = 0;
+                raw {
+                    vx = *(this.data + base + 2);
+                    vy = *(this.data + base + 3);
+                    life = *(this.data + base + 4);
+                }
+                var nvx = 0;
+                var nvy = 0;
+                applyWind(vx, vy, strength, nvx, nvy);
+                raw {
+                    *(this.data + base + 0) = *(this.data + base + 0) + nvx;
+                    *(this.data + base + 1) = *(this.data + base + 1) + nvy;
+                    *(this.data + base + 2) = nvx;
+                    *(this.data + base + 3) = nvy;
+                    *(this.data + base + 4) = life + 1;
+                }
+                i = i + 1;
+            }
+        }
+
+        func getX(int index) => int
+        {
+            var val = 0;
+            raw { val = *(this.data + index * 6 + 0); }
+            return val;
+        }
+
+        func getY(int index) => int
+        {
+            var val = 0;
+            raw { val = *(this.data + index * 6 + 1); }
+            return val;
+        }
+
+        func getLife(int index) => int
+        {
+            var val = 0;
+            raw { val = *(this.data + index * 6 + 4); }
+            return val;
+        }
+
+        func getMaxLife(int index) => int
+        {
+            var val = 0;
+            raw { val = *(this.data + index * 6 + 5); }
+            return val;
+        }
+
+        func isAlive(int index) => int
+        {
+            if (this.getLife(index) < this.getMaxLife(index))
+            {
+                return 1;
+            }
+            return 0;
+        }
+
+        func printParticle(int index) => void
+        {
+            printf("  [%d] ", index);
+            printf("pos=(%d,", this.getX(index));
+            printf("%d) ", this.getY(index));
+            printf("life=%d", this.getLife(index));
+            if (this.isAlive(index) == 1)
+            {
+                puts(" ALIVE");
+            }
+            else
+            {
+                puts(" DEAD");
+            }
+        }
+    }
+
+    func main() => int
+    {
+        puts("=== Particle Simulation ===");
+        puts("");
+
+        // Create emitter and spawn particles
+        puts("--- Spawning particles ---");
+        var em = Emitter(4);
+
+        //                 px  py  vx  vy  maxLife
+        em.emit(             0,  0,  3, -10, 5);
+        em.emit(            10,  0, -1,  -8, 3);
+        em.emit(             5,  0,  2, -12, 7);
+        em.emit(            -5,  0,  0,  -6, 2);
+        printf("emitted %d particles\n", em.count);
+
+        // Simulate 4 steps with gravity (strength=2)
+        puts("");
+        puts("--- 4 gravity steps ---");
+        var step = 0;
+        while (step < 4)
+        {
+            em.stepGravity(2);
+            step = step + 1;
+        }
+        var idx = 0;
+        while (idx < em.count)
+        {
+            em.printParticle(idx);
+            idx = idx + 1;
+        }
+
+        // 2 steps with wind (strength=3)
+        puts("");
+        puts("--- 2 wind steps ---");
+        step = 0;
+        while (step < 2)
+        {
+            em.stepWind(3);
+            step = step + 1;
+        }
+        idx = 0;
+        while (idx < em.count)
+        {
+            em.printParticle(idx);
+            idx = idx + 1;
+        }
+
+        // Closure-based statistical analysis with [&] captures
+        puts("");
+        puts("--- Analysis ---");
+        var alive = 0;
+        var dead = 0;
+        var totalX = 0;
+        var totalY = 0;
+
+        var classify = [&](int index) => {
+            if (em.isAlive(index) == 1)
+            {
+                alive = alive + 1;
+            }
+            else
+            {
+                dead = dead + 1;
+            }
+            totalX = totalX + em.getX(index);
+            totalY = totalY + em.getY(index);
+            return 0;
+        };
+
+        idx = 0;
+        while (idx < em.count)
+        {
+            classify(idx);
+            idx = idx + 1;
+        }
+
+        printf("alive: %d\n", alive);
+        printf("dead: %d\n", dead);
+        printf("avg X: %d\n", totalX / (alive + dead));
+        printf("avg Y: %d\n", totalY / (alive + dead));
+
+        puts("");
+        puts("RAII cleanup:");
+
+        puts("");
+        puts("=== Particle Simulation Complete ===");
+        return 0;
+    }
+}
