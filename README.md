@@ -4,8 +4,7 @@ A compiled systems programming language that combines low-level control with exp
 
 Mingus compiles to native code via LLVM. It has pipes for data flow, pattern matching with guards, RAII resource management, closures, operator overloading, interfaces, inheritance with virtual dispatch, and raw blocks for when you need to get close to the metal.
 
-Mingus is still in very early development and its syntax and features are subject to change.
-
+Status: Very early development — syntax and features are evolving rapidly. ⚠️
 
 ```
 func processSample(double sample) => double
