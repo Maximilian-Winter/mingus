@@ -10,7 +10,7 @@ setlocal enabledelayedexpansion
 set CLANG=%1
 if "%CLANG%"=="" set CLANG=clang
 
-set TOOL=..\examples\mingus_ir_tool.exe
+set TOOL=.\mingus_ir_tool.exe
 
 set PASS=0
 set FAIL=0

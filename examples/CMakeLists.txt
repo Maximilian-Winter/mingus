@@ -60,17 +60,14 @@ file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/mingus_v1_samples.mingus
      DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/hello.mingus
      DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
-file(GLOB MINGUS_TEST_FILES ${CMAKE_CURRENT_SOURCE_DIR}/test_*.mingus)
-file(COPY ${MINGUS_TEST_FILES} DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
-file(GLOB MINGUS_EXPECTED_FILES ${CMAKE_CURRENT_SOURCE_DIR}/test_*.expected)
-file(COPY ${MINGUS_EXPECTED_FILES} DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/run_all_tests.bat
-     DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 
-# Post-build: copy mingus_ir_tool.exe to source examples folder for easy testing
+# Post-build: copy mingus_ir_tool.exe to source examples folder and tests folder
 add_custom_command(TARGET mingus_ir_tool POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:mingus_ir_tool>
         ${CMAKE_CURRENT_SOURCE_DIR}/mingus_ir_tool.exe
-    COMMENT "Copying mingus_ir_tool to examples source folder"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:mingus_ir_tool>
+        ${CMAKE_SOURCE_DIR}/tests/mingus_ir_tool.exe
+    COMMENT "Copying mingus_ir_tool to examples and tests folders"
 )

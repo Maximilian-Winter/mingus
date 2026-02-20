@@ -1,19 +1,18 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set TOOL=H:\language_dev\mingus\build\examples\mingus_ir_tool.exe
-set CLANG=clang
+cd /d H:\language_dev\mingus\tests
+
+set TOOL=.\mingus_ir_tool.exe
 
 set PASS=0
 set FAIL=0
 set TOTAL=0
 
 echo ============================================================
-echo  Running Feature Tests (from examples\)
+echo  Mingus v1 Feature Tests
 echo ============================================================
 echo.
-
-cd /d H:\language_dev\mingus\examples
 
 call :run_test test_01_basics       Test01_main  "Basics"
 call :run_test test_02_structs_operators Test02_main "Structs and Operators"
@@ -35,11 +34,9 @@ call :run_test test_17_hex_literals   HexTest_main  "Hex Binary Octal Literals"
 
 echo.
 echo ============================================================
-echo  Running Stress Tests (from tests\)
+echo  Mingus Stress Tests
 echo ============================================================
 echo.
-
-cd /d H:\language_dev\mingus\tests
 
 call :run_test stress_01_closure_churn     Stress01_main  "Closure Churn (50k)"
 call :run_test stress_02_nested_capture    Stress02_main  "Nested Capture (20k)"
@@ -59,8 +56,7 @@ if !FAIL! gtr 0 (
 )
 echo ============================================================
 
-del /q H:\language_dev\mingus\examples\test_*.actual H:\language_dev\mingus\examples\test_*.exe H:\language_dev\mingus\examples\test_*.ll 2>nul
-del /q H:\language_dev\mingus\tests\stress_*.actual H:\language_dev\mingus\tests\stress_*.exe H:\language_dev\mingus\tests\stress_*.ll 2>nul
+del /q test_*.actual test_*.exe test_*.ll stress_*.actual stress_*.exe stress_*.ll 2>nul
 
 if !FAIL! gtr 0 exit /b 1
 exit /b 0
@@ -81,7 +77,7 @@ if errorlevel 1 (
     goto :eof
 )
 
-%CLANG% %FILE%.ll -o %FILE%.exe -O2 2>nul
+clang %FILE%.ll -o %FILE%.exe -O2 2>nul
 if errorlevel 1 (
     echo   FAIL: clang compilation failed
     set /a FAIL+=1

@@ -1,0 +1,27 @@
+// MathLib.mingus -- reusable math utility module
+// Imported by test_12_imports.mingus
+
+module MathLib
+{
+    func add(int a, int b) => int
+    {
+        return a + b;
+    }
+
+    func mul(int a, int b) => int
+    {
+        return a * b;
+    }
+
+    func square(int x) => int
+    {
+        return x * x;
+    }
+
+    func clampInt(int val, int lo, int hi) => int
+    {
+        if (val < lo) { return lo; }
+        if (val > hi) { return hi; }
+        return val;
+    }
+}
