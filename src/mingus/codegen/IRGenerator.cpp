@@ -1215,6 +1215,10 @@ void IRGenerator::visit(FunctionDeclaration& node) {
         enterNamedScope(funcSym->bodyScope);
     }
 
+    // Push RAII scope for function body (ensures destructors fire for
+    // variables declared directly in the function body, not just in nested blocks)
+    pushRAIIScope();
+
     // Visit body statements
     for (auto& stmt : node.body->statements) {
         stmt->accept(*this);
@@ -1224,12 +1228,15 @@ void IRGenerator::visit(FunctionDeclaration& node) {
 
     // Add default terminator if needed
     if (!builder_.GetInsertBlock()->getTerminator()) {
+        emitScopeDestructors();
         if (fn->getReturnType()->isVoidTy()) {
             builder_.CreateRetVoid();
         } else {
             builder_.CreateRet(llvm::UndefValue::get(fn->getReturnType()));
         }
     }
+
+    popRAIIScope();
 
     if (funcSym->bodyScope) {
         leaveNamedScope();
@@ -3561,6 +3568,8 @@ void IRGenerator::visit(LambdaExpression& node) {
     auto savedNamedValues = namedValues_;
     auto savedInsertPoint = builder_.GetInsertBlock();
     auto savedInsertPointIt = builder_.GetInsertPoint();
+    auto savedRAIIStack = std::move(raiiScopeStack_);
+    raiiScopeStack_.clear();
 
     // Enter the lambda's scope
     enterNextChildScope();
@@ -3687,6 +3696,7 @@ void IRGenerator::visit(LambdaExpression& node) {
     currentFunction_ = prevFunction;
     currentThisPtr_ = prevThisPtr;
     namedValues_ = savedNamedValues;
+    raiiScopeStack_ = std::move(savedRAIIStack);
     builder_.SetInsertPoint(savedInsertPoint, savedInsertPointIt);
 
     if (hasCaptures) {
