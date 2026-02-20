@@ -1,7 +1,7 @@
 # Mingus v1 — Language Status Report
 
 **Date:** February 2026
-**Status:** Compiles and executes optimized native binaries — **17 feature tests + 21 stress tests passing (38/38)**
+**Status:** Compiles and executes optimized native binaries — **20 feature tests + 21 stress tests passing (41/41)**
 
 ---
 
@@ -24,14 +24,14 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | Compilation | Clang (from LLVM distribution) compiles IR to native |
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
-**Test Runner:** `run_tests.bat` (combined 38 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
+**Test Runner:** `run_tests.bat` (combined 41 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
 **Showcase:** `examples/showcase.bat` — displays source code and program output for showcase programs
 
 ---
 
 ## Working Features
 
-### Verified by test suite (17 feature tests + 21 stress tests = 38/38 passing)
+### Verified by test suite (20 feature tests + 21 stress tests = 41/41 passing)
 
 #### 1. Core Language (Test 01)
 - Integer types: `int`, `byte`, `bool`
@@ -208,14 +208,6 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - `--opt 2`: O2 pipeline (inlining, GVN, SROA, instcombine, vectorization, DCE)
 - Optimization runs between IR generation and LLVM verification
 - All tests run with `--opt 2` enabled
-
-### Verified by IR generation (passes LLVM verifier, not yet runtime-tested individually)
-
-- Tuple expressions: `return (name, prec, isOperator)`
-- Tuple destructuring: `(var a, var b, var c) = tokenInfo(tok)`
-- `DynamicArray.map` with lambda + pipe: `arr.map((int x) => { return x * 2; })`
-- `memcpy` interop for array grow
-- Complex number arithmetic (operator overloading)
 
 ---
 

@@ -1,0 +1,11 @@
+arr[0] = 1
+arr[4] = 5
+arr[9] = 10
+length = 10
+doubled[0] = 2
+doubled[4] = 10
+doubled[9] = 20
+squared[0] = 1
+squared[4] = 25
+squared[9] = 100
+Test19 done

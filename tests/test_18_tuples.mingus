@@ -1,0 +1,73 @@
+// Test 18: Tuple Expressions and Destructuring
+// Tuples are anonymous struct values that can be returned from functions
+// and destructured into individual variables.
+
+module Test18
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+
+    // Return a tuple of (int, int)
+    func divmod(int a, int b) => (int, int)
+    {
+        return (a / b, a % b);
+    }
+
+    // Return a tuple of three values with different logic
+    func classify(int n) => (string, int, bool)
+    {
+        var label = "zero";
+        var abs_val = n;
+        var is_positive = false;
+
+        if (n > 0)
+        {
+            label = "positive";
+            is_positive = true;
+        }
+        if (n < 0)
+        {
+            label = "negative";
+            abs_val = 0 - n;
+        }
+
+        return (label, abs_val, is_positive);
+    }
+
+    // Return a tuple of two ints — fibonacci pair
+    func fib_pair(int n) => (int, int)
+    {
+        if (n <= 0)
+        {
+            return (0, 1);
+        }
+
+        (var a, var b) = fib_pair(n - 1);
+        return (b, a + b);
+    }
+
+    func main() => int
+    {
+        // Basic tuple destructuring
+        (var quot, var rem) = divmod(17, 5);
+        printf("17 / 5 = %d", quot);
+        printf(" remainder %d\n", rem);
+
+        // Tuple with mixed types
+        (var label, var abs_val, var is_pos) = classify(42);
+        puts(label);
+        printf("abs: %d\n", abs_val);
+
+        (var label2, var abs_val2, var is_pos2) = classify(-7);
+        puts(label2);
+        printf("abs: %d\n", abs_val2);
+
+        // Recursive function returning tuple
+        (var fib8, var fib9) = fib_pair(8);
+        printf("fib(8) = %d\n", fib8);
+        printf("fib(9) = %d\n", fib9);
+
+        puts("Test18 done");
+        return 0;
+    }
+}

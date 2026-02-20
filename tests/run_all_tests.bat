@@ -51,6 +51,9 @@ call :run_test test_14_strings Test14_main "String Operations"
 call :run_test test_15_interfaces Test15_main "Interfaces"
 call :run_test test_16_dsp_wav        DspWav_main   "DSP WAV Synthesis"
 call :run_test test_17_hex_literals   HexTest_main  "Hex Binary Octal Literals"
+call :run_test test_18_tuples         Test18_main   "Tuples"
+call :run_test test_19_dynamic_array_map Test19_main "DynamicArray Map"
+call :run_test test_20_complex_numbers Test20_main  "Complex Numbers"
 
 echo.
 echo ============================================================

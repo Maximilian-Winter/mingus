@@ -1,0 +1,76 @@
+// Test 20: Complex Number Arithmetic (Operator Overloading)
+// Struct with operator+, operator*, and methods demonstrating
+// mathematical struct types with full operator overloading.
+
+module Test20
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, double val) => int;
+    extern func sqrt(double x) => double;
+
+    struct Complex
+    {
+        double real;
+        double imag;
+
+        func operator+(Complex other) => Complex
+        {
+            Complex result;
+            result.real = this.real + other.real;
+            result.imag = this.imag + other.imag;
+            return result;
+        }
+
+        func operator*(Complex other) => Complex
+        {
+            Complex result;
+            // (a+bi)(c+di) = (ac-bd) + (ad+bc)i
+            result.real = this.real * other.real - this.imag * other.imag;
+            result.imag = this.real * other.imag + this.imag * other.real;
+            return result;
+        }
+
+        func magnitude_squared() => double
+        {
+            return this.real * this.real + this.imag * this.imag;
+        }
+    }
+
+    func printComplex(string label, Complex c) => void
+    {
+        puts(label);
+        printf("  real: %.0f\n", c.real);
+        printf("  imag: %.0f\n", c.imag);
+    }
+
+    func main() => int
+    {
+        // Create two complex numbers: (3+4i) and (1+2i)
+        Complex a;
+        a.real = 3.0;
+        a.imag = 4.0;
+
+        Complex b;
+        b.real = 1.0;
+        b.imag = 2.0;
+
+        // Addition: (3+4i) + (1+2i) = (4+6i)
+        var sum = a + b;
+        printComplex("sum:", sum);
+
+        // Multiplication: (3+4i) * (1+2i) = (3-8) + (6+4)i = (-5+10i)
+        var prod = a * b;
+        printComplex("product:", prod);
+
+        // Chained: (a + b) * b = (4+6i) * (1+2i) = (4-12) + (8+6)i = (-8+14i)
+        var chained = (a + b) * b;
+        printComplex("chained:", chained);
+
+        // Magnitude squared: |3+4i|^2 = 9+16 = 25
+        double mag2 = a.magnitude_squared();
+        printf("mag^2 = %.0f\n", mag2);
+
+        puts("Test20 done");
+        return 0;
+    }
+}

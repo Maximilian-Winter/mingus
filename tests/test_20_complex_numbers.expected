@@ -1,0 +1,11 @@
+sum:
+  real: 4
+  imag: 6
+product:
+  real: -5
+  imag: 10
+chained:
+  real: -8
+  imag: 14
+mag^2 = 25
+Test20 done

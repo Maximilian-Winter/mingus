@@ -1,0 +1,111 @@
+// Test 19: DynamicArray.map with Lambda + Pipe, memcpy for grow
+// Tests first-class functions passed to class methods, pipe inside methods,
+// and memcpy interop for array resizing.
+
+module Test19
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int val) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memcpy(byte* dest, byte* src, int n) => byte*;
+
+    class DynamicArray
+    {
+        private int* data;
+        private int size;
+        private int capacity;
+
+        constructor(int initialCapacity)
+        {
+            this.capacity = initialCapacity;
+            this.size = 0;
+            raw { this.data = (int*)malloc(initialCapacity * sizeof(int)); }
+        }
+
+        destructor
+        {
+            if (this.data != null)
+            {
+                raw { free((byte*)this.data); }
+            }
+        }
+
+        func push(int value) => void
+        {
+            if (this.size >= this.capacity)
+            {
+                this.grow();
+            }
+            raw { *(this.data + this.size) = value; }
+            this.size++;
+        }
+
+        func operator[](int index) => int
+        {
+            raw { return *(this.data + index); }
+        }
+
+        func length() => int
+        {
+            return this.size;
+        }
+
+        // Map: takes a first-class function, returns a new array
+        func map((int) => int transform) => DynamicArray
+        {
+            var result = DynamicArray(this.capacity);
+            for (int i = 0; i < this.size; i++)
+            {
+                var val = this[i] |> transform;
+                result.push(val);
+            }
+            return result;
+        }
+
+        // Grow: uses memcpy to resize the backing array
+        private func grow() => void
+        {
+            var newCapacity = this.capacity * 2;
+            raw
+            {
+                var newData = (int*)malloc(newCapacity * sizeof(int));
+                memcpy((byte*)newData, (byte*)this.data, this.size * sizeof(int));
+                free((byte*)this.data);
+                this.data = newData;
+            }
+            this.capacity = newCapacity;
+        }
+    }
+
+    func main() => int
+    {
+        // Build array with enough elements to trigger grow (capacity=4, push 10)
+        var arr = DynamicArray(4);
+        for (int i = 1; i <= 10; i++)
+        {
+            arr.push(i);
+        }
+
+        // Verify original values survived grow
+        printf("arr[0] = %d\n", arr[0]);
+        printf("arr[4] = %d\n", arr[4]);
+        printf("arr[9] = %d\n", arr[9]);
+        printf("length = %d\n", arr.length());
+
+        // Map with lambda: double each element
+        var doubled = arr.map((int x) => { return x * 2; });
+        printf("doubled[0] = %d\n", doubled[0]);
+        printf("doubled[4] = %d\n", doubled[4]);
+        printf("doubled[9] = %d\n", doubled[9]);
+
+        // Map with lambda: square each element
+        var squared = arr.map((int x) => { return x * x; });
+        printf("squared[0] = %d\n", squared[0]);
+        printf("squared[4] = %d\n", squared[4]);
+        printf("squared[9] = %d\n", squared[9]);
+
+        puts("Test19 done");
+        return 0;
+    }
+}
