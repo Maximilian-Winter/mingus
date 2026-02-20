@@ -9,5 +9,7 @@
 [&, x] a modified: 150
 [&, x] result: 350
 [&] accumulated sum: 10
+[=] frozen at capture: 1
+[&] sees mutation: 13
 nested capture: 14
 === Test 28 complete ===

@@ -92,6 +92,20 @@ module Test28
         accumulate(4);
         printf("[&] accumulated sum: %d\n", sum);
 
+        // Classic C++ capture-time vs call-time semantics:
+        //   int x = 1;
+        //   auto valueLambda = [=]() { cout << x; };  // freezes x=1
+        //   auto refLambda   = [&]() { cout << x; };  // sees current x
+        //   x = 13;
+        //   valueLambda();  // prints 1
+        //   refLambda();    // prints 13
+        var x = 1;
+        var valueLambda = [=]() => { return x; };
+        var refLambda   = [&]() => { return x; };
+        x = 13;
+        printf("[=] frozen at capture: %d\n", valueLambda());
+        printf("[&] sees mutation: %d\n", refLambda());
+
         // Nested lambdas with different capture modes
         var outer = 5;
         var inner_result = 0;

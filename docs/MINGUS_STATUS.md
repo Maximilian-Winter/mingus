@@ -1,7 +1,7 @@
 # Mingus v1 — Language Status Report
 
 **Date:** February 2026
-**Status:** Compiles and executes optimized native binaries — **27 feature tests + 22 stress tests passing (49/49)**
+**Status:** Compiles and executes optimized native binaries — **30 feature tests + 21 stress tests passing (51/51)**
 
 ---
 
@@ -24,14 +24,14 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | Compilation | Clang (from LLVM distribution) compiles IR to native |
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
-**Test Runner:** `run_tests.bat` (combined 49 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
+**Test Runner:** `run_tests.bat` (combined 51 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
 **Showcase:** `examples/showcase.bat` — displays source code and program output for showcase programs
 
 ---
 
 ## Working Features
 
-### Verified by test suite (27 feature tests + 22 stress tests = 49/49 passing)
+### Verified by test suite (30 feature tests + 21 stress tests = 51/51 passing)
 
 #### 1. Core Language (Test 01)
 - Integer types: `int`, `byte`, `bool`
@@ -51,8 +51,9 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - Nested loops and control flow
 - `switch` statements with `case` and `default`
 
-#### 3. Functions (Tests 01-15)
+#### 3. Functions (Tests 01-15, 29)
 - Function declarations with typed parameters and return types: `func name(int x) => int`
+- **Reference parameters** (Test 29): `func swap(int& a, int& b) => void` — callee receives pointer to caller's alloca, writes persist
 - Recursive functions
 - Extern function declarations for C interop: `extern func printf(string fmt) => int`
 - Grouped extern blocks: `extern { func sin(double x) => double; }`
@@ -119,16 +120,24 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - String-backed enums: `enum HttpMethod : string { Get = "GET", ... }`
 - Switch statements on integers with constant-case optimization (LLVM `switch` instruction)
 
-#### 8. Lambdas and Higher-Order Functions (Tests 06, 10, 11)
-- Lambda expressions: `(double x) => { return x * 2.0; }`
-- Variables holding function values: `var doubler = (double x) => { ... }`
-- Lambda literal assignment: `f = (int x) => { return x * 2; };` (reassign closure variables with inline lambdas)
+#### 8. Lambdas and Higher-Order Functions (Tests 06, 10, 11, 28)
+- **Mandatory C++ capture lists**: all lambdas require `[...]` syntax
+  - `[]` — no captures
+  - `[=]` — all by value (copy at capture time)
+  - `[&]` — all by reference (writes persist to outer scope)
+  - `[x]` — explicit by value
+  - `[&x]` — explicit by reference
+  - `[=, &x]` — all by value, specific ones by reference
+  - `[&, x]` — all by reference, specific ones by value
+- Lambda expressions: `[=](double x) => { return x * 2.0; }`
+- Variables holding function values: `var doubler = [=](double x) => { ... }`
+- Lambda literal assignment: `f = [=](int x) => { return x * 2; };` (reassign closure variables)
 - Higher-order functions: `func apply(double x, (double) => double f) => double`
 - Passing lambdas as arguments
 - Calling lambdas stored in variables
-- Pipe operator with lambda arguments: `7.0 |> apply((double x) => { return x + 3.0; })`
+- Pipe operator with lambda arguments: `7.0 |> apply([](double x) => { return x + 3.0; })`
 
-#### 9. Closures with Captures (Tests 10, 11, 21, 25, 26)
+#### 9. Closures with Captures (Tests 10, 11, 21, 25, 26, 28, 30)
 - Fat pointer representation: all function-typed values are `{ fnPtr, envPtr }` structs
 - All lambdas receive `ptr %env` as final parameter (uniform calling convention)
 - Closures capturing variables from enclosing scope: `func makeScaler(double factor) => (double) => double`
@@ -140,12 +149,16 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - Composed closures: `func compose((double) => double f, (double) => double g) => (double) => double`
 - Closures capturing other closures (fat pointers in capture struct)
 - Closures calling module functions from within lambda body
+- **By-reference captures** (Tests 28, 30): `[&x]` stores pointer to original alloca in env struct; reads and writes inside the lambda go through to the original variable, enabling stateful closures (counters, accumulators, min/max trackers)
+- **Capture-time vs call-time semantics**: `[=]` freezes variable value at capture time; `[&]` sees current value at call time — matching C++ behavior exactly
+- **Mixed capture modes**: `[=, &accum]` captures most variables by value but specific ones by reference; `[&, scale]` captures most by reference but specific ones by value
+- **Nested lambda capture propagation**: when inner lambdas reference outer-scope variables, all intermediate lambdas in the chain automatically capture them too (semantic validator walks entire lambda stack)
 - **Nullable closures**: `(int) => int f = null;` — FunctionType variables can be null-initialized and reassigned
 - **Fat pointer null comparison** (Test 21): `f == null`, `f != null`, `null == f` — extracts the `fnPtr` component (index 0) from the fat pointer and compares against null
 - **Closures in struct fields**: synthetic cleanup functions release closure fields at scope exit
 - **Closures in class fields**: destructor epilogue auto-releases closure fields; constructor auto-zero-inits them
 - **Escape analysis** (Test 25): temporary closures passed directly as function arguments are RAII-wrapped to prevent leaks; lambda arguments in `CallExpression` are marked non-escaping by `SemanticValidator`
-- **Self-capturing closures** (Test 26): `(int) => int fib = (int n) => { return fib(n-1) + fib(n-2); };` — letrec-style indirection: alloca created first, lambda compiled (captures zero fat pointer), final fat pointer stored, then env struct patched with the real self-reference (unretained to avoid cycles)
+- **Self-capturing closures** (Test 26): `(int) => int fib = [=](int n) => { return fib(n-1) + fib(n-2); };` — letrec-style indirection: alloca created first, lambda compiled (captures zero fat pointer), final fat pointer stored, then env struct patched with the real self-reference (unretained to avoid cycles)
 
 #### 10. Floating Point and Math (Tests 07, 11)
 - `double` and `float` types
@@ -266,8 +279,9 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 | Area | Limitation |
 |------|------------|
-| **Closure captures** | Captures are "copy on entry per call" — writes to captured variables don't persist across calls. The env struct is loaded into a local alloca but never written back. Workaround: capture a pointer to the object instead. |
+| **Reference lifetime** | `[&x]` captures that escape their scope produce dangling references. This is the programmer's responsibility, same as C++. |
 | **Self-capture lifetime** | Self-capturing closures use an unretained self-reference to avoid RC cycles. The closure is valid only while the owning variable is in scope. |
+| **Temporary closure leak** | Closures passed directly as function arguments without variable storage leak one refcount. |
 | **ABI** | Struct return by value relies on LLVM's default ABI lowering. Not tested with very large structs. |
 | **Error recovery** | Parser and sema generally stop at the first error. No multi-error recovery or cascading diagnostics. |
 | **Module visibility** | `public`/`private` on module-level symbols is parsed but only partially enforced (whole-module import skips non-public). No separate compilation or linking — all imported files compiled together. |
@@ -305,8 +319,11 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | test_25_escape_analysis | temporary closure RAII wrapping, named closures, chained calls, non-escaping detection | PASS |
 | test_26_self_capture | self-capturing closures: recursive fibonacci, factorial, countdown via letrec-style env patching | PASS |
 | test_27_debug_info | `--debug` flag produces correct runtime behavior, verifies debug info doesn't break compilation | PASS |
+| test_28_explicit_captures | `[]`, `[=]`, `[&]`, `[x]`, `[&x]`, `[=, &x]`, `[&, x]`, nested captures, capture-time vs call-time semantics | PASS |
+| test_29_ref_params | `func swap(int& a, int& b)`, `func increment(int& x)`, mixed ref/value params, `divmod` with output params | PASS |
+| test_30_capture_writeback | `[&counter]` increment, `[&sum]` accumulator, `[&min, &max]` tracker, `[=, &total]` mixed, `[&]` default ref, write-back through HOF | PASS |
 
-### Stress Tests (22/22 passing)
+### Stress Tests (21/21 passing)
 
 | Test | Stress Target | Result |
 |------|--------------|--------|
@@ -332,7 +349,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | stress_21_cyclic_capture | 10k heap objects with closure fields, no explicit ctor/dtor (auto-generated) | PASS |
 | stress_22_destructor_reentrant | 10k destructor bodies calling closure fields before epilogue releases them | PASS |
 
-**All 49 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+**All 51 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
@@ -344,7 +361,7 @@ mingus/
 ├── MingusParser.g4                         # ANTLR4 parser grammar
 ├── README.md                               # Project overview and quick start
 ├── build.bat                               # Standalone build script (Ninja + MSVC)
-├── run_tests.bat                           # Combined test runner (all 49 tests)
+├── run_tests.bat                           # Combined test runner (all 51 tests)
 ├── docs/
 │   └── MINGUS_STATUS.md                    # This file
 ├── include/mingus/
@@ -370,7 +387,7 @@ mingus/
 │   └── Codegen.h                           # Aggregate codegen header
 ├── src/mingus/
 │   ├── sema/*.cpp                          # Sema implementations (4 passes)
-│   ├── codegen/IRGenerator.cpp             # ~4200 lines of codegen
+│   ├── codegen/IRGenerator.cpp             # ~4400 lines of codegen
 │   └── parser/ASTGenerator.cpp             # Parse tree -> AST
 ├── examples/
 │   ├── mingus_ir_tool.cpp                  # CLI: parse -> sema -> codegen -> optimize -> verify -> emit (--debug flag)
@@ -379,15 +396,30 @@ mingus/
 │   ├── showcase.bat                        # Display source + output for showcase programs
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 ├── tests/
-│   ├── test_01_basics.mingus … test_27_debug_info.mingus  # 27 feature tests
-│   ├── stress_01_closure_churn.mingus … stress_22_destructor_reentrant.mingus  # 22 stress tests
+│   ├── test_01_basics.mingus … test_30_capture_writeback.mingus  # 30 feature tests
+│   ├── stress_01_closure_churn.mingus … stress_22_destructor_reentrant.mingus  # 21 stress tests
 │   ├── *.expected                          # Expected output for automated validation
 │   ├── MathLib.mingus                      # Copy for test_12 imports
-│   ├── run_all_tests.bat                   # Feature test runner (27 tests)
-│   ├── run_stress_tests.bat                # Stress test runner (22 tests)
+│   ├── run_all_tests.bat                   # Feature test runner (30 tests)
+│   ├── run_stress_tests.bat                # Stress test runner (21 tests)
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 └── CMakeLists.txt                          # Build system (LLVM, ANTLR4, MSVC)
 ```
+
+---
+
+## Recently Completed
+
+### C++ Capture Lists and Reference Parameters (February 2026)
+
+Replaced implicit capture-by-value with **mandatory C++ capture list syntax**. All lambdas now require explicit `[...]`:
+
+- **Full capture modes**: `[]`, `[=]`, `[&]`, `[x]`, `[&x]`, `[=, &x]`, `[&, x]`
+- **True by-reference captures**: `[&x]` stores a pointer to the original variable's alloca in the closure env struct. Reads and writes inside the lambda operate on the original variable — enabling stateful closures (counters, accumulators, trackers) without workarounds.
+- **Reference parameters**: `func swap(int& a, int& b) => void` — `ReferenceType` in the type system, codegen passes pointer to caller's alloca, callee reads/writes through it.
+- **Nested capture propagation**: `checkLambdaCapture()` walks the entire lambda stack to ensure intermediate lambdas capture variables needed by inner lambdas.
+- **New tests**: test_28 (explicit captures), test_29 (reference parameters), test_30 (capture write-back).
+- **Migration**: All ~52 lambdas across 25 test/example files updated from `(params) =>` to `[...](params) =>`.
 
 ---
 
@@ -398,24 +430,21 @@ mingus/
 1. **Error Recovery**
    Improve parser and sema to report multiple errors per compilation instead of stopping at the first critical one. Parser error messages should include context about what was expected and where.
 
-2. **Closure Capture Write-Back**
-   Currently captures are "copy on entry per call" — writes to captured variables don't persist. Implementing write-back (or capture-by-reference semantics) would enable stateful closures without pointer indirection workarounds.
+2. **Generic Types**
+   `class Array<T>`, `func map<T, U>(...)` — requires monomorphization or type erasure strategy.
 
 ### Medium-term
 
-3. **Generic Types**
-    `class Array<T>`, `func map<T, U>(...)` — requires monomorphization or type erasure strategy.
-
-4. **Standard Library**
+3. **Standard Library**
     Collections (Array, Map, Set), I/O, and math utilities written in Mingus itself, using extern for OS primitives.
 
-5. **Separate Compilation**
+4. **Separate Compilation**
     Support compiling modules independently and linking them. Requires stable ABI for module boundaries and a header/interface file format.
 
 ### Long-term
 
-6. **REPL / JIT Mode**
+5. **REPL / JIT Mode**
     Use LLVM's ORC JIT for interactive evaluation. Useful for exploration and teaching.
 
-7. **Cross-Platform Support**
+6. **Cross-Platform Support**
     Test and fix codegen for Linux/macOS targets. The core LLVM IR is portable, but ABI conventions and debug info formats differ.

@@ -108,12 +108,12 @@ Destructors run automatically at scope exit. No garbage collector, no manual fre
 ```
 func makeScaler(double factor) => (double) => double
 {
-    return (double x) => { return x * factor; };
+    return [=](double x) => { return x * factor; };
 }
 
 func compose((double) => double f, (double) => double g) => (double) => double
 {
-    return (double x) => { return f(g(x)); };
+    return [=](double x) => { return f(g(x)); };
 }
 
 var doubler = makeScaler(2.0);
@@ -121,6 +121,40 @@ var tripler = makeScaler(3.0);
 var times6  = compose(doubler, tripler);
 
 var result = 7.0 |> apply(times6);   // 42.0
+```
+
+Lambdas use C++ capture lists. `[=]` copies by value, `[&]` captures by reference, and you can mix them:
+
+```
+var total = 0;
+var accumulate = [&total](int x) => {
+    total = total + x;   // writes persist to outer variable
+    return total;
+};
+accumulate(10);
+accumulate(20);
+// total is now 30
+
+var scale = 2;
+var mixed = [=, &total](int x) => {
+    total = total + x * scale;  // scale frozen, total mutable
+    return total;
+};
+```
+
+### Reference parameters
+
+```
+func swap(int& a, int& b) => void
+{
+    var tmp = a;
+    a = b;
+    b = tmp;
+}
+
+var x = 10;
+var y = 20;
+swap(x, y);  // x=20, y=10
 ```
 
 ### Interfaces
@@ -242,7 +276,7 @@ clang hello.ll -o hello.exe -O2
 ### Running the test suite
 
 ```bash
-# Full suite (20 feature tests + 21 stress tests)
+# Full suite (30 feature tests + 21 stress tests)
 run_tests.bat           # Windows — from project root
 
 # Or individually:
@@ -251,7 +285,7 @@ run_all_tests.bat       # Feature tests only
 run_stress_tests.bat    # Stress tests only
 ```
 
-All 41 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to see program output, or `--code` to display Mingus source.
+All 51 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to see program output, or `--code` to display Mingus source.
 
 ## Feature Summary
 
@@ -270,10 +304,12 @@ All 41 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to
 | Pipe operator (`\|>`) | ✓ |
 | Pattern matching with guards | ✓ |
 | Enums with underlying types | ✓ |
-| Lambdas and closures (fat pointer, reference counted) | ✓ |
+| Lambdas with C++ capture lists (`[=]`, `[&]`, `[x, &y]`) | ✓ |
+| By-reference captures — writes persist to outer scope | ✓ |
+| Reference parameters (`func swap(int& a, int& b)`) | ✓ |
 | Higher-order functions and composition | ✓ |
 | Nullable closures (`(int) => int f = null;`) | ✓ |
-| Lambda literal assignment (`f = (int x) => { ... };`) | ✓ |
+| Lambda literal assignment (`f = [=](int x) => { ... };`) | ✓ |
 | Pointers and raw blocks | ✓ |
 | Fixed-size arrays | ✓ |
 | String operations (concat, compare, length, substring) | ✓ |
@@ -305,10 +341,9 @@ Source (.mingus)
 - **No generics** — no template or generic type support yet.
 - **Strings are heap-allocated** — no small string optimization.
 - **Single compilation unit** — each `.mingus` file compiles independently. Cross-file linking uses `import`.
-- **No debug info** — no DWARF/PDB emission. Debugging is through printf and IR inspection.
 - **Error recovery is minimal** — the first parse or semantic error often stops compilation. Error messages lack detailed context.
-- **No self-capturing closures** — a closure cannot reference itself for recursion (captures are by value).
 - **Temporary closure leak** — closures passed directly as function arguments without variable storage leak one refcount.
+- **Reference lifetime** — `[&x]` captures that escape their scope produce dangling references (programmer responsibility, same as C++).
 
 
 # Detailed Current Status
