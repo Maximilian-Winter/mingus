@@ -1,7 +1,7 @@
 # Mingus v1 — Language Status Report
 
 **Date:** February 2026
-**Status:** Compiles and executes optimized native binaries — **17 feature tests + 18 stress tests passing (35/35)**
+**Status:** Compiles and executes optimized native binaries — **17 feature tests + 21 stress tests passing (38/38)**
 
 ---
 
@@ -24,14 +24,14 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | Compilation | Clang (from LLVM distribution) compiles IR to native |
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
-**Test Runner:** `run_tests.bat` (combined), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
+**Test Runner:** `run_tests.bat` (combined 38 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
 **Showcase:** `examples/showcase.bat` — displays source code and program output for showcase programs
 
 ---
 
 ## Working Features
 
-### Verified by test suite (17 feature tests + 18 stress tests = 35/35 passing)
+### Verified by test suite (17 feature tests + 21 stress tests = 38/38 passing)
 
 #### 1. Core Language (Test 01)
 - Integer types: `int`, `byte`, `bool`
@@ -72,8 +72,8 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 #### 5. Classes, RAII, and Inheritance (Tests 03, 13)
 - Class declarations with fields and methods
-- Constructors: `constructor(int size) { ... }`
-- Destructors: `destructor { ... }`
+- Constructors: `constructor(int size) { ... }` (auto-generated if omitted)
+- Destructors: `destructor { ... }` (auto-generated if omitted)
 - Automatic destructor calls at scope exit (RAII)
 - Destructor suppression for returned values
 - `new` and `delete` for heap allocation
@@ -115,6 +115,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 #### 8. Lambdas and Higher-Order Functions (Tests 06, 10, 11)
 - Lambda expressions: `(double x) => { return x * 2.0; }`
 - Variables holding function values: `var doubler = (double x) => { ... }`
+- Lambda literal assignment: `f = (int x) => { return x * 2; };` (reassign closure variables with inline lambdas)
 - Higher-order functions: `func apply(double x, (double) => double f) => double`
 - Passing lambdas as arguments
 - Calling lambdas stored in variables
@@ -124,12 +125,17 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - Fat pointer representation: all function-typed values are `{ fnPtr, envPtr }` structs
 - All lambdas receive `ptr %env` as final parameter (uniform calling convention)
 - Closures capturing variables from enclosing scope: `func makeScaler(double factor) => (double) => double`
-- Heap-allocated capture structs via `malloc`
+- Heap-allocated capture structs via `malloc` with **reference-counted header** `{ i64 refcount, ptr cleanup_fn, ...fields }`
+- Retain/release at assignment boundaries: old closure released before reassignment, new closure retained on field store
+- Per-closure cleanup functions for nested closures (releases captured closure envPtrs)
 - Indirect calls extract `fnPtr` and `envPtr` from fat pointer, pass env as last arg
 - Closures as function arguments and return values
 - Composed closures: `func compose((double) => double f, (double) => double g) => (double) => double`
 - Closures capturing other closures (fat pointers in capture struct)
 - Closures calling module functions from within lambda body
+- **Nullable closures**: `(int) => int f = null;` — FunctionType variables can be null-initialized and reassigned
+- **Closures in struct fields**: synthetic cleanup functions release closure fields at scope exit
+- **Closures in class fields**: destructor epilogue auto-releases closure fields; constructor auto-zero-inits them
 
 #### 10. Floating Point and Math (Tests 07, 11)
 - `double` and `float` types
@@ -223,18 +229,18 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | **Protected access** | Parsed only | Access modifiers are parsed but not enforced by sema. |
 | **Static methods** | Parsed only | `static` modifier is parsed but static dispatch not implemented in codegen. |
 | **Generics/templates** | Not supported | No generic types or functions. |
-| **Error recovery** | Minimal | First semantic error usually stops further analysis. |
 | **Multiple class inheritance** | Not supported | `class C : A, B` where both A and B are classes is a sema error. Multiple interface implementation is supported. |
 
 ### Codegen Limitations
 
 | Area | Limitation |
 |------|------------|
-| **Closure RC** | Closure capture structs use reference counting (retain/release) with per-closure cleanup functions. Closures in struct fields get synthetic cleanup functions; class field closures are released in destructor epilogue. **Known gap:** temporary closures passed directly as function arguments without variable storage leak one refcount. |
-| **Nullable closures** | `(int) => int f = null;` is now supported. FunctionType variables can be null-initialized and reassigned. True self-capturing closures still don't work because captures are by value — the lambda captures the null initial value, not the later-assigned closure. |
-| **Classes without destructors** | If a class has closure-typed fields but no user-defined destructor, the closure fields will leak. Add an empty `destructor { }` to trigger automatic closure field cleanup. |
+| **Closure RC** | Closure capture structs use reference counting (retain/release) with per-closure cleanup functions. Closures in struct/class fields are properly managed. **Known gap:** temporary closures passed directly as function arguments without variable storage leak one refcount. |
+| **Self-capturing closures** | A closure cannot reference itself for recursion. Captures are by value, so the closure captures its own initial value (null or prior state), not the final assigned reference. Requires a `letrec`-style construct or explicit indirection. |
+| **Fat pointer comparison** | Cannot compare closure/function-typed values to `null` directly (`f != null`). Fat pointers are `{ ptr, ptr }` structs, not scalar pointers, so `!=` doesn't work. Workaround: track nullability with a separate boolean flag. |
 | **ABI** | Struct return by value relies on LLVM's default ABI lowering. Not tested with very large structs. |
-| **Debug info** | No DWARF/PDB debug information emitted. |
+| **Debug info** | No DWARF/PDB debug information emitted. No source locations in error messages beyond line numbers. |
+| **Error recovery** | Parser and sema generally stop at the first error. No multi-error recovery or cascading diagnostics. |
 | **Module visibility** | `public`/`private` on symbols is parsed but only partially enforced (whole-module import skips non-public). No separate compilation or linking — all imported files compiled together. |
 
 ---
@@ -261,7 +267,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | test_16_dsp_wav | inheritance + interfaces (Effect, Named) + oscillator classes → WAV file output; demonstrates the full feature stack together | PASS |
 | test_17_hex_literals | hex (`0xFF`), binary (`0b1010`), octal (`0o77`) integer literals; bitwise operations | PASS |
 
-### Stress Tests (18/18 passing)
+### Stress Tests (21/21 passing)
 
 | Test | Stress Target | Result |
 |------|--------------|--------|
@@ -283,8 +289,11 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | stress_17_long_running | 100k iterations combining closures, RAII, interfaces, recursion | PASS |
 | stress_18_break_outer_raii | Break from inner loop preserves outer-scope RAII objects | PASS |
 | stress_19_null_closure | Null-initialized closure variable, reassignment, and call | PASS |
+| stress_20_reentrant_closure | 20k recursive closure wrapping (5 levels deep per iteration) | PASS |
+| stress_21_cyclic_capture | 10k heap objects with closure fields, no explicit ctor/dtor (auto-generated) | PASS |
+| stress_22_destructor_reentrant | 10k destructor bodies calling closure fields before epilogue releases them | PASS |
 
-**All 35 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+**All 38 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
@@ -296,7 +305,7 @@ mingus/
 ├── MingusParser.g4                         # ANTLR4 parser grammar
 ├── README.md                               # Project overview and quick start
 ├── build.bat                               # Standalone build script (Ninja + MSVC)
-├── run_tests.bat                           # Combined test runner (all 31 tests)
+├── run_tests.bat                           # Combined test runner (all 38 tests)
 ├── docs/
 │   └── MINGUS_V1_STATUS.md                 # This file
 ├── include/mingus/
@@ -322,7 +331,7 @@ mingus/
 │   └── Codegen.h                           # Aggregate codegen header
 ├── src/mingus/
 │   ├── sema/*.cpp                          # Sema implementations (4 passes)
-│   ├── codegen/IRGenerator.cpp             # ~3700 lines of codegen
+│   ├── codegen/IRGenerator.cpp             # ~3800 lines of codegen
 │   └── parser/ASTGenerator.cpp             # Parse tree -> AST
 ├── examples/
 │   ├── mingus_ir_tool.cpp                  # CLI: parse -> import resolve -> sema -> codegen -> optimize -> verify -> emit
@@ -332,11 +341,11 @@ mingus/
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 ├── tests/
 │   ├── test_01_basics.mingus … test_17_hex_literals.mingus   # 17 feature tests
-│   ├── stress_01_closure_churn.mingus … stress_17_long_running.mingus  # 14 stress tests
+│   ├── stress_01_closure_churn.mingus … stress_22_destructor_reentrant.mingus  # 21 stress tests
 │   ├── *.expected                          # Expected output for automated validation
 │   ├── MathLib.mingus                      # Copy for test_12 imports
 │   ├── run_all_tests.bat                   # Feature test runner (17 tests)
-│   ├── run_stress_tests.bat                # Stress test runner (14 tests)
+│   ├── run_stress_tests.bat                # Stress test runner (21 tests)
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 └── CMakeLists.txt                          # Build system (LLVM, ANTLR4, MSVC)
 ```
@@ -353,11 +362,11 @@ mingus/
 2. **Escape Analysis for Closures**
    Detect closures that don't escape and stack-allocate them to avoid unnecessary heap allocation. Also fix the temporary closure leak (closures passed directly as function arguments without variable storage).
 
-3. **Auto-generate Destructors for Classes with Closure Fields**
-   Currently, classes with closure-typed fields require an explicit `destructor { }` declaration (even empty) to trigger automatic closure field cleanup. Auto-generating a synthetic destructor would eliminate this requirement.
-
-4. **Virtual Destructors**
+3. **Virtual Destructors**
    Route `delete basePtr` through the vtable so the correct derived destructor runs. Requires adding a destructor slot to every class vtable.
+
+4. **Fat Pointer Null Comparison**
+   Enable `f != null` for closure/function-typed values. Requires comparing the `fnPtr` component of the fat pointer against null, not the whole struct.
 
 ### Medium-term
 
@@ -365,13 +374,13 @@ mingus/
    Implement static dispatch in codegen — `Type.staticMethod()` calls the function without a `this` pointer.
 
 6. **Debug Information**
-   Emit LLVM debug metadata (DIBuilder) for DWARF/PDB output. Enables debugging with Visual Studio or gdb.
+   Emit LLVM debug metadata (DIBuilder) for DWARF/PDB output. Enables debugging with Visual Studio, gdb, or lldb. Currently there is no source-level debugging — only printf and IR inspection.
 
 7. **Error Recovery**
-   Improve parser and sema to report multiple errors per compilation instead of stopping at the first critical one.
+   Improve parser and sema to report multiple errors per compilation instead of stopping at the first critical one. Parser error messages should include context about what was expected and where.
 
 8. **Self-Capturing Closures**
-   Allow a closure to reference itself for recursion. Requires either a `FunctionType`-compatible null/placeholder value, or a `letrec`-style construct that allocates the closure variable before the lambda body is assigned.
+   Allow a closure to reference itself for recursion. Requires either a `letrec`-style construct that allocates the closure variable before the lambda body is assigned, or an explicit indirection mechanism (e.g., closure box).
 
 ### Long-term
 

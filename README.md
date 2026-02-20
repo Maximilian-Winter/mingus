@@ -242,12 +242,16 @@ clang hello.ll -o hello.exe -O2
 ### Running the test suite
 
 ```bash
-cd examples
-run_all_tests.bat       # Windows
-# ./run_all_tests.sh    # Linux/Mac (if provided)
+# Full suite (17 feature tests + 21 stress tests)
+run_tests.bat           # Windows — from project root
+
+# Or individually:
+cd tests
+run_all_tests.bat       # Feature tests only
+run_stress_tests.bat    # Stress tests only
 ```
 
-All 17 tests should pass.
+All 38 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to see program output, or `--code` to display Mingus source.
 
 ## Feature Summary
 
@@ -258,7 +262,7 @@ All 17 tests should pass.
 | Control flow (if/else, for, while, switch) | ✓ |
 | Functions with typed parameters and returns | ✓ |
 | Structs with methods and operator overloading | ✓ |
-| Classes with constructors and destructors | ✓ |
+| Classes with constructors and destructors (auto-generated if omitted) | ✓ |
 | RAII (automatic destructor calls at scope exit) | ✓ |
 | Heap allocation (`new` / `delete`) | ✓ |
 | Inheritance with virtual dispatch | ✓ |
@@ -266,8 +270,10 @@ All 17 tests should pass.
 | Pipe operator (`\|>`) | ✓ |
 | Pattern matching with guards | ✓ |
 | Enums with underlying types | ✓ |
-| Lambdas and closures (fat pointer) | ✓ |
+| Lambdas and closures (fat pointer, reference counted) | ✓ |
 | Higher-order functions and composition | ✓ |
+| Nullable closures (`(int) => int f = null;`) | ✓ |
+| Lambda literal assignment (`f = (int x) => { ... };`) | ✓ |
 | Pointers and raw blocks | ✓ |
 | Fixed-size arrays | ✓ |
 | String operations (concat, compare, length, substring) | ✓ |
@@ -282,7 +288,7 @@ Source (.mingus)
   → ANTLR4 Lexer/Parser
   → AST (62 node types)
   → Semantic Analysis (4 passes)
-      Pass 1: Symbol table building
+      Pass 1: Symbol table building (+ auto-generated constructors/destructors)
       Pass 2: Type resolution
       Pass 3: Type checking + overload resolution
       Pass 4: RAII analysis + control flow validation
@@ -296,7 +302,9 @@ Source (.mingus)
 - **Strings are heap-allocated** — no small string optimization.
 - **Single compilation unit** — each `.mingus` file compiles independently. Cross-file linking uses `import`.
 - **No debug info** — no DWARF/PDB emission. Debugging is through printf and IR inspection.
-- **Error recovery is minimal** — the first error often stops compilation.
+- **Error recovery is minimal** — the first parse or semantic error often stops compilation. Error messages lack detailed context.
+- **No self-capturing closures** — a closure cannot reference itself for recursion (captures are by value).
+- **Temporary closure leak** — closures passed directly as function arguments without variable storage leak one refcount.
 
 ## Why "Mingus"?
 

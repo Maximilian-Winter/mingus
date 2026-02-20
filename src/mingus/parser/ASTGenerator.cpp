@@ -1184,16 +1184,20 @@ std::any ASTGenerator::visitExpression(MingusParser::ExpressionContext* ctx) {
 std::any ASTGenerator::visitAssignment(MingusParser::AssignmentContext* ctx) {
     auto loc = getSourceLocation(ctx);
     
-    if (ctx->unaryExpression() && ctx->assignment()) {
+    if (ctx->unaryExpression() && ctx->assignmentOperator()) {
         auto target = anyToNode<ExpressionNode>(visitUnaryExpression(ctx->unaryExpression()));
-        auto value = anyToNode<ExpressionNode>(visitAssignment(ctx->assignment()));
-        
-        // Determine the assignment operator
-        AssignOp op = AssignOp::Assign;
-        if (ctx->assignmentOperator()) {
-            op = parseAssignmentOperator(ctx->assignmentOperator());
+
+        // RHS can be either a recursive assignment or a lambda expression
+        NodePtr<ExpressionNode> value;
+        if (ctx->lambdaExpression()) {
+            value = anyToNode<ExpressionNode>(visitLambdaExpression(ctx->lambdaExpression()));
+        } else if (ctx->assignment()) {
+            value = anyToNode<ExpressionNode>(visitAssignment(ctx->assignment()));
         }
-        
+
+        // Determine the assignment operator
+        AssignOp op = parseAssignmentOperator(ctx->assignmentOperator());
+
         return std::static_pointer_cast<ASTNode>(
             std::make_shared<AssignmentExpression>(target, op, value, loc)
         );
