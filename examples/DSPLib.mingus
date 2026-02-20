@@ -1,0 +1,197 @@
+// DSPLib.mingus — Reusable DSP building blocks
+// Provides: Envelope (ADSR), Oscillator (4 waveforms), WAV writer, utilities
+// Import with: import Envelope, Oscillator, ... from DSPLib;
+
+module DSPLib
+{
+    extern func sin(double x) => double;
+    extern func pow(double base, double exp) => double;
+    extern func lround(double x) => int;
+    extern func fputc(int c, byte* f) => int;
+
+    // ---- Constants ----
+
+    func twoPi() => double { return 6.283185307179586; }
+    func sampleRate() => double { return 44100.0; }
+
+    // ---- Utility Functions ----
+
+    func midiToFreq(int note) => double
+    {
+        return 440.0 * pow(2.0, (note - 69) / 12.0);
+    }
+
+    func softClip(double sample) => double
+    {
+        return sample - (sample * sample * sample) / 6.0;
+    }
+
+    func clampSample(double sample) => double
+    {
+        if (sample > 1.0) { return 1.0; }
+        if (sample < -1.0) { return -1.0; }
+        return sample;
+    }
+
+    // ---- WAV File Writing ----
+
+    func putU16LE(byte* f, int v) => void
+    {
+        fputc(v & 255, f);
+        fputc((v >> 8) & 255, f);
+    }
+
+    func putU32LE(byte* f, int v) => void
+    {
+        fputc(v & 255, f);
+        fputc((v >> 8) & 255, f);
+        fputc((v >> 16) & 255, f);
+        fputc((v >> 24) & 255, f);
+    }
+
+    func writeWavHeader(byte* f, int sr, int numSamples, int channels) => void
+    {
+        int dataSize = numSamples * channels * 2;
+        int riffSize = dataSize + 36;
+        int byteRate = sr * channels * 2;
+
+        // "RIFF"
+        fputc(82, f); fputc(73, f); fputc(70, f); fputc(70, f);
+        putU32LE(f, riffSize);
+        // "WAVE"
+        fputc(87, f); fputc(65, f); fputc(86, f); fputc(69, f);
+        // "fmt "
+        fputc(102, f); fputc(109, f); fputc(116, f); fputc(32, f);
+        putU32LE(f, 16);       // chunk size
+        putU16LE(f, 1);        // PCM format
+        putU16LE(f, channels);
+        putU32LE(f, sr);
+        putU32LE(f, byteRate);
+        putU16LE(f, channels * 2);  // block align
+        putU16LE(f, 16);            // bits per sample
+        // "data"
+        fputc(100, f); fputc(97, f); fputc(116, f); fputc(97, f);
+        putU32LE(f, dataSize);
+    }
+
+    func writeSample(byte* f, double sample) => void
+    {
+        var clamped = clampSample(sample);
+        int ival = lround(clamped * 32767.0);
+        putU16LE(f, ival);
+    }
+
+    // ---- ADSR Envelope ----
+
+    class Envelope
+    {
+        double attack;
+        double decay;
+        double sustain;
+        double release;
+        double triggerTime;
+        double releaseTime;
+        double releaseLevel;
+        bool active;
+
+        constructor(double a, double d, double s, double r)
+        {
+            this.attack = a;
+            this.decay = d;
+            this.sustain = s;
+            this.release = r;
+            this.triggerTime = -1.0;
+            this.releaseTime = -1.0;
+            this.releaseLevel = 0.0;
+            this.active = false;
+        }
+
+        func noteOn(double time) => void
+        {
+            this.triggerTime = time;
+            this.releaseTime = -1.0;
+            this.active = true;
+        }
+
+        func noteOff(double time, double currentLevel) => void
+        {
+            this.releaseTime = time;
+            this.releaseLevel = currentLevel;
+        }
+
+        func value(double time) => double
+        {
+            if (!this.active) { return 0.0; }
+
+            // Release phase
+            if (this.releaseTime >= 0.0)
+            {
+                var relT = time - this.releaseTime;
+                if (relT >= this.release)
+                {
+                    this.active = false;
+                    return 0.0;
+                }
+                return this.releaseLevel * (1.0 - relT / this.release);
+            }
+
+            var t = time - this.triggerTime;
+
+            // Attack
+            if (t < this.attack) { return t / this.attack; }
+
+            // Decay
+            var decayStart = this.attack;
+            if (t < decayStart + this.decay)
+            {
+                var decayProgress = (t - decayStart) / this.decay;
+                return 1.0 - (1.0 - this.sustain) * decayProgress;
+            }
+
+            // Sustain
+            return this.sustain;
+        }
+    }
+
+    // ---- Oscillator ----
+
+    class Oscillator
+    {
+        double phase;
+        double freq;
+        int waveform;   // 0=sine, 1=saw, 2=square, 3=triangle
+
+        constructor(int wave)
+        {
+            this.waveform = wave;
+            this.phase = 0.0;
+            this.freq = 0.0;
+        }
+
+        func setFreq(double f) => void
+        {
+            this.freq = f;
+        }
+
+        func tick() => double
+        {
+            var p = this.phase;
+            var s = match this.waveform {
+                0 => sin(p * twoPi()),
+                1 => p * 2.0 - 1.0,
+                2 => p < 0.5 ? 1.0 : -1.0,
+                _ => p < 0.5 ? p * 4.0 - 1.0 : 3.0 - p * 4.0,
+            };
+
+            var inc = this.freq / sampleRate();
+            var next = p + inc;
+            this.phase = next >= 1.0 ? next - 1.0 : next;
+            return s;
+        }
+
+        func reset() => void
+        {
+            this.phase = 0.0;
+        }
+    }
+}

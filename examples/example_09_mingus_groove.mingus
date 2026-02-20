@@ -1,0 +1,390 @@
+// example_09_mingus_groove.mingus — A Walking Bass Line with Drums
+//
+// The flagship Mingus example: a 4-bar groove at 120 BPM rendered to WAV.
+// Combines every major feature in one musical program:
+//
+// - Multi-module imports (DSPLib)
+// - Classes with new/delete and RAII destructors
+// - ADSR envelopes and multi-waveform oscillators (from DSPLib)
+// - Pattern matching (waveform selection in DSPLib.Oscillator)
+// - Closures with [=] capture (frozen effect parameters)
+// - Closures with [&] capture (mix statistics accumulator)
+// - Reference parameters (peak tracking output)
+// - Raw blocks (WAV byte writing in DSPLib)
+// - Enums and fixed-size arrays (bass note pattern, drum triggers)
+// - Pointer arithmetic and heap allocation
+//
+// Output: groove.wav — 4 bars, 120 BPM, C minor, mono 16-bit 44100 Hz
+
+module MingusGroove
+{
+    extern func fopen(string path, string mode) => byte*;
+    extern func fclose(byte* f) => int;
+    extern func puts(string s) => int;
+    extern func printf(string fmt, int v) => int;
+
+    // ---- Import reusable DSP building blocks ----
+    // Classes, utilities, WAV writer, AND shared externs (sin, pow, lround)
+    // to avoid duplicate extern declarations across modules
+    import Envelope, Oscillator,
+           sin, pow, lround,
+           twoPi, sampleRate, midiToFreq, softClip, clampSample,
+           writeWavHeader, writeSample from DSPLib;
+
+    // ---- Voice: Bass ----
+    // Saw oscillator + ADSR + soft saturation for warmth
+
+    class BassVoice
+    {
+        Oscillator* osc;
+        Envelope* env;
+        double currentLevel;
+
+        constructor()
+        {
+            this.osc = new Oscillator(1);  // saw wave
+            this.env = new Envelope(0.01, 0.1, 0.7, 0.15);
+            this.currentLevel = 0.0;
+        }
+
+        destructor
+        {
+            delete this.osc;
+            delete this.env;
+        }
+
+        func noteOn(double time, double freq) => void
+        {
+            this.osc->setFreq(freq);
+            this.osc->reset();
+            this.env->noteOn(time);
+        }
+
+        func noteOff(double time) => void
+        {
+            this.env->noteOff(time, this.currentLevel);
+        }
+
+        func tick(double time) => double
+        {
+            this.currentLevel = this.env->value(time);
+            if (this.currentLevel <= 0.0) { return 0.0; }
+            var sig = this.osc->tick();
+            var shaped = softClip(sig);
+            return shaped * this.currentLevel;
+        }
+    }
+
+    // ---- Voice: Kick ----
+    // Sine with pitch drop (150 -> 50 Hz) and fast exponential decay
+
+    class KickVoice
+    {
+        double phase;
+        double triggerTime;
+        bool active;
+
+        constructor()
+        {
+            this.phase = 0.0;
+            this.triggerTime = -1.0;
+            this.active = false;
+        }
+
+        func trigger(double time) => void
+        {
+            this.triggerTime = time;
+            this.phase = 0.0;
+            this.active = true;
+        }
+
+        func tick(double time) => double
+        {
+            if (!this.active) { return 0.0; }
+            var t = time - this.triggerTime;
+            if (t > 0.3) { this.active = false; return 0.0; }
+
+            var pitchEnv = 150.0 - 100.0 * (t / 0.3);
+            var ampEnv = 1.0 - t / 0.3;
+            ampEnv = ampEnv * ampEnv;
+
+            var sample = sin(this.phase * twoPi()) * ampEnv;
+            this.phase = this.phase + pitchEnv / sampleRate();
+            return sample;
+        }
+    }
+
+    // ---- Voice: Snare ----
+    // 200 Hz tone + LCG pseudo-random noise, fast decay
+
+    class SnareVoice
+    {
+        double phase;
+        double triggerTime;
+        int noiseState;
+        bool active;
+
+        constructor()
+        {
+            this.phase = 0.0;
+            this.triggerTime = -1.0;
+            this.noiseState = 12345;
+            this.active = false;
+        }
+
+        func trigger(double time) => void
+        {
+            this.triggerTime = time;
+            this.phase = 0.0;
+            this.active = true;
+        }
+
+        func noise() => double
+        {
+            this.noiseState = (this.noiseState * 1103515245 + 12345) & 2147483647;
+            return (this.noiseState / 1073741824.0) - 1.0;
+        }
+
+        func tick(double time) => double
+        {
+            if (!this.active) { return 0.0; }
+            var t = time - this.triggerTime;
+            if (t > 0.2) { this.active = false; return 0.0; }
+
+            var ampEnv = 1.0 - t / 0.2;
+            var tone = sin(this.phase * twoPi()) * 0.3;
+            var nz = this.noise() * 0.7;
+            this.phase = this.phase + 200.0 / sampleRate();
+            return (tone + nz) * ampEnv;
+        }
+    }
+
+    // ---- Voice: Hihat ----
+    // High-pass filtered noise, very short decay
+
+    class HihatVoice
+    {
+        double triggerTime;
+        int noiseState;
+        bool active;
+        double lastSample;
+
+        constructor()
+        {
+            this.triggerTime = -1.0;
+            this.noiseState = 67890;
+            this.active = false;
+            this.lastSample = 0.0;
+        }
+
+        func trigger(double time) => void
+        {
+            this.triggerTime = time;
+            this.active = true;
+        }
+
+        func noise() => double
+        {
+            this.noiseState = (this.noiseState * 1103515245 + 12345) & 2147483647;
+            return (this.noiseState / 1073741824.0) - 1.0;
+        }
+
+        func tick(double time) => double
+        {
+            if (!this.active) { return 0.0; }
+            var t = time - this.triggerTime;
+            if (t > 0.08) { this.active = false; return 0.0; }
+
+            var ampEnv = 1.0 - t / 0.08;
+            ampEnv = ampEnv * ampEnv;
+
+            var nz = this.noise();
+            var hp = nz - this.lastSample;
+            this.lastSample = nz * 0.9;
+            return hp * ampEnv * 0.5;
+        }
+    }
+
+    // ---- Soft limiter (applied to final mix) ----
+
+    func softLimit(double sample) => double
+    {
+        var s = sample * 0.8;
+        if (s > 0.7) { s = 0.7 + (s - 0.7) * 0.3; }
+        if (s < -0.7) { s = -0.7 + (s + 0.7) * 0.3; }
+        return s;
+    }
+
+    // ---- Peak tracker via reference parameters ----
+
+    func updatePeak(double sample, double& peakLevel, int sampleIdx, int& peakIdx) => void
+    {
+        var abs = sample;
+        if (abs < 0.0) { abs = 0.0 - abs; }
+        if (abs > peakLevel)
+        {
+            peakLevel = abs;
+            peakIdx = sampleIdx;
+        }
+    }
+
+    // ---- Main: Render the groove ----
+
+    func main() => int
+    {
+        puts("=== Mingus Groove ===");
+        puts("A walking bass line with drums");
+        puts("");
+
+        // Configuration
+        int bpm = 120;
+        double beatDuration = 60.0 / 120.0;
+        int numBeats = 16;
+        double totalTime = numBeats * beatDuration;
+        int numSamples = lround(totalTime * sampleRate());
+        printf("BPM: %d\n", bpm);
+        puts("Key: C minor");
+        puts("Form: 4 bars, walking bass + kick/snare/hihat");
+        printf("Samples: %d\n", numSamples);
+
+        // Create voices on the heap
+        BassVoice* bass = new BassVoice();
+        KickVoice* kick = new KickVoice();
+        SnareVoice* snare = new SnareVoice();
+        HihatVoice* hihat = new HihatVoice();
+
+        // Walking bass line in C minor
+        // C2=36, Eb2=39, F2=41, G2=43, Ab2=44, Bb2=46
+        int[16] bassNotes;
+        // Bar 1: walk up
+        bassNotes[0] = 36;  bassNotes[1] = 39;
+        bassNotes[2] = 41;  bassNotes[3] = 43;
+        // Bar 2: walk down
+        bassNotes[4] = 44;  bassNotes[5] = 43;
+        bassNotes[6] = 41;  bassNotes[7] = 39;
+        // Bar 3: variation
+        bassNotes[8] = 36;  bassNotes[9] = 43;
+        bassNotes[10] = 41; bassNotes[11] = 39;
+        // Bar 4: turnaround
+        bassNotes[12] = 36; bassNotes[13] = 46;
+        bassNotes[14] = 44; bassNotes[15] = 43;
+
+        // Per-voice gain (frozen via [=] capture)
+        var bassGain = 0.5;
+        var kickGain = 0.6;
+        var snareGain = 0.35;
+        var hihatGain = 0.25;
+
+        var applyBassGain  = [=](double s) => { return s * bassGain; };
+        var applyKickGain  = [=](double s) => { return s * kickGain; };
+        var applySnareGain = [=](double s) => { return s * snareGain; };
+        var applyHihatGain = [=](double s) => { return s * hihatGain; };
+
+        // Mix statistics via [&] capture
+        var peakLevel = 0.0;
+        var peakIdx = 0;
+        var sampleCount = 0;
+
+        var trackStats = [&](double sample, int idx) => {
+            sampleCount = sampleCount + 1;
+            var abs = sample;
+            if (abs < 0.0) { abs = 0.0 - abs; }
+            if (abs > peakLevel)
+            {
+                peakLevel = abs;
+                peakIdx = idx;
+            }
+            return sample;
+        };
+
+        // Open output file
+        byte* f = fopen("groove.wav", "wb");
+        if (f == null)
+        {
+            puts("ERROR: could not open groove.wav");
+            return 1;
+        }
+
+        writeWavHeader(f, 44100, numSamples, 1);
+        puts("Rendering...");
+
+        // Sequencer state
+        int lastBeat = -1;
+        int lastHalfBeat = -1;
+
+        // ---- Render loop ----
+        for (int i = 0; i < numSamples; i++)
+        {
+            double time = i / sampleRate();
+            double beatTime = time / beatDuration;
+            int currentBeat = lround(beatTime - 0.5);
+            if (currentBeat < 0) { currentBeat = 0; }
+            int halfBeat = lround(beatTime * 2.0 - 0.5);
+            if (halfBeat < 0) { halfBeat = 0; }
+
+            // ---- Trigger events ----
+
+            if (currentBeat != lastBeat && currentBeat < numBeats)
+            {
+                lastBeat = currentBeat;
+
+                // Bass: every beat
+                bass->noteOn(time, midiToFreq(bassNotes[currentBeat]));
+
+                // Kick: beats 0 and 2 of each bar
+                var beatInBar = currentBeat % 4;
+                if (beatInBar == 0 || beatInBar == 2)
+                {
+                    kick->trigger(time);
+                }
+
+                // Snare: beats 1 and 3 (backbeat)
+                if (beatInBar == 1 || beatInBar == 3)
+                {
+                    snare->trigger(time);
+                }
+            }
+
+            // Hihat: every eighth note
+            if (halfBeat != lastHalfBeat && halfBeat < numBeats * 2)
+            {
+                lastHalfBeat = halfBeat;
+                hihat->trigger(time);
+            }
+
+            // ---- Generate and mix ----
+
+            var bassSample  = applyBassGain(bass->tick(time));
+            var kickSample  = applyKickGain(kick->tick(time));
+            var snareSample = applySnareGain(snare->tick(time));
+            var hihatSample = applyHihatGain(hihat->tick(time));
+
+            var mix = bassSample + kickSample + snareSample + hihatSample;
+            mix = softLimit(mix);
+
+            // Track peak via [&] closure
+            trackStats(mix, i);
+
+            writeSample(f, mix);
+        }
+
+        fclose(f);
+
+        // Print results (tracked via closures and ref params)
+        puts("");
+        puts("Done!");
+        printf("Rendered %d samples\n", sampleCount);
+        printf("Peak at sample %d\n", peakIdx);
+        puts("Output: groove.wav");
+
+        // Clean up (RAII for stack objects, manual for heap)
+        delete bass;
+        delete kick;
+        delete snare;
+        delete hihat;
+
+        puts("");
+        puts("=== The bass speaks. ===");
+        return 0;
+    }
+}

@@ -43,6 +43,7 @@ call :run_example example_05_custom_allocator  CustomAllocator_main   "Custom Al
 call :run_example example_06_capture_showcase  CaptureShowcase_main   "Capture List Showcase"
 call :run_example example_07_data_structures   DataStructures_main    "Data Structures - List and Stack"
 call :run_example example_08_particle_sim      ParticleSim_main       "Particle Simulation"
+call :run_example example_09_mingus_groove     MingusGroove_main      "Mingus Groove - Walking Bass"
 
 echo.
 echo ============================================================

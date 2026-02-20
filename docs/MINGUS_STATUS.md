@@ -25,7 +25,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
 **Test Runner:** `run_tests.bat` (combined 51 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
-**Showcase:** `examples/showcase.bat` — 8 example programs; `tools/README.md` — compiler and API tools
+**Showcase:** `examples/showcase.bat` — 9 example programs (including multi-module import demo); `tools/README.md` — compiler and API tools
 
 ---
 
@@ -400,8 +400,9 @@ mingus/
 │   ├── README.md                           # Tools overview and build guide
 │   └── CMakeLists.txt                      # Build config for all tools
 ├── examples/
-│   ├── example_01–08_*.mingus              # 8 showcase programs (DSP, state machine, iterators, parser, allocator, captures, data structures, particles)
-│   ├── showcase.bat                        # Run all 8 examples: source, IR, or output
+│   ├── DSPLib.mingus                       # Reusable DSP library (Envelope, Oscillator, WAV writer)
+│   ├── example_01–09_*.mingus              # 9 showcase programs (DSP, state machine, iterators, parser, allocator, captures, data structures, particles, groove)
+│   ├── showcase.bat                        # Run all 9 examples: source, IR, or output
 │   ├── mingus_ir_tool.exe                  # Copied here by CMake post-build
 │   └── archive/                            # Retired scratch/debug .mingus files
 ├── tests/

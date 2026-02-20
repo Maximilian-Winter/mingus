@@ -4,6 +4,9 @@ A compiled systems programming language that combines low-level control with exp
 
 Mingus compiles to native code via LLVM. It has pipes for data flow, pattern matching with guards, RAII resource management, closures, operator overloading, interfaces, inheritance with virtual dispatch, and raw blocks for when you need to get close to the metal.
 
+Mingus is still in very early development and its syntax and features are subject to change.
+
+
 ```
 func processSample(double sample) => double
 {
@@ -226,7 +229,7 @@ Pointer dereference for assignment and pointer arithmetic only compile inside `r
 
 ## Examples
 
-The `examples/` directory contains 8 showcase programs demonstrating every major feature:
+The `examples/` directory contains 9 showcase programs demonstrating every major feature:
 
 | Example | Features shown |
 |---------|---------------|
@@ -238,6 +241,7 @@ The `examples/` directory contains 8 showcase programs demonstrating every major
 | Capture List Showcase | All capture modes (`[]`, `[=]`, `[&]`, `[x]`, `[&x]`, mixed), composition |
 | Data Structures (List & Stack) | Classes, `new`/`delete`, destructors, ref params, RAII |
 | Particle Simulation | Structs, classes, RAII, raw blocks, closures, ref params |
+| **Mingus Groove** (Walking Bass) | **Multi-module imports**, classes, ADSR envelopes, pattern matching, `[=]`/`[&]` captures, ref params, raw blocks, WAV output |
 
 Run them all: `cd examples && showcase.bat`
 
