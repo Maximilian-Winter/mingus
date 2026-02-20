@@ -1,7 +1,7 @@
 # Mingus v1 — Language Status Report
 
 **Date:** February 2026
-**Status:** Compiles and executes optimized native binaries — **20 feature tests + 21 stress tests passing (41/41)**
+**Status:** Compiles and executes optimized native binaries — **27 feature tests + 22 stress tests passing (49/49)**
 
 ---
 
@@ -17,21 +17,21 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | AST | 62 node types with full visitor pattern |
 | Sema Pass 1 | SymbolTableBuilder — scopes, symbols, type declarations, import resolution |
 | Sema Pass 2 | TypeResolver — resolve all type references |
-| Sema Pass 3 | TypeChecker — expression types, overload resolution |
-| Sema Pass 4 | SemanticValidator — RAII analysis, control flow validation |
-| Codegen | LLVM 21.1.8 IR generation via AST visitor |
+| Sema Pass 3 | TypeChecker — expression types, overload resolution, access modifier enforcement |
+| Sema Pass 4 | SemanticValidator — RAII analysis, control flow validation, escape analysis, self-capture detection |
+| Codegen | LLVM 21.1.8 IR generation via AST visitor, optional DIBuilder debug info |
 | Optimization | LLVM PassBuilder with configurable O0/O1/O2 pipeline |
 | Compilation | Clang (from LLVM distribution) compiles IR to native |
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
-**Test Runner:** `run_tests.bat` (combined 41 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
+**Test Runner:** `run_tests.bat` (combined 49 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
 **Showcase:** `examples/showcase.bat` — displays source code and program output for showcase programs
 
 ---
 
 ## Working Features
 
-### Verified by test suite (20 feature tests + 21 stress tests = 41/41 passing)
+### Verified by test suite (27 feature tests + 22 stress tests = 49/49 passing)
 
 #### 1. Core Language (Test 01)
 - Integer types: `int`, `byte`, `bool`
@@ -69,8 +69,9 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - Chained operator expressions: `(a + b) * 2.5`
 - Struct return values from operators and methods
 - Mixed operator chains: `a * b / c`
+- **Static methods on structs**: `Point.origin()` syntax, no `this` pointer (Test 24)
 
-#### 5. Classes, RAII, and Inheritance (Tests 03, 13)
+#### 5. Classes, RAII, Inheritance, and Access Control (Tests 03, 13, 22, 23, 24)
 - Class declarations with fields and methods
 - Constructors: `constructor(int size) { ... }` (auto-generated if omitted)
 - Destructors: `destructor { ... }` (auto-generated if omitted)
@@ -79,14 +80,20 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - `new` and `delete` for heap allocation
 - Arrow operator for pointer member access: `node->left`
 - Recursive destructors (tree cleanup)
-- `private` access modifier (parsed; semantic enforcement planned)
+- **Access modifier enforcement** (Test 22):
+  - `private` members accessible only within the declaring class
+  - `protected` members accessible from the class and derived classes (walks `baseClass` chain)
+  - `public` and unmodified members accessible from anywhere
+  - Enforced in TypeChecker on `MemberAccessExpression` for both fields and methods
 - **Single inheritance**: `class Dog : Animal { ... }`
 - **Virtual dispatch**: all methods are virtual by default (Java-like), vtable-based dispatch through base pointers
+- **Virtual destructors** (Test 23): destructor occupies vtable slot 0; `delete basePtr` dispatches through vtable, ensuring the most-derived destructor runs. Verified with three-level inheritance chains (`Base → Middle → Leaf`).
 - **Constructor chaining**: `constructor() : super(4) { ... }` calls base constructor
 - **Destructor chaining**: derived destructor body runs first, then base destructor called automatically
 - **Inherited field access**: derived classes access base class fields through `this`
 - **Polymorphic assignment**: `Derived*` assignable to `Base*`
 - **Abstract classes**: `abstract class Shape { ... }` cannot be instantiated; concrete subclasses must override all abstract methods
+- **Static methods** (Test 24): `ClassName.staticMethod()` syntax, no `this` pointer, supports recursion (`MathUtils.factorial(n - 1)`)
 
 #### 6. Pipes and Pattern Matching (Tests 04, 11)
 - Pipe operator: `sample |> applyGain(0.8) |> softClip`
@@ -121,7 +128,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - Calling lambdas stored in variables
 - Pipe operator with lambda arguments: `7.0 |> apply((double x) => { return x + 3.0; })`
 
-#### 9. Closures with Captures (Tests 10, 11)
+#### 9. Closures with Captures (Tests 10, 11, 21, 25, 26)
 - Fat pointer representation: all function-typed values are `{ fnPtr, envPtr }` structs
 - All lambdas receive `ptr %env` as final parameter (uniform calling convention)
 - Closures capturing variables from enclosing scope: `func makeScaler(double factor) => (double) => double`
@@ -134,8 +141,11 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - Closures capturing other closures (fat pointers in capture struct)
 - Closures calling module functions from within lambda body
 - **Nullable closures**: `(int) => int f = null;` — FunctionType variables can be null-initialized and reassigned
+- **Fat pointer null comparison** (Test 21): `f == null`, `f != null`, `null == f` — extracts the `fnPtr` component (index 0) from the fat pointer and compares against null
 - **Closures in struct fields**: synthetic cleanup functions release closure fields at scope exit
 - **Closures in class fields**: destructor epilogue auto-releases closure fields; constructor auto-zero-inits them
+- **Escape analysis** (Test 25): temporary closures passed directly as function arguments are RAII-wrapped to prevent leaks; lambda arguments in `CallExpression` are marked non-escaping by `SemanticValidator`
+- **Self-capturing closures** (Test 26): `(int) => int fib = (int n) => { return fib(n-1) + fib(n-2); };` — letrec-style indirection: alloca created first, lambda compiled (captures zero fat pointer), final fat pointer stored, then env struct patched with the real self-reference (unretained to avoid cycles)
 
 #### 10. Floating Point and Math (Tests 07, 11)
 - `double` and `float` types
@@ -169,11 +179,14 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - Imported symbols share the same pointer as the original — name mangling, type checking, codegen all work automatically
 - Two-sub-pass in SymbolTableBuilder: Pass 1a builds all module scopes, Pass 1b resolves imports
 
-#### 13. Single Inheritance and Virtual Dispatch (Test 13)
+#### 13. Single Inheritance and Virtual Dispatch (Tests 13, 23)
 - `class Dog : Animal { ... }` — inherits all fields and methods
-- All non-static, non-constructor, non-destructor methods are virtual (vtableIndex assigned)
+- All non-static, non-constructor, non-destructor methods are virtual (vtableIndex assigned, starting at index 1)
+- **Vtable slot 0 reserved for destructor**: every class's vtable has its destructor at index 0, methods at index 1+
 - Vtable: global constant `[N x ptr]` array, stored in field 0 of class struct when vtableSize > 0
 - Virtual dispatch through base pointer: load vtable ptr → GEP to slot → indirect call
+- Virtual destructor dispatch: `delete basePtr` loads vtable[0] and calls through it, ensuring derived destructors run
+- Three-level inheritance verified: `Base → Middle → Leaf`, delete through `Base*` fires `~Leaf → ~Middle → ~Base`
 - `super(args)` constructor chaining: base constructor called before vtable store
 - Automatic destructor chaining: derived body runs, then base destructor called
 - Inherited field access via `this` in derived classes
@@ -228,6 +241,16 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 - Optimization runs between IR generation and LLVM verification
 - All tests run with `--opt 2` enabled
 
+#### 20. Debug Information (Test 27)
+- Optional `--debug` flag on `mingus_ir_tool`
+- LLVM DIBuilder integration: `DICompileUnit`, `DIFile`, `DISubprogram`, `DILocalVariable`
+- Function-level debug info: each function gets a `DISubprogram` with subroutine type
+- Variable-level debug info: `dbg.declare` intrinsic for local variables and parameters
+- Type mapping: Mingus types mapped to DI types (`int` → DW_ATE_signed 32-bit, `double` → DW_ATE_float 64-bit, etc.)
+- Source locations: `emitDebugLocation()` calls on all statement visitors
+- CodeView format on Windows via `module->addModuleFlag("CodeView", 1)`
+- Debug info does not alter runtime behavior — verified by test_27
+
 ---
 
 ## Known Limitations
@@ -236,9 +259,6 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| **Virtual destructors** | Limitation | Destructor dispatch is static (not via vtable). `delete basePtr` calls base destructor only, not derived. Use typed pointers for delete. |
-| **Protected access** | Parsed only | Access modifiers are parsed but not enforced by sema. |
-| **Static methods** | Parsed only | `static` modifier is parsed but static dispatch not implemented in codegen. |
 | **Generics/templates** | Not supported | No generic types or functions. |
 | **Multiple class inheritance** | Not supported | `class C : A, B` where both A and B are classes is a sema error. Multiple interface implementation is supported. |
 
@@ -246,13 +266,11 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 | Area | Limitation |
 |------|------------|
-| **Closure RC** | Closure capture structs use reference counting (retain/release) with per-closure cleanup functions. Closures in struct/class fields are properly managed. **Known gap:** temporary closures passed directly as function arguments without variable storage leak one refcount. |
-| **Self-capturing closures** | A closure cannot reference itself for recursion. Captures are by value, so the closure captures its own initial value (null or prior state), not the final assigned reference. Requires a `letrec`-style construct or explicit indirection. |
-| **Fat pointer comparison** | Cannot compare closure/function-typed values to `null` directly (`f != null`). Fat pointers are `{ ptr, ptr }` structs, not scalar pointers, so `!=` doesn't work. Workaround: track nullability with a separate boolean flag. |
+| **Closure captures** | Captures are "copy on entry per call" — writes to captured variables don't persist across calls. The env struct is loaded into a local alloca but never written back. Workaround: capture a pointer to the object instead. |
+| **Self-capture lifetime** | Self-capturing closures use an unretained self-reference to avoid RC cycles. The closure is valid only while the owning variable is in scope. |
 | **ABI** | Struct return by value relies on LLVM's default ABI lowering. Not tested with very large structs. |
-| **Debug info** | No DWARF/PDB debug information emitted. No source locations in error messages beyond line numbers. |
 | **Error recovery** | Parser and sema generally stop at the first error. No multi-error recovery or cascading diagnostics. |
-| **Module visibility** | `public`/`private` on symbols is parsed but only partially enforced (whole-module import skips non-public). No separate compilation or linking — all imported files compiled together. |
+| **Module visibility** | `public`/`private` on module-level symbols is parsed but only partially enforced (whole-module import skips non-public). No separate compilation or linking — all imported files compiled together. |
 
 ---
 
@@ -280,8 +298,15 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | test_18_tuples | tuple return types `(int, int)`, destructuring `(var a, var b) = ...`, mixed-type tuples, recursive fibonacci pair | PASS |
 | test_19_dynamic_array_map | DynamicArray with `map()` method, capacity growth via `memcpy`, lambda+pipe integration, operator[] | PASS |
 | test_20_complex_numbers | Complex struct with `operator+`, `operator*`, magnitude squared, chained operator expressions | PASS |
+| test_21_fat_ptr_null | fat pointer null comparison: `f == null`, `f != null`, `null == f`, after assignment | PASS |
+| test_22_access_modifiers | private/protected/public fields and methods, inheritance access, no-modifier default | PASS |
+| test_23_virtual_destructor | virtual destructor dispatch through vtable slot 0; two-level and three-level inheritance chains; delete through Base*, Middle*, and direct | PASS |
+| test_24_static_methods | `ClassName.staticMethod()` syntax, recursive static, struct static method | PASS |
+| test_25_escape_analysis | temporary closure RAII wrapping, named closures, chained calls, non-escaping detection | PASS |
+| test_26_self_capture | self-capturing closures: recursive fibonacci, factorial, countdown via letrec-style env patching | PASS |
+| test_27_debug_info | `--debug` flag produces correct runtime behavior, verifies debug info doesn't break compilation | PASS |
 
-### Stress Tests (21/21 passing)
+### Stress Tests (22/22 passing)
 
 | Test | Stress Target | Result |
 |------|--------------|--------|
@@ -307,7 +332,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | stress_21_cyclic_capture | 10k heap objects with closure fields, no explicit ctor/dtor (auto-generated) | PASS |
 | stress_22_destructor_reentrant | 10k destructor bodies calling closure fields before epilogue releases them | PASS |
 
-**All 41 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+**All 49 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
@@ -319,7 +344,7 @@ mingus/
 ├── MingusParser.g4                         # ANTLR4 parser grammar
 ├── README.md                               # Project overview and quick start
 ├── build.bat                               # Standalone build script (Ninja + MSVC)
-├── run_tests.bat                           # Combined test runner (all 41 tests)
+├── run_tests.bat                           # Combined test runner (all 49 tests)
 ├── docs/
 │   └── MINGUS_STATUS.md                    # This file
 ├── include/mingus/
@@ -335,31 +360,31 @@ mingus/
 │   │   ├── ErrorReporter.h                 # Diagnostic collection
 │   │   ├── SymbolTableBuilder.h            # Pass 1: build scopes + symbols
 │   │   ├── TypeResolver.h                  # Pass 2: resolve type references
-│   │   ├── TypeChecker.h                   # Pass 3: expression types + overloads
-│   │   └── SemanticValidator.h             # Pass 4: RAII + control flow + interface completeness
+│   │   ├── TypeChecker.h                   # Pass 3: expression types + overloads + access enforcement
+│   │   └── SemanticValidator.h             # Pass 4: RAII + control flow + interface completeness + escape analysis
 │   ├── codegen/
-│   │   └── IRGenerator.h                   # LLVM IR generation visitor + getFatPtrType() + itableCache_
+│   │   └── IRGenerator.h                   # LLVM IR generation visitor + DIBuilder + getFatPtrType() + itableCache_
 │   ├── parser/
 │   │   └── ASTGenerator.h                  # ANTLR parse tree -> AST
 │   ├── Sema.h                              # Aggregate sema header
 │   └── Codegen.h                           # Aggregate codegen header
 ├── src/mingus/
 │   ├── sema/*.cpp                          # Sema implementations (4 passes)
-│   ├── codegen/IRGenerator.cpp             # ~3800 lines of codegen
+│   ├── codegen/IRGenerator.cpp             # ~4200 lines of codegen
 │   └── parser/ASTGenerator.cpp             # Parse tree -> AST
 ├── examples/
-│   ├── mingus_ir_tool.cpp                  # CLI: parse -> import resolve -> sema -> codegen -> optimize -> verify -> emit
+│   ├── mingus_ir_tool.cpp                  # CLI: parse -> sema -> codegen -> optimize -> verify -> emit (--debug flag)
 │   ├── TOOL_GUIDE.md                       # mingus_ir_tool usage reference
 │   ├── MathLib.mingus                      # Reusable library module
 │   ├── showcase.bat                        # Display source + output for showcase programs
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 ├── tests/
-│   ├── test_01_basics.mingus … test_20_complex_numbers.mingus  # 20 feature tests
-│   ├── stress_01_closure_churn.mingus … stress_22_destructor_reentrant.mingus  # 21 stress tests
+│   ├── test_01_basics.mingus … test_27_debug_info.mingus  # 27 feature tests
+│   ├── stress_01_closure_churn.mingus … stress_22_destructor_reentrant.mingus  # 22 stress tests
 │   ├── *.expected                          # Expected output for automated validation
 │   ├── MathLib.mingus                      # Copy for test_12 imports
-│   ├── run_all_tests.bat                   # Feature test runner (20 tests)
-│   ├── run_stress_tests.bat                # Stress test runner (21 tests)
+│   ├── run_all_tests.bat                   # Feature test runner (27 tests)
+│   ├── run_stress_tests.bat                # Stress test runner (22 tests)
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 └── CMakeLists.txt                          # Build system (LLVM, ANTLR4, MSVC)
 ```
@@ -370,39 +395,27 @@ mingus/
 
 ### Short-term (High impact, moderate effort)
 
-1. **Access Modifier Enforcement**
-   Enforce `public`/`private`/`protected` in sema. Currently parsed but not checked.
+1. **Error Recovery**
+   Improve parser and sema to report multiple errors per compilation instead of stopping at the first critical one. Parser error messages should include context about what was expected and where.
 
-2. **Escape Analysis for Closures**
-   Detect closures that don't escape and stack-allocate them to avoid unnecessary heap allocation. Also fix the temporary closure leak (closures passed directly as function arguments without variable storage).
-
-3. **Virtual Destructors**
-   Route `delete basePtr` through the vtable so the correct derived destructor runs. Requires adding a destructor slot to every class vtable.
-
-4. **Fat Pointer Null Comparison**
-   Enable `f != null` for closure/function-typed values. Requires comparing the `fnPtr` component of the fat pointer against null, not the whole struct.
+2. **Closure Capture Write-Back**
+   Currently captures are "copy on entry per call" — writes to captured variables don't persist. Implementing write-back (or capture-by-reference semantics) would enable stateful closures without pointer indirection workarounds.
 
 ### Medium-term
 
-5. **Static Methods**
-   Implement static dispatch in codegen — `Type.staticMethod()` calls the function without a `this` pointer.
+3. **Generic Types**
+    `class Array<T>`, `func map<T, U>(...)` — requires monomorphization or type erasure strategy.
 
-6. **Debug Information**
-   Emit LLVM debug metadata (DIBuilder) for DWARF/PDB output. Enables debugging with Visual Studio, gdb, or lldb. Currently there is no source-level debugging — only printf and IR inspection.
+4. **Standard Library**
+    Collections (Array, Map, Set), I/O, and math utilities written in Mingus itself, using extern for OS primitives.
 
-7. **Error Recovery**
-   Improve parser and sema to report multiple errors per compilation instead of stopping at the first critical one. Parser error messages should include context about what was expected and where.
-
-8. **Self-Capturing Closures**
-   Allow a closure to reference itself for recursion. Requires either a `letrec`-style construct that allocates the closure variable before the lambda body is assigned, or an explicit indirection mechanism (e.g., closure box).
+5. **Separate Compilation**
+    Support compiling modules independently and linking them. Requires stable ABI for module boundaries and a header/interface file format.
 
 ### Long-term
 
-9. **Generic Types**
-    `class Array<T>`, `func map<T, U>(...)` — requires monomorphization or type erasure strategy.
-
-10. **Standard Library**
-    Collections (Array, Map, Set), I/O, and math utilities written in Mingus itself, using extern for OS primitives.
-
-11. **REPL / JIT Mode**
+6. **REPL / JIT Mode**
     Use LLVM's ORC JIT for interactive evaluation. Useful for exploration and teaching.
+
+7. **Cross-Platform Support**
+    Test and fix codegen for Linux/macOS targets. The core LLVM IR is portable, but ABI conventions and debug info formats differ.
