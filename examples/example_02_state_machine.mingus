@@ -1,6 +1,6 @@
 // example_02_state_machine.mingus
 // Hierarchical state machine for AI behavior
-// Features: classes, interfaces, RAII, virtual dispatch
+// Features: classes, heap allocation (new/delete), RAII, pointer fields, else-if chains
 
 module StateMachine
 {
@@ -11,13 +11,17 @@ module StateMachine
     {
         int waypoint;
         constructor() { this.waypoint = 0; }
-        func onEnter() => void { puts("  -> PATROL: Starting patrol"); }
+        func onEnter() => void
+        {
+            this.waypoint = 0;
+            puts("  -> PATROL: Starting patrol");
+        }
         func onUpdate(int dt) => int
         {
             this.waypoint = this.waypoint + 1;
-            if (this.waypoint > 3)
+            printf("     Patrol waypoint %d\n", this.waypoint);
+            if (this.waypoint >= 3)
             {
-                this.waypoint = 0;
                 return 1;  // -> CHASE
             }
             return 0;  // stay in PATROL
@@ -28,86 +32,105 @@ module StateMachine
     class ChaseState
     {
         int stamina;
-        constructor() { this.stamina = 100; }
-        func onEnter() => void { puts("  -> CHASE: Target spotted!"); }
+        constructor() { this.stamina = 50; }
+        func onEnter() => void
+        {
+            this.stamina = 50;
+            puts("  -> CHASE: Target spotted!");
+        }
         func onUpdate(int dt) => int
         {
             this.stamina = this.stamina - 10;
+            printf("     Chase stamina=%d\n", this.stamina);
             if (this.stamina <= 0)
             {
-                return 0;  // tired, go back to PATROL
+                return 0;  // tired -> PATROL
             }
-            if (this.stamina > 50)
+            if (this.stamina <= 20)
             {
-                return 2;  // close enough, ATTACK
+                return 2;  // close enough -> ATTACK
             }
             return 1;  // keep chasing
         }
-        func onExit() => void { puts("  <- CHASE: Lost target"); }
+        func onExit() => void { puts("  <- CHASE: Disengaging"); }
     }
 
     class AttackState
     {
-        func onEnter() => void { puts("  -> ATTACK: Engaging!"); }
+        int attacks;
+        constructor() { this.attacks = 0; }
+        func onEnter() => void
+        {
+            this.attacks = 0;
+            puts("  -> ATTACK: Engaging!");
+        }
         func onUpdate(int dt) => int
         {
-            // 30% chance to finish attack
-            if ((dt % 10) < 3)
+            this.attacks = this.attacks + 1;
+            printf("     Attack #%d\n", this.attacks);
+            if (this.attacks >= 2)
             {
-                return 1;
+                return 0;  // done attacking -> PATROL
             }
-            return 2;
+            return 2;  // keep attacking
         }
         func onExit() => void { puts("  <- ATTACK: Combat ended"); }
     }
 
-    // State machine controller using void* to avoid interface fat pointer issues
+    // State machine controller — owns persistent state objects via pointers
     class AIController
     {
+        PatrolState* patrol;
+        ChaseState* chase;
+        AttackState* attack;
         int currentStateId;
 
         constructor()
         {
+            this.patrol = new PatrolState();
+            this.chase = new ChaseState();
+            this.attack = new AttackState();
             this.currentStateId = 0;
         }
 
-        func transition(int stateId) => void
+        destructor
         {
-            printf("  [Transition] Entering state %d\n", stateId);
+            delete this.patrol;
+            delete this.chase;
+            delete this.attack;
+        }
+
+        func enterState(int stateId) => void
+        {
             this.currentStateId = stateId;
-            // Call onEnter for the new state
-            if (stateId == 0) { var s = PatrolState(); s.onEnter(); }
-            if (stateId == 1) { var s = ChaseState(); s.onEnter(); }
-            if (stateId == 2) { var s = AttackState(); s.onEnter(); }
+            if (stateId == 0) { this.patrol->onEnter(); }
+            if (stateId == 1) { this.chase->onEnter(); }
+            if (stateId == 2) { this.attack->onEnter(); }
         }
 
         func update(int dt) => void
         {
             var nextId = this.currentStateId;
-            
-            // Call onUpdate for current state
-            if (this.currentStateId == 0) 
-            { 
-                var s = PatrolState(); 
-                nextId = s.onUpdate(dt);
-                if (nextId != this.currentStateId) { s.onExit(); }
+
+            if (this.currentStateId == 0)
+            {
+                nextId = this.patrol->onUpdate(dt);
+                if (nextId != 0) { this.patrol->onExit(); }
             }
-            if (this.currentStateId == 1) 
-            { 
-                var s = ChaseState(); 
-                nextId = s.onUpdate(dt);
-                if (nextId != this.currentStateId) { s.onExit(); }
+            else if (this.currentStateId == 1)
+            {
+                nextId = this.chase->onUpdate(dt);
+                if (nextId != 1) { this.chase->onExit(); }
             }
-            if (this.currentStateId == 2) 
-            { 
-                var s = AttackState(); 
-                nextId = s.onUpdate(dt);
-                if (nextId != this.currentStateId) { s.onExit(); }
+            else if (this.currentStateId == 2)
+            {
+                nextId = this.attack->onUpdate(dt);
+                if (nextId != 2) { this.attack->onExit(); }
             }
-            
+
             if (nextId != this.currentStateId)
             {
-                this.transition(nextId);
+                this.enterState(nextId);
             }
         }
     }
@@ -117,13 +140,12 @@ module StateMachine
         puts("=== AI State Machine ===");
 
         var ai = AIController();
-
-        // Simulate game loop
         puts("Starting simulation:");
-        ai.transition(0);  // Start with PATROL
+        ai.enterState(0);
 
-        for (int tick = 0; tick < 20; tick++)
+        for (int tick = 0; tick < 15; tick++)
         {
+            printf("[Tick %d]\n", tick);
             ai.update(tick);
         }
 

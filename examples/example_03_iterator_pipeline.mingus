@@ -109,9 +109,8 @@ module IteratorPipeline
             count1 = count1 + 1;
         }
         delete counter;
-        printf("Sum: ", sum1);
-        printf(" Count: ", count1);
-        puts("");
+        printf("Sum=%d", sum1);
+        printf(" Count=%d\n", count1);
 
         // Filter: even numbers only 1..20
         puts("\nEven numbers 1..20:");
@@ -124,9 +123,8 @@ module IteratorPipeline
             count2 = count2 + 1;
         }
         delete evenIter;
-        printf("Sum: ", sum2);
-        printf(" Count: ", count2);
-        puts("");
+        printf("Sum=%d", sum2);
+        printf(" Count=%d\n", count2);
 
         // Map: transform each element (x * 3 + 1) for 1..10
         puts("\nMap (x * 3 + 1) for 1..10:");
@@ -142,9 +140,8 @@ module IteratorPipeline
             count3 = count3 + 1;
         }
         delete mapped;
-        printf("Sum: ", sum3);
-        printf(" Count: ", count3);
-        puts("");
+        printf("Sum=%d", sum3);
+        printf(" Count=%d\n", count3);
 
         // Odd numbers squared
         puts("\nOdd numbers squared (1..10):");
@@ -153,8 +150,7 @@ module IteratorPipeline
         {
             manualSum = manualSum + (i * i);
         }
-        printf("Sum of odd squares: ", manualSum);
-        puts("");
+        printf("Sum of odd squares: %d\n", manualSum);
 
         puts("=== Pipeline complete ===");
         return 0;

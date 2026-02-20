@@ -3052,20 +3052,9 @@ void IRGenerator::visit(CallExpression& node) {
             else if (auto* structSym = ident->resolvedSymbol->as<StructSymbol>()) {
                 auto userType = registry_.getUserType(structSym->name,
                     Type::Kind::Struct, structSym);
-                // Use zero-init for structs with closure fields (prevents releasing garbage);
-                // use undef for plain structs (enables optimizer freedom)
-                bool hasClosureFields = false;
-                for (auto* field : structSym->fields) {
-                    if (field->type && field->type->is<FunctionType>()) {
-                        hasClosureFields = true;
-                        break;
-                    }
-                }
-                if (hasClosureFields) {
-                    lastValue_ = llvm::Constant::getNullValue(mapType(userType));
-                } else {
-                    lastValue_ = llvm::UndefValue::get(mapType(userType));
-                }
+                // Zero-init all structs — prevents undef propagation when fields
+                // are read before assignment (e.g. accumulator pattern)
+                lastValue_ = llvm::Constant::getNullValue(mapType(userType));
                 return;
             }
             // Regular function call
@@ -3812,6 +3801,36 @@ void IRGenerator::visit(LambdaExpression& node) {
         } else if (auto* idx = n->as<IndexExpression>()) {
             scanForParamSymbols(idx->object.get());
             scanForParamSymbols(idx->index.get());
+        } else if (auto* varDecl = n->as<VariableDeclaration>()) {
+            if (varDecl->initializer) scanForParamSymbols(varDecl->initializer.get());
+        } else if (auto* ifStmt = n->as<IfStatement>()) {
+            scanForParamSymbols(ifStmt->condition.get());
+            scanForParamSymbols(ifStmt->thenBody.get());
+            for (auto& elseIf : ifStmt->elseIfClauses) {
+                scanForParamSymbols(elseIf.condition.get());
+                scanForParamSymbols(elseIf.body.get());
+            }
+            if (ifStmt->elseBody) scanForParamSymbols(ifStmt->elseBody.get());
+        } else if (auto* forStmt = n->as<ForStatement>()) {
+            if (forStmt->initDeclaration) scanForParamSymbols(forStmt->initDeclaration.get());
+            for (auto& e : forStmt->initExpressions) scanForParamSymbols(e.get());
+            if (forStmt->condition) scanForParamSymbols(forStmt->condition.get());
+            for (auto& e : forStmt->iterators) scanForParamSymbols(e.get());
+            scanForParamSymbols(forStmt->body.get());
+        } else if (auto* whileStmt = n->as<WhileStatement>()) {
+            scanForParamSymbols(whileStmt->condition.get());
+            scanForParamSymbols(whileStmt->body.get());
+        } else if (auto* pipeExpr = n->as<PipeExpression>()) {
+            scanForParamSymbols(pipeExpr->input.get());
+            for (auto& stage : pipeExpr->stages) {
+                if (stage.function) scanForParamSymbols(stage.function.get());
+                for (auto& arg : stage.extraArguments) scanForParamSymbols(arg.get());
+            }
+        } else if (auto* matchExpr = n->as<MatchExpression>()) {
+            scanForParamSymbols(matchExpr->subject.get());
+            for (auto& arm : matchExpr->arms) {
+                scanForParamSymbols(arm.body.get());
+            }
         }
     };
     scanForParamSymbols(node.body.get());

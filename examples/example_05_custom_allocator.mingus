@@ -1,6 +1,6 @@
 // example_05_custom_allocator.mingus
 // Memory pool allocator with RAII guards
-// Features: raw blocks, pointer arithmetic, RAII, destructors, higher-order functions
+// Features: raw blocks, pointer arithmetic, RAII, destructors, closures, higher-order functions
 
 module CustomAllocator
 {
@@ -27,7 +27,7 @@ module CustomAllocator
                 this.memory = malloc(this.capacity);
                 memset(this.memory, 0, this.capacity);
             }
-            printf("Pool created: ", this.capacity);
+            printf("Pool created: %d", this.capacity);
             puts(" bytes");
         }
 
@@ -122,12 +122,12 @@ module CustomAllocator
                 }
             }
 
-            printf("Pool usage: ", pool.usage());
+            printf("Pool usage: %d", pool.usage());
             puts("%");
         }
         // Pool auto-reset here
 
-        printf("After reset: ", pool.usage());
+        printf("After reset: %d", pool.usage());
         puts("%");
 
         // Allocate again to prove reuse
@@ -137,35 +137,66 @@ module CustomAllocator
                 p->x = 999;
             }
         }
-        printf("After new alloc: ", pool.usage());
+        printf("After new alloc: %d", pool.usage());
         puts("%");
     }
 
-    func lambdaCaptureDemo() => void
+    func closurePoolDemo() => void
     {
         puts("\n--- Closure + Pool Demo ---");
 
         var pool = PoolAllocator(10, 8);
 
-        // Closure capturing the pool - syntax without explicit return type
-        var allocInPool = (int size) => {
-            var ptr = pool.allocate();
+        // Capture a POINTER to the pool — the pointer value is copied
+        // into the closure env, but it still references the original pool
+        var poolPtr = &pool;
+        var allocBlock = () => {
+            var ptr = poolPtr->allocate();
             return ptr == null ? 0 : 1;
         };
 
-        // Multiple allocations through closure
-        for (int i = 0; i < 12; i++)  // Try to over-allocate
+        // Allocate through closure until pool is full
+        var allocated = 0;
+        for (int i = 0; i < 12; i++)
         {
-            var success = allocInPool(8);
-            if (success == 0)
+            if (allocBlock() == 1)
             {
-                puts("  Allocation failed (expected)");
+                allocated = allocated + 1;
+            }
+            else
+            {
+                printf("  Pool full after %d blocks\n", allocated);
                 break;
             }
         }
 
-        printf("Final pool usage: ", pool.usage());
+        printf("Final pool usage: %d", pool.usage());
         puts("%");
+    }
+
+    // Higher-order function: applies a transform N times
+    func applyN(int n, (int) => int f, int start) => int
+    {
+        var result = start;
+        for (int i = 0; i < n; i++)
+        {
+            result = f(result);
+        }
+        return result;
+    }
+
+    func higherOrderDemo() => void
+    {
+        puts("\n--- Higher-Order Function Demo ---");
+
+        // Closure as function argument
+        var doubled = applyN(5, (int x) => { return x * 2; }, 1);
+        printf("2^5 via repeated doubling: %d\n", doubled);
+
+        // Closure capturing a multiplier
+        var factor = 3;
+        var tripled = applyN(4, (int x) => { return x * factor; }, 1);
+        printf("3^4 via repeated tripling: %d\n", tripled);
     }
 
     func main() => int
@@ -173,7 +204,8 @@ module CustomAllocator
         puts("=== Custom Allocator Demo ===");
 
         particleSystemDemo();
-        lambdaCaptureDemo();
+        closurePoolDemo();
+        higherOrderDemo();
 
         puts("\n=== Allocator demo complete ===");
         return 0;
