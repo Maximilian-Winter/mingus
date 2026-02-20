@@ -1760,7 +1760,11 @@ void IRGenerator::visit(BlockStatement& node) {
         if (builder_.GetInsertBlock()->getTerminator()) break;
     }
 
-    emitScopeDestructors();
+    // Only emit scope destructors if the block wasn't terminated (e.g. by a return).
+    // Return statements already call emitReturnDestructors() which handles ALL scopes.
+    if (!builder_.GetInsertBlock()->getTerminator()) {
+        emitScopeDestructors();
+    }
     popRAIIScope();
     leaveChildScope();
 }
