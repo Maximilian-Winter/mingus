@@ -174,6 +174,10 @@ private:
     // Maps (ClassSymbol*, InterfaceSymbol*) → itable global variable
     std::map<std::pair<sema::ClassSymbol*, sema::InterfaceSymbol*>, llvm::GlobalVariable*> itableCache_;
 
+    // Struct cleanup functions for structs with closure-typed fields
+    std::unordered_map<std::string, llvm::Function*> structCleanupCache_;
+    llvm::Function* getOrCreateStructCleanupFn(sema::StructSymbol* structSym);
+
     //==========================================================================
     // Loop context (for break/continue)
     //==========================================================================

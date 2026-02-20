@@ -1054,6 +1054,45 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseWrapper() {
 }
 
 //================================================================================
+// Struct cleanup for closure-typed fields
+//================================================================================
+llvm::Function* IRGenerator::getOrCreateStructCleanupFn(StructSymbol* structSym) {
+    auto it = structCleanupCache_.find(structSym->name);
+    if (it != structCleanupCache_.end()) return it->second;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+
+    std::string name = "__struct_cleanup_" + structSym->name;
+    auto* fn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage,
+                                       name, module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
+    llvm::IRBuilder<> b(entry);
+    auto* structPtr = fn->getArg(0);
+
+    auto userType = registry_.getUserType(structSym->name, Type::Kind::Struct, structSym);
+    auto* structTy = getStructType(userType.get());
+    auto* fatPtrTy = getFatPtrType();
+
+    for (auto* field : structSym->fields) {
+        if (field->type && field->type->is<FunctionType>()) {
+            auto* fieldPtr = b.CreateStructGEP(structTy, structPtr,
+                                                field->fieldIndex,
+                                                field->name + ".cleanup");
+            auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr, field->name + ".fat");
+            auto* envPtr = b.CreateExtractValue(fatVal, {1}, field->name + ".env");
+            b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+        }
+    }
+
+    b.CreateRetVoid();
+    structCleanupCache_[structSym->name] = fn;
+    return fn;
+}
+
+//================================================================================
 // String helpers
 //================================================================================
 llvm::Function* IRGenerator::getOrCreateStringFreeFn() {
@@ -1314,6 +1353,24 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
     // Store vtable pointer (overwrites whatever base ctor set)
     storeVtablePtr(currentThisPtr_, classSym);
 
+    // Zero-initialize closure-typed fields to prevent releasing garbage
+    // if destructor fires before all closure fields are assigned
+    {
+        auto userType = registry_.getUserType(classSym->name, Type::Kind::Class, classSym);
+        auto* structTy = getStructType(userType.get());
+        auto* fatPtrTy = getFatPtrType();
+        for (auto* field : classSym->fields) {
+            if (field->type && field->type->is<FunctionType>()) {
+                int gepIdx = getFieldGEPIndex(classSym, field);
+                if (gepIdx >= 0) {
+                    auto* fieldPtr = builder_.CreateStructGEP(structTy, currentThisPtr_,
+                                                              gepIdx, field->name + ".init");
+                    builder_.CreateStore(llvm::ConstantAggregateZero::get(fatPtrTy), fieldPtr);
+                }
+            }
+        }
+    }
+
     if (ctorSym->bodyScope) {
         enterNamedScope(ctorSym->bodyScope);
     }
@@ -1367,6 +1424,26 @@ void IRGenerator::visit(DestructorDeclaration& node) {
     for (auto& stmt : node.body->statements) {
         stmt->accept(*this);
         if (builder_.GetInsertBlock()->getTerminator()) break;
+    }
+
+    // Release closure-typed fields (own fields only; base dtor handles its own)
+    if (!builder_.GetInsertBlock()->getTerminator()) {
+        auto userType = registry_.getUserType(classSym->name, Type::Kind::Class, classSym);
+        auto* structTy = getStructType(userType.get());
+        auto* fatPtrTy = getFatPtrType();
+
+        for (auto* field : classSym->fields) {
+            if (field->type && field->type->is<FunctionType>()) {
+                int gepIdx = getFieldGEPIndex(classSym, field);
+                if (gepIdx >= 0) {
+                    auto* fieldPtr = builder_.CreateStructGEP(structTy, currentThisPtr_,
+                                                              gepIdx, field->name + ".dtor.ptr");
+                    auto* fatVal = builder_.CreateLoad(fatPtrTy, fieldPtr, field->name + ".dtor.fat");
+                    auto* envPtr = builder_.CreateExtractValue(fatVal, {1}, field->name + ".dtor.env");
+                    builder_.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+                }
+            }
+        }
     }
 
     // Chain to base destructor after body (derived cleanup first, then base)
@@ -1931,6 +2008,25 @@ void IRGenerator::visit(VariableDeclaration& node) {
         builder_.CreateStore(llvm::ConstantAggregateZero::get(varTy), alloca);
     }
 
+    // Zero-initialize struct allocas that have closure-typed fields
+    // (prevents releasing garbage if cleanup runs before all fields assigned)
+    if (varSym->type && !varSym->type->is<FunctionType>()) {
+        if (auto* userType = varSym->type->as<UserType>()) {
+            if (userType->underlyingKind == Type::Kind::Struct) {
+                auto* structSym = static_cast<TypeSymbol*>(userType->symbol)->as<StructSymbol>();
+                if (structSym) {
+                    for (auto* field : structSym->fields) {
+                        if (field->type && field->type->is<FunctionType>()) {
+                            // Zero-init the entire struct
+                            builder_.CreateStore(llvm::Constant::getNullValue(varTy), alloca);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Emit initializer
     if (node.initializer) {
         node.initializer->accept(*this);
@@ -1974,6 +2070,27 @@ void IRGenerator::visit(VariableDeclaration& node) {
                 auto it = functionCache_.find(classSym->destructor);
                 if (it != functionCache_.end()) {
                     registerRAII(alloca, it->second);
+                }
+            }
+        }
+    }
+
+    // Register RAII for structs with closure-typed fields (synthetic cleanup)
+    if (varSym->type && !varSym->type->is<FunctionType>()) {
+        if (auto* userType = varSym->type->as<UserType>()) {
+            if (userType->underlyingKind == Type::Kind::Struct) {
+                auto* structSym = static_cast<TypeSymbol*>(userType->symbol)->as<StructSymbol>();
+                if (structSym) {
+                    bool hasClosureFields = false;
+                    for (auto* field : structSym->fields) {
+                        if (field->type && field->type->is<FunctionType>()) {
+                            hasClosureFields = true;
+                            break;
+                        }
+                    }
+                    if (hasClosureFields) {
+                        registerRAII(alloca, getOrCreateStructCleanupFn(structSym));
+                    }
                 }
             }
         }
@@ -2600,6 +2717,16 @@ void IRGenerator::visit(AssignmentExpression& node) {
             }
 
             builder_.CreateStore(lastValue_, targetPtr);
+
+            // Retain new closure envPtr when storing into a field (struct/class).
+            // Local variable reassignment doesn't need this — RAII handles it.
+            // Field stores need retain because the source variable's RAII will
+            // release its own reference at scope exit.
+            if (node.target->resolvedType && node.target->resolvedType->is<FunctionType>() &&
+                node.target->as<MemberAccessExpression>()) {
+                auto* newEnv = builder_.CreateExtractValue(lastValue_, {1}, "new.env");
+                builder_.CreateCall(getOrCreateClosureRetainFn(), {newEnv});
+            }
         }
     } else {
         // Compound assignment: load, operate, store
@@ -2874,6 +3001,15 @@ void IRGenerator::visit(CallExpression& node) {
                         calleeFn = it->second;
                     }
                 }
+            } else {
+                // Not a method — check for closure-typed field
+                auto* fieldSym = typeSym->findField(memAccess->memberName);
+                if (fieldSym && fieldSym->type && fieldSym->type->is<FunctionType>()) {
+                    // Load the fat pointer from the field and use indirect call path
+                    node.callee->accept(*this);
+                    calleeVal = lastValue_;
+                    thisPtr = nullptr;  // Not a method call — no this pointer
+                }
             }
         }
 
@@ -2916,7 +3052,20 @@ void IRGenerator::visit(CallExpression& node) {
             else if (auto* structSym = ident->resolvedSymbol->as<StructSymbol>()) {
                 auto userType = registry_.getUserType(structSym->name,
                     Type::Kind::Struct, structSym);
-                lastValue_ = llvm::UndefValue::get(mapType(userType));
+                // Use zero-init for structs with closure fields (prevents releasing garbage);
+                // use undef for plain structs (enables optimizer freedom)
+                bool hasClosureFields = false;
+                for (auto* field : structSym->fields) {
+                    if (field->type && field->type->is<FunctionType>()) {
+                        hasClosureFields = true;
+                        break;
+                    }
+                }
+                if (hasClosureFields) {
+                    lastValue_ = llvm::Constant::getNullValue(mapType(userType));
+                } else {
+                    lastValue_ = llvm::UndefValue::get(mapType(userType));
+                }
                 return;
             }
             // Regular function call

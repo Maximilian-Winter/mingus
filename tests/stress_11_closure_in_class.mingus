@@ -16,6 +16,8 @@ module Stress11
             this.fn = f;
         }
 
+        destructor { }
+
         func run(int x) => int
         {
             return this.fn(x);

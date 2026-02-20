@@ -1,7 +1,7 @@
 # Mingus v1 — Language Status Report
 
 **Date:** February 2026
-**Status:** Compiles and executes optimized native binaries — **17 feature tests + 14 stress tests passing (31/31)**
+**Status:** Compiles and executes optimized native binaries — **17 feature tests + 18 stress tests passing (35/35)**
 
 ---
 
@@ -31,7 +31,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 ## Working Features
 
-### Verified by test suite (17 feature tests + 14 stress tests = 31/31 passing)
+### Verified by test suite (17 feature tests + 18 stress tests = 35/35 passing)
 
 #### 1. Core Language (Test 01)
 - Integer types: `int`, `byte`, `bool`
@@ -230,11 +230,9 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 
 | Area | Limitation |
 |------|------------|
-| **Closure RC** | Closure capture structs now use reference counting (retain/release) with per-closure cleanup functions. **Known gap:** temporary closures passed directly as function arguments without variable storage leak one refcount. |
-| **Closure in struct fields** | Storing a closure in a struct field compiles but crashes at runtime — struct fields don't get individual RAII cleanup, so the closure env is never released and the fat pointer may become invalid. |
-| **Closure in class fields** | Storing a closure-typed value in a class field crashes the compiler (access violation during IR generation). Not yet supported. |
-| **Self-capturing closures** | The pattern `var f = null; f = (int x) => { return f(x-1); };` cannot be expressed — `NullType` is not compatible with `FunctionType` in sema, so there is no way to declare a closure variable before assigning it a self-referencing lambda. |
-| **`emitBreakDestructors` bug** | `break` and `continue` inside nested loops fire destructors for *all* RAII scopes instead of stopping at the innermost loop scope. Outer-scope destructors are incorrectly called on inner-loop `break`/`continue`. Workaround: avoid declaring RAII objects in outer scopes when inner loops use `break`/`continue`. |
+| **Closure RC** | Closure capture structs use reference counting (retain/release) with per-closure cleanup functions. Closures in struct fields get synthetic cleanup functions; class field closures are released in destructor epilogue. **Known gap:** temporary closures passed directly as function arguments without variable storage leak one refcount. |
+| **Nullable closures** | `(int) => int f = null;` is now supported. FunctionType variables can be null-initialized and reassigned. True self-capturing closures still don't work because captures are by value — the lambda captures the null initial value, not the later-assigned closure. |
+| **Classes without destructors** | If a class has closure-typed fields but no user-defined destructor, the closure fields will leak. Add an empty `destructor { }` to trigger automatic closure field cleanup. |
 | **ABI** | Struct return by value relies on LLVM's default ABI lowering. Not tested with very large structs. |
 | **Debug info** | No DWARF/PDB debug information emitted. |
 | **Module visibility** | `public`/`private` on symbols is parsed but only partially enforced (whole-module import skips non-public). No separate compilation or linking — all imported files compiled together. |
@@ -263,7 +261,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | test_16_dsp_wav | inheritance + interfaces (Effect, Named) + oscillator classes → WAV file output; demonstrates the full feature stack together | PASS |
 | test_17_hex_literals | hex (`0xFF`), binary (`0b1010`), octal (`0o77`) integer literals; bitwise operations | PASS |
 
-### Stress Tests (14/14 passing)
+### Stress Tests (18/18 passing)
 
 | Test | Stress Target | Result |
 |------|--------------|--------|
@@ -276,13 +274,17 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | stress_07_temporary_leak | 50k temporary closure creation (leak detection) | PASS |
 | stress_08_destructor_closure | Interleaved destructor calls and closure invocations | PASS |
 | stress_09_triple_reassign | Triple closure reassignment verifying release ordering | PASS |
+| stress_10_closure_in_struct | 20k iterations storing closures in struct fields with RAII cleanup | PASS |
+| stress_11_closure_in_class | 20k iterations storing closures in class fields with destructor cleanup | PASS |
 | stress_13_break_continue_raii | RAII destructor cleanup on break/continue inside nested loops | PASS |
 | stress_14_match_guard_raii | RAII objects active during match expressions with guards | PASS |
 | stress_15_struct_ptr_copy | Struct with raw pointer — shallow copy semantics verification | PASS |
 | stress_16_shadow_capture | Variable shadowing with closure capture in nested scopes | PASS |
 | stress_17_long_running | 100k iterations combining closures, RAII, interfaces, recursion | PASS |
+| stress_18_break_outer_raii | Break from inner loop preserves outer-scope RAII objects | PASS |
+| stress_19_null_closure | Null-initialized closure variable, reassignment, and call | PASS |
 
-**All 31 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+**All 35 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
@@ -348,11 +350,11 @@ mingus/
 1. **Access Modifier Enforcement**
    Enforce `public`/`private`/`protected` in sema. Currently parsed but not checked.
 
-2. **Closure Field Support and Escape Analysis**
-   Closure capture structs now use reference counting, but closures stored in struct/class fields crash (runtime/compiler respectively). Fix aggregate field RAII to retain/release closure-typed fields. Additionally, detect closures that don't escape and stack-allocate them to avoid unnecessary heap allocation.
+2. **Escape Analysis for Closures**
+   Detect closures that don't escape and stack-allocate them to avoid unnecessary heap allocation. Also fix the temporary closure leak (closures passed directly as function arguments without variable storage).
 
-3. **Fix `emitBreakDestructors` Scope Walking**
-   `break`/`continue` currently emit destructors for all RAII scopes instead of stopping at the innermost loop boundary. Fix by tagging loop scopes and walking only up to the loop marker.
+3. **Auto-generate Destructors for Classes with Closure Fields**
+   Currently, classes with closure-typed fields require an explicit `destructor { }` declaration (even empty) to trigger automatic closure field cleanup. Auto-generating a synthetic destructor would eliminate this requirement.
 
 4. **Virtual Destructors**
    Route `delete basePtr` through the vtable so the correct derived destructor runs. Requires adding a destructor slot to every class vtable.
