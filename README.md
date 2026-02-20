@@ -242,7 +242,7 @@ clang hello.ll -o hello.exe -O2
 ### Running the test suite
 
 ```bash
-# Full suite (17 feature tests + 21 stress tests)
+# Full suite (20 feature tests + 21 stress tests)
 run_tests.bat           # Windows — from project root
 
 # Or individually:
@@ -251,7 +251,7 @@ run_all_tests.bat       # Feature tests only
 run_stress_tests.bat    # Stress tests only
 ```
 
-All 38 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to see program output, or `--code` to display Mingus source.
+All 41 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to see program output, or `--code` to display Mingus source.
 
 ## Feature Summary
 
@@ -280,6 +280,10 @@ All 38 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to
 | String interpolation (`"value=${x}"`) | ✓ |
 | C interop via `extern` declarations | ✓ |
 | Multi-module imports | ✓ |
+| Tuples and destructuring | ✓ |
+| DynamicArray.map with lambda+pipe | ✓ |
+| Complex number operator arithmetic | ✓ |
+| Hex, binary, octal integer literals | ✓ |
 
 ## Architecture
 
