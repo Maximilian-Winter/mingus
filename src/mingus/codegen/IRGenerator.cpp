@@ -882,6 +882,177 @@ void IRGenerator::emitBreakDestructors() {
 }
 
 //================================================================================
+// Closure reference counting helpers
+//================================================================================
+
+llvm::Function* IRGenerator::getOrCreateClosureRetainFn() {
+    if (closureRetainFn_) return closureRetainFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    closureRetainFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_closure_retain", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", closureRetainFn_);
+    auto* doRetain = llvm::BasicBlock::Create(context_, "do_retain", closureRetainFn_);
+    auto* done = llvm::BasicBlock::Create(context_, "done", closureRetainFn_);
+
+    llvm::IRBuilder<> b(entry);
+    auto* env = closureRetainFn_->getArg(0);
+    auto* isNull = b.CreateICmpEQ(env,
+        llvm::ConstantPointerNull::get(ptrTy), "is_null");
+    b.CreateCondBr(isNull, done, doRetain);
+
+    b.SetInsertPoint(doRetain);
+    auto* headerTy = llvm::StructType::get(context_, {i64Ty, ptrTy});
+    auto* rcPtr = b.CreateStructGEP(headerTy, env, 0, "rc_ptr");
+    auto* rc = b.CreateLoad(i64Ty, rcPtr, "rc");
+    auto* rcInc = b.CreateAdd(rc, llvm::ConstantInt::get(i64Ty, 1), "rc_inc");
+    b.CreateStore(rcInc, rcPtr);
+    b.CreateBr(done);
+
+    b.SetInsertPoint(done);
+    b.CreateRetVoid();
+
+    return closureRetainFn_;
+}
+
+llvm::Function* IRGenerator::getOrCreateClosureReleaseFn() {
+    if (closureReleaseFn_) return closureReleaseFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    closureReleaseFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_closure_release", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", closureReleaseFn_);
+    auto* doRelease = llvm::BasicBlock::Create(context_, "do_release", closureReleaseFn_);
+    auto* cleanup = llvm::BasicBlock::Create(context_, "cleanup", closureReleaseFn_);
+    auto* callCleanup = llvm::BasicBlock::Create(context_, "call_cleanup", closureReleaseFn_);
+    auto* doFree = llvm::BasicBlock::Create(context_, "do_free", closureReleaseFn_);
+    auto* done = llvm::BasicBlock::Create(context_, "done", closureReleaseFn_);
+
+    llvm::IRBuilder<> b(entry);
+    auto* env = closureReleaseFn_->getArg(0);
+    auto* isNull = b.CreateICmpEQ(env,
+        llvm::ConstantPointerNull::get(ptrTy), "is_null");
+    b.CreateCondBr(isNull, done, doRelease);
+
+    b.SetInsertPoint(doRelease);
+    auto* headerTy = llvm::StructType::get(context_, {i64Ty, ptrTy});
+    auto* rcPtr = b.CreateStructGEP(headerTy, env, 0, "rc_ptr");
+    auto* rc = b.CreateLoad(i64Ty, rcPtr, "rc");
+    auto* rcDec = b.CreateSub(rc, llvm::ConstantInt::get(i64Ty, 1), "rc_dec");
+    b.CreateStore(rcDec, rcPtr);
+    auto* isZero = b.CreateICmpEQ(rcDec,
+        llvm::ConstantInt::get(i64Ty, 0), "is_zero");
+    b.CreateCondBr(isZero, cleanup, done);
+
+    b.SetInsertPoint(cleanup);
+    auto* cleanupFnPtr = b.CreateStructGEP(headerTy, env, 1, "cleanup_fn_ptr");
+    auto* cleanupFn = b.CreateLoad(ptrTy, cleanupFnPtr, "cleanup_fn");
+    auto* hasCleanup = b.CreateICmpNE(cleanupFn,
+        llvm::ConstantPointerNull::get(ptrTy), "has_cleanup");
+    b.CreateCondBr(hasCleanup, callCleanup, doFree);
+
+    b.SetInsertPoint(callCleanup);
+    auto* cleanupCallTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    b.CreateCall(cleanupCallTy, cleanupFn, {env});
+    b.CreateBr(doFree);
+
+    b.SetInsertPoint(doFree);
+    auto freeCallee = module_->getOrInsertFunction("free",
+        llvm::FunctionType::get(voidTy, {ptrTy}, false));
+    b.CreateCall(freeCallee, {env});
+    b.CreateBr(done);
+
+    b.SetInsertPoint(done);
+    b.CreateRetVoid();
+
+    return closureReleaseFn_;
+}
+
+llvm::Function* IRGenerator::generateClosureCleanupFn(
+    llvm::StructType* closureTy,
+    const std::vector<sema::Symbol*>& capturedVars,
+    int headerOffset)
+{
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    std::string name = "__closure_cleanup_" + std::to_string(closureCleanupCounter_++);
+    auto* fn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage,
+                                       name, module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
+    llvm::IRBuilder<> b(entry);
+    auto* env = fn->getArg(0);
+
+    auto* fatPtrTy = getFatPtrType();
+
+    for (size_t i = 0; i < capturedVars.size(); i++) {
+        auto* capSym = capturedVars[i];
+        auto* varSym = capSym->as<sema::VariableSymbol>();
+        if (!varSym) continue;
+
+        // Check if this captured variable is a closure (FunctionType)
+        if (varSym->type && varSym->type->is<FunctionType>()) {
+            unsigned fieldIdx = headerOffset + (unsigned)i;
+            auto* fieldPtr = b.CreateStructGEP(closureTy, env, fieldIdx,
+                                                capSym->name + ".cleanup.slot");
+            // Load the captured fat pointer { fnPtr, envPtr }
+            auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr, capSym->name + ".fat");
+            // Extract envPtr (index 1)
+            auto* envPtr = b.CreateExtractValue(fatVal, {1}, capSym->name + ".env");
+            // Release the inner closure
+            b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+        }
+    }
+
+    b.CreateRetVoid();
+    return fn;
+}
+
+llvm::Function* IRGenerator::getOrCreateClosureReleaseWrapper() {
+    if (closureReleaseWrapperFn_) return closureReleaseWrapperFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+
+    // Takes ptr to the fat pointer alloca
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    closureReleaseWrapperFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_closure_release_wrapper", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", closureReleaseWrapperFn_);
+    llvm::IRBuilder<> b(entry);
+    auto* allocaPtr = closureReleaseWrapperFn_->getArg(0);
+
+    // Load the fat pointer { fnPtr, envPtr } from the alloca
+    auto* fatPtrTy = getFatPtrType();
+    auto* fatVal = b.CreateLoad(fatPtrTy, allocaPtr, "fat");
+
+    // Extract envPtr (index 1)
+    auto* envPtr = b.CreateExtractValue(fatVal, {1}, "env.ptr");
+
+    // Call __mingus_closure_release(envPtr)
+    b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+
+    b.CreateRetVoid();
+    return closureReleaseWrapperFn_;
+}
+
+//================================================================================
 // String helpers
 //================================================================================
 llvm::Function* IRGenerator::getOrCreateStringFreeFn() {
@@ -1741,6 +1912,11 @@ void IRGenerator::visit(VariableDeclaration& node) {
     auto* alloca = createEntryBlockAlloca(currentFunction_, varTy, node.name);
     namedValues_[varSym] = alloca;
 
+    // Zero-initialize closure allocas (prevents releasing garbage on reassignment)
+    if (varSym->type && varSym->type->is<FunctionType>()) {
+        builder_.CreateStore(llvm::ConstantAggregateZero::get(varTy), alloca);
+    }
+
     // Emit initializer
     if (node.initializer) {
         node.initializer->accept(*this);
@@ -1781,6 +1957,11 @@ void IRGenerator::visit(VariableDeclaration& node) {
                 }
             }
         }
+    }
+
+    // Register RAII for closure-typed variables (release envPtr at scope exit)
+    if (varSym->type && varSym->type->is<FunctionType>() && node.initializer) {
+        registerRAII(alloca, getOrCreateClosureReleaseWrapper());
     }
 }
 
@@ -2368,6 +2549,13 @@ void IRGenerator::visit(AssignmentExpression& node) {
     if (!targetPtr) { lastValue_ = nullptr; return; }
 
     if (node.op == AssignOp::Assign) {
+        // Release old closure envPtr before overwriting a closure variable
+        if (node.target->resolvedType && node.target->resolvedType->is<FunctionType>()) {
+            auto* oldFat = builder_.CreateLoad(getFatPtrType(), targetPtr, "old.fat");
+            auto* oldEnv = builder_.CreateExtractValue(oldFat, {1}, "old.env");
+            builder_.CreateCall(getOrCreateClosureReleaseFn(), {oldEnv});
+        }
+
         // Simple assignment
         node.value->accept(*this);
         if (lastValue_) {
@@ -3442,8 +3630,13 @@ void IRGenerator::visit(LambdaExpression& node) {
         llvm::Value* envPtr = lambdaFn->getArg(lambdaFn->arg_size() - 1);
         envPtr->setName("env");
 
-        // Build closure struct type (only captured variables, no fnPtr)
+        // Build closure struct type WITH RC header (must match allocation layout)
+        auto* i64TyCap = llvm::Type::getInt64Ty(context_);
+        auto* ptrTyCap = llvm::PointerType::getUnqual(context_);
+
         std::vector<llvm::Type*> closureFields;
+        closureFields.push_back(i64TyCap);   // refcount  (header field 0)
+        closureFields.push_back(ptrTyCap);   // cleanup_fn (header field 1)
         for (auto* capSym : node.capturedVariables) {
             auto* varSym = capSym->as<VariableSymbol>();
             closureFields.push_back(varSym ? mapType(varSym->type)
@@ -3451,13 +3644,15 @@ void IRGenerator::visit(LambdaExpression& node) {
         }
         auto* closureTy = llvm::StructType::get(context_, closureFields);
 
-        // Extract each capture from env pointer
+        // Extract each capture from env pointer (offset by 2 for RC header)
+        const int headerOffset = 2;
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             auto* capSym = node.capturedVariables[i];
             auto* varSym = capSym->as<VariableSymbol>();
             llvm::Type* capType = varSym ? mapType(varSym->type)
                                          : llvm::Type::getInt32Ty(context_);
-            auto* capPtr = builder_.CreateStructGEP(closureTy, envPtr, (unsigned)i,
+            auto* capPtr = builder_.CreateStructGEP(closureTy, envPtr,
+                                                     headerOffset + (unsigned)i,
                                                      capSym->name + ".cap");
             auto* capVal = builder_.CreateLoad(capType, capPtr, capSym->name);
             auto* capAlloca = createEntryBlockAlloca(lambdaFn, capType, capSym->name);
@@ -3495,8 +3690,13 @@ void IRGenerator::visit(LambdaExpression& node) {
     builder_.SetInsertPoint(savedInsertPoint, savedInsertPointIt);
 
     if (hasCaptures) {
-        // Build closure struct on the heap (only captured variables, no fnPtr)
+        // Build closure struct with RC header: { i64 refcount, ptr cleanup_fn, captures... }
+        auto* i64TyA = llvm::Type::getInt64Ty(context_);
+        auto* ptrTyA = llvm::PointerType::getUnqual(context_);
+
         std::vector<llvm::Type*> closureFields;
+        closureFields.push_back(i64TyA);   // refcount  (header field 0)
+        closureFields.push_back(ptrTyA);   // cleanup_fn (header field 1)
         for (auto* capSym : node.capturedVariables) {
             auto* varSym = capSym->as<VariableSymbol>();
             closureFields.push_back(varSym ? mapType(varSym->type)
@@ -3506,15 +3706,37 @@ void IRGenerator::visit(LambdaExpression& node) {
 
         auto& dl = module_->getDataLayout();
         uint64_t closureSize = dl.getTypeAllocSize(closureTy);
-        llvm::Value* sizeVal = llvm::ConstantInt::get(
-            llvm::Type::getInt64Ty(context_), closureSize);
+        llvm::Value* sizeVal = llvm::ConstantInt::get(i64TyA, closureSize);
 
         auto mallocCallee = module_->getOrInsertFunction("malloc",
-            llvm::FunctionType::get(llvm::PointerType::getUnqual(context_),
-                {llvm::Type::getInt64Ty(context_)}, false));
+            llvm::FunctionType::get(ptrTyA, {i64TyA}, false));
         llvm::Value* closurePtr = builder_.CreateCall(mallocCallee, {sizeVal}, "closure.ptr");
 
-        // Store captured values into closure struct
+        // Initialize refcount = 1
+        auto* rcSlot = builder_.CreateStructGEP(closureTy, closurePtr, 0, "rc.slot");
+        builder_.CreateStore(llvm::ConstantInt::get(i64TyA, 1), rcSlot);
+
+        // Check if any captured variable is a closure (needs cleanup function)
+        bool capturesClosures = false;
+        for (auto* capSym : node.capturedVariables) {
+            auto* varSym = capSym->as<VariableSymbol>();
+            if (varSym && varSym->type && varSym->type->is<FunctionType>()) {
+                capturesClosures = true;
+                break;
+            }
+        }
+
+        // Store cleanup function pointer (or null if no inner closures)
+        auto* cleanupSlot = builder_.CreateStructGEP(closureTy, closurePtr, 1, "cleanup.slot");
+        if (capturesClosures) {
+            auto* cleanupFn = generateClosureCleanupFn(closureTy, node.capturedVariables, 2);
+            builder_.CreateStore(cleanupFn, cleanupSlot);
+        } else {
+            builder_.CreateStore(llvm::ConstantPointerNull::get(ptrTyA), cleanupSlot);
+        }
+
+        // Store captured values (offset by 2 for the RC header)
+        const int headerOffset = 2;
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             auto* capSym = node.capturedVariables[i];
             auto* varSym = capSym->as<VariableSymbol>();
@@ -3524,8 +3746,16 @@ void IRGenerator::visit(LambdaExpression& node) {
                                            : llvm::Type::getInt32Ty(context_);
                 llvm::Value* capVal = builder_.CreateLoad(capTy, it->second, capSym->name + ".val");
                 auto* capSlot = builder_.CreateStructGEP(closureTy, closurePtr,
-                                                          (unsigned)i, capSym->name + ".slot");
+                                                          headerOffset + (unsigned)i,
+                                                          capSym->name + ".slot");
                 builder_.CreateStore(capVal, capSlot);
+
+                // If capturing a closure, retain its envPtr
+                if (varSym && varSym->type && varSym->type->is<FunctionType>()) {
+                    auto* capturedEnv = builder_.CreateExtractValue(capVal, {1},
+                                                                    capSym->name + ".cap.env");
+                    builder_.CreateCall(getOrCreateClosureRetainFn(), {capturedEnv});
+                }
             }
         }
 

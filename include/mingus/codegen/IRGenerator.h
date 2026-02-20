@@ -199,6 +199,29 @@ private:
     llvm::Value* emitStringConcat(llvm::Value* left, llvm::Value* right);
 
     //==========================================================================
+    // Closure reference counting
+    //==========================================================================
+    llvm::Function* closureRetainFn_ = nullptr;
+    llvm::Function* closureReleaseFn_ = nullptr;
+    llvm::Function* closureReleaseWrapperFn_ = nullptr;
+    int closureCleanupCounter_ = 0;
+
+    // Increment refcount on a closure environment pointer (null-safe)
+    llvm::Function* getOrCreateClosureRetainFn();
+
+    // Decrement refcount; free + call cleanup when it hits zero (null-safe)
+    llvm::Function* getOrCreateClosureReleaseFn();
+
+    // RAII wrapper: loads fat pointer from alloca, extracts envPtr, calls release
+    llvm::Function* getOrCreateClosureReleaseWrapper();
+
+    // Generate a per-closure cleanup function that releases captured closures
+    llvm::Function* generateClosureCleanupFn(
+        llvm::StructType* closureTy,
+        const std::vector<sema::Symbol*>& capturedVars,
+        int headerOffset);
+
+    //==========================================================================
     // Lambda counter
     //==========================================================================
     int lambdaCounter_;
