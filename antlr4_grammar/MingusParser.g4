@@ -482,7 +482,7 @@ expression
     ;
 
 assignment
-    : unaryExpression assignmentOperator assignment
+    : unaryExpression assignmentOperator ( lambdaExpression | assignment )
     | pipe
     ;
 

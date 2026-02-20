@@ -3,6 +3,10 @@
 // with closure fields, assigns non-capturing closures, and deletes them.
 // Currently no actual cycle (closure doesn't capture `n`).
 // Future: when self-capturing closures work, this becomes the cycle test.
+//
+// NOTE: No explicit constructor or destructor — compiler auto-generates them.
+// This verifies that auto-generated ctor zero-inits closure fields and
+// auto-generated dtor releases them correctly.
 
 module Stress21
 {
@@ -11,13 +15,6 @@ module Stress21
     class Node
     {
         (int) => int fn;
-
-        constructor()
-        {
-            // closure field zero-initialized by compiler
-        }
-
-        destructor { }
     }
 
     func makeIncrement() => (int) => int

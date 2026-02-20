@@ -1,5 +1,5 @@
 
-// Generated from MingusParser.g4 by ANTLR 4.13.2
+// Generated from ./antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -1365,6 +1365,7 @@ public:
     virtual size_t getRuleIndex() const override;
     UnaryExpressionContext *unaryExpression();
     AssignmentOperatorContext *assignmentOperator();
+    LambdaExpressionContext *lambdaExpression();
     AssignmentContext *assignment();
     PipeContext *pipe();
 

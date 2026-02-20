@@ -353,6 +353,27 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
         }
     }
 
+    // Auto-generate default constructor if none declared
+    if (!sym->constructor) {
+        auto emptyBody = std::make_shared<BlockStatement>(
+            NodeList<StatementNode>{});
+        node.constructor = std::make_shared<ConstructorDeclaration>(
+            AccessModifier::Public,
+            NodeList<ParameterNode>{},
+            emptyBody,
+            NodeList<ExpressionNode>{},  // no super args
+            sym->baseClass != nullptr,   // hasSuperCall if base exists
+            node.location);
+        auto* ctorSym = symbolTable_.createSymbol<ConstructorSymbol>(
+            node.location, currentScope_->ownerSymbol);
+        ctorSym->isPublic = true;
+        defineSymbol(ctorSym);
+        auto* fnScope = pushScope(ScopeKind::Function, ctorSym);
+        ctorSym->bodyScope = fnScope;
+        popScope();
+        sym->constructor = ctorSym;
+    }
+
     // Destructor
     if (node.destructor) {
         node.destructor->accept(*this);
@@ -360,6 +381,21 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
         if (dtorSym && dtorSym->is<DestructorSymbol>()) {
             sym->destructor = dtorSym->as<DestructorSymbol>();
         }
+    }
+
+    // Auto-generate default destructor if none declared
+    if (!sym->destructor) {
+        auto emptyBody = std::make_shared<BlockStatement>(
+            NodeList<StatementNode>{});
+        node.destructor = std::make_shared<DestructorDeclaration>(
+            emptyBody, node.location);
+        auto* dtorSym = symbolTable_.createSymbol<DestructorSymbol>(
+            node.location, currentScope_->ownerSymbol);
+        defineSymbol(dtorSym);
+        auto* fnScope = pushScope(ScopeKind::Function, dtorSym);
+        dtorSym->bodyScope = fnScope;
+        popScope();
+        sym->destructor = dtorSym;
     }
 
     // Methods
