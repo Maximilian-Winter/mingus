@@ -1,6 +1,8 @@
 // Test 23: Virtual Destructor
 // Verifies that deleting a derived class through a base class pointer
 // calls the derived class destructor (virtual dispatch through vtable slot 0).
+// Also tests a three-level inheritance chain: Base → Middle → Leaf,
+// ensuring all three destructors fire in correct order when deleted through Base*.
 
 module Test23
 {
@@ -49,6 +51,49 @@ module Test23
         }
     }
 
+    // Three-level chain: Base → Middle → Leaf
+    class Middle : Base
+    {
+        int mid;
+
+        constructor(int i, int m) : super(i)
+        {
+            this.mid = m;
+        }
+
+        destructor
+        {
+            puts("~Middle");
+        }
+
+        func greet() => int
+        {
+            puts("Middle.greet");
+            return 0;
+        }
+    }
+
+    class Leaf : Middle
+    {
+        int leaf;
+
+        constructor(int i, int m, int l) : super(i, m)
+        {
+            this.leaf = l;
+        }
+
+        destructor
+        {
+            puts("~Leaf");
+        }
+
+        func greet() => int
+        {
+            puts("Leaf.greet");
+            return 0;
+        }
+    }
+
     func main() => int
     {
         // Direct delete of Derived — should call ~Derived then ~Base
@@ -68,6 +113,24 @@ module Test23
         var b2 = new Base(5);
         b2->greet();
         delete b2;
+
+        // Three-level chain: delete Leaf through Base* — must fire ~Leaf, ~Middle, ~Base
+        puts("--- 3-level via base ptr ---");
+        Base* deep = new Leaf(10, 20, 30);
+        deep->greet();
+        delete deep;
+
+        // Three-level chain: delete Leaf through Middle* — must fire ~Leaf, ~Middle, ~Base
+        puts("--- 3-level via middle ptr ---");
+        Middle* mid = new Leaf(11, 21, 31);
+        mid->greet();
+        delete mid;
+
+        // Three-level chain: direct delete of Leaf — same order
+        puts("--- 3-level direct ---");
+        var leaf = new Leaf(12, 22, 32);
+        leaf->greet();
+        delete leaf;
 
         puts("Test23 done");
         return 0;
