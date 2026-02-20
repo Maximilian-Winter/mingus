@@ -1,6 +1,21 @@
 @echo off
 setlocal enabledelayedexpansion
 
+:: Parse options
+set SHOW_CODE=0
+set SHOW_IR=0
+set SHOW_OUTPUT=0
+
+:parse_args
+if "%~1"=="" goto :args_done
+if "%~1"=="--code" (set SHOW_CODE=1& shift & goto :parse_args)
+if "%~1"=="--ir" (set SHOW_IR=1& shift & goto :parse_args)
+if "%~1"=="--output" (set SHOW_OUTPUT=1& shift & goto :parse_args)
+if "%~1"=="--help" goto :usage
+shift
+goto :parse_args
+:args_done
+
 cd /d H:\language_dev\mingus\tests
 
 set TOOL=.\mingus_ir_tool.exe
@@ -61,6 +76,16 @@ del /q test_*.actual test_*.exe test_*.ll stress_*.actual stress_*.exe stress_*.
 if !FAIL! gtr 0 exit /b 1
 exit /b 0
 
+:usage
+echo Usage: run_tests.bat [options]
+echo.
+echo Options:
+echo   --code     Print Mingus source code for each test
+echo   --ir       Print generated LLVM IR for each test
+echo   --output   Print program output for each test
+echo   --help     Show this help
+exit /b 0
+
 :run_test
 set /a TOTAL+=1
 set FILE=%~1
@@ -69,12 +94,28 @@ set DESC=%~3
 
 echo -------- %DESC% [%FILE%.mingus] --------
 
+if "!SHOW_CODE!"=="1" (
+    echo.
+    echo   --- Source ---
+    type %FILE%.mingus
+    echo.
+    echo   -------------
+)
+
 %TOOL% %FILE%.mingus --emit %FILE%.ll --entry %ENTRY% --opt 2 >nul 2>&1
 if errorlevel 1 (
     echo   FAIL: IR generation failed
     set /a FAIL+=1
     echo.
     goto :eof
+)
+
+if "!SHOW_IR!"=="1" (
+    echo.
+    echo   --- LLVM IR ---
+    type %FILE%.ll
+    echo.
+    echo   ---------------
 )
 
 clang %FILE%.ll -o %FILE%.exe -O2 2>nul
@@ -86,6 +127,13 @@ if errorlevel 1 (
 )
 
 .\%FILE%.exe > %FILE%.actual 2>&1
+
+if "!SHOW_OUTPUT!"=="1" (
+    echo.
+    echo   --- Output ---
+    type %FILE%.actual
+    echo   --------------
+)
 
 if exist %FILE%.expected (
     fc /b %FILE%.expected %FILE%.actual >nul 2>&1

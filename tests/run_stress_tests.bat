@@ -2,13 +2,27 @@
 setlocal enabledelayedexpansion
 
 :: Run all Mingus stress tests
-:: Usage: run_stress_tests.bat [path_to_clang]
+:: Usage: run_stress_tests.bat [options]
 ::
-:: Run from the tests\ directory.
-:: Each test needs a matching .expected file for automated validation.
+:: Options:
+::   --code     Print Mingus source code for each test
+::   --ir       Print generated LLVM IR for each test
+::   --output   Print program output for each test
 
-set CLANG=%1
-if "%CLANG%"=="" set CLANG=clang
+:: Parse options
+set SHOW_CODE=0
+set SHOW_IR=0
+set SHOW_OUTPUT=0
+
+:parse_args
+if "%~1"=="" goto :args_done
+if "%~1"=="--code" (set SHOW_CODE=1& shift & goto :parse_args)
+if "%~1"=="--ir" (set SHOW_IR=1& shift & goto :parse_args)
+if "%~1"=="--output" (set SHOW_OUTPUT=1& shift & goto :parse_args)
+if "%~1"=="--help" goto :usage
+shift
+goto :parse_args
+:args_done
 
 set TOOL=.\mingus_ir_tool.exe
 
@@ -47,6 +61,16 @@ del stress_*.actual stress_*.exe stress_*.ll 2>nul
 if !FAIL! gtr 0 exit /b 1
 exit /b 0
 
+:usage
+echo Usage: run_stress_tests.bat [options]
+echo.
+echo Options:
+echo   --code     Print Mingus source code for each test
+echo   --ir       Print generated LLVM IR for each test
+echo   --output   Print program output for each test
+echo   --help     Show this help
+exit /b 0
+
 :run_test
 set /a TOTAL+=1
 set FILE=%~1
@@ -54,6 +78,14 @@ set ENTRY=%~2
 set DESC=%~3
 
 echo -------- %DESC% [%FILE%.mingus] --------
+
+if "!SHOW_CODE!"=="1" (
+    echo.
+    echo   --- Source ---
+    type %FILE%.mingus
+    echo.
+    echo   -------------
+)
 
 :: Step 1: Generate IR with main wrapper (--opt 2 enables O2 optimization)
 %TOOL% %FILE%.mingus --emit %FILE%.ll --entry %ENTRY% --opt 2 >nul 2>&1
@@ -64,8 +96,16 @@ if errorlevel 1 (
     goto :eof
 )
 
+if "!SHOW_IR!"=="1" (
+    echo.
+    echo   --- LLVM IR ---
+    type %FILE%.ll
+    echo.
+    echo   ---------------
+)
+
 :: Step 2: Compile with clang
-%CLANG% %FILE%.ll -o %FILE%.exe -O2 2>nul
+clang %FILE%.ll -o %FILE%.exe -O2 2>nul
 if errorlevel 1 (
     echo   FAIL: clang compilation failed
     set /a FAIL+=1
@@ -75,6 +115,13 @@ if errorlevel 1 (
 
 :: Step 3: Run and capture output
 .\%FILE%.exe > %FILE%.actual 2>&1
+
+if "!SHOW_OUTPUT!"=="1" (
+    echo.
+    echo   --- Output ---
+    type %FILE%.actual
+    echo   --------------
+)
 
 :: Step 4: Compare against expected output
 if exist %FILE%.expected (

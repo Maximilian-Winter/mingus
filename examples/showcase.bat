@@ -2,12 +2,12 @@
 setlocal enabledelayedexpansion
 
 :: Mingus v1 Showcase — display source code and program output
-:: Usage: showcase.bat [path_to_clang]
+:: Usage: showcase.bat
 ::
-:: Run from the directory containing mingus_ir_tool.exe and the .mingus files
+:: Run from the examples\ directory. Test files are in ..\tests\
 
-set CLANG=%1
-if "%CLANG%"=="" set CLANG=clang
+set TOOL=.\mingus_ir_tool.exe
+set TESTDIR=..\tests
 
 echo.
 echo ################################################################
@@ -57,18 +57,18 @@ echo ============================================================
 echo.
 echo  --- Source: %FILE%.mingus ---
 echo.
-type %FILE%.mingus
+type %TESTDIR%\%FILE%.mingus
 echo.
 
 :: Compile and run
-.\mingus_ir_tool.exe %FILE%.mingus --emit %FILE%.ll --entry %ENTRY% --opt 2 >nul 2>&1
+%TOOL% %TESTDIR%\%FILE%.mingus --emit %FILE%.ll --entry %ENTRY% --opt 2 >nul 2>&1
 if errorlevel 1 (
     echo  [ERROR: IR generation failed]
     echo.
     goto :eof
 )
 
-%CLANG% %FILE%.ll -o %FILE%.exe -O2 2>nul
+clang %FILE%.ll -o %FILE%.exe -O2 2>nul
 if errorlevel 1 (
     echo  [ERROR: clang compilation failed]
     echo.
