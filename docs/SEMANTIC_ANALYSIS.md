@@ -7,8 +7,9 @@ The Mingus compiler performs four sequential semantic analysis passes over the A
 - `src/mingus/sema/TypeResolver.cpp` — Pass 2
 - `src/mingus/sema/TypeChecker.cpp` — Pass 3
 - `src/mingus/sema/SemanticValidator.cpp` — Pass 4
-- `include/mingus/sema/Symbol.h` — Symbol types
-- `src/mingus/sema/TypeRegistry.cpp` — Type registry and compatibility
+- `include/mingus/Symbols.h` — Symbol types (V2: FunctionSymbol, ClassSymbol, etc.)
+- `include/mingus/TypeSymbol.h` — Type hierarchy (V2: types ARE symbols — TypeSymbol, PointerTypeSymbol, FunctionTypeSymbol, etc.)
+- `include/mingus/SymbolTable.h` — Scope tree, type interning, isCompatible()
 
 ---
 
@@ -53,41 +54,43 @@ IRGenerator (codegen)
 
 ## 2. Type System
 
-### Type Hierarchy
+### Type Hierarchy (V2: Types ARE Symbols)
 
-**File:** `include/mingus/ast/Type.h`
+**File:** `include/mingus/TypeSymbol.h`
+
+In V2, there is no separate `Type` hierarchy. All types are `TypeSymbol` subclasses that inherit from `Symbol`:
 
 ```
-Type (abstract)
-├── PrimitiveType  — int, double, float, byte, char, bool, string, void
-├── PointerType    — T*
-├── ReferenceType  — T& (for parameters)
-├── ArrayType      — T[N] or T[]
-├── FunctionType   — (T1, T2) => R
-├── TupleType      — (T1, T2, ...)
-├── UserType       — structs, classes, enums, interfaces
-├── NullType       — the type of `null`
-└── ErrorType      — placeholder for unresolvable types
+TypeSymbol (abstract, extends Symbol)
+├── PrimitiveTypeSymbol  — int, double, float, byte, char, bool, string, void
+├── PointerTypeSymbol    — T* (has baseType field)
+├── ArrayTypeSymbol      — T[N] or T[]
+├── FunctionTypeSymbol   — (T1, T2) => R (with ParameterInfo::isReference)
+├── TupleTypeSymbol      — (T1, T2, ...)
+├── NullTypeSymbol       — the type of `null`
+└── ErrorTypeSymbol      — placeholder for unresolvable types
 ```
+
+Note: `ReferenceType` is no longer a separate type. Reference semantics are encoded as `VariableSymbol::isReference` and `FunctionTypeSymbol::ParameterInfo::isReference`.
 
 ### Symbol Hierarchy
 
-**File:** `include/mingus/sema/Symbol.h`
+**File:** `include/mingus/Symbols.h`
 
 ```
 Symbol (abstract)
 ├── VariableSymbol    — variables, parameters, fields
-├── FunctionSymbol    — functions, methods
-├── ConstructorSymbol — class constructors
-├── DestructorSymbol  — class destructors
-├── OperatorSymbol    — operator overloads
-├── TypeSymbol        — base for type-defining symbols
-│   ├── ClassSymbol   — classes (+ vtable, allFields, interfaces)
+├── FunctionSymbol    — functions, methods, constructors, destructors, operators
+│   (has buildFunctionType() → FunctionTypeSymbol with ParameterInfo)
+├── TypeSymbol        — base for ALL types (see above)
+│   ├── ClassSymbol   — classes (+ vtable, allFields, interfaces, inheritance chain)
 │   ├── StructSymbol  — structs
 │   ├── EnumSymbol    — enums
 │   └── InterfaceSymbol — interfaces
 └── ModuleSymbol      — modules
 ```
+
+V2 key change: `ConstructorSymbol`, `DestructorSymbol`, and `OperatorSymbol` are unified into `FunctionSymbol`. Classes store them as `constructor`, `destructor`, `operators` fields on `ClassSymbol`.
 
 Key `VariableSymbol` fields:
 - `role`: `Field` (struct/class member) or `Local` (function-local)
@@ -105,7 +108,7 @@ Key `ClassSymbol` fields:
 
 ### Type Compatibility Rules
 
-**File:** `src/mingus/sema/TypeRegistry.cpp`
+**File:** `src/mingus/SymbolTable.cpp` (V2: merged from TypeRegistry)
 
 `isCompatible(from, to)` is the core compatibility check, used for assignments, arguments, and returns:
 
@@ -210,18 +213,18 @@ Same for missing destructors. This ensures `classSym->hasRAII()` always returns 
 
 ### Purpose
 
-Converts all **declaration-level** `TypeNode` AST nodes into concrete `Type` objects. Does NOT enter function bodies.
+Converts all **declaration-level** `TypeNode` AST nodes into concrete `TypeSymbol` objects. Does NOT enter function bodies.
 
 ### Core Resolution
 
 | TypeNode | Resolution |
 |----------|-----------|
-| `PrimitiveTypeNode` | `TypeRegistry::getPrimitive(kind)` |
-| `NamedTypeNode` | Scope lookup → must be `TypeSymbol` → `getUserType(name, kind, sym)` |
-| `PointerTypeNode` | Recursive resolve → `getPointerTo` or `getReferenceTo` |
-| `ArrayTypeNode` | Recursive resolve → `getArrayOf(elementType, size)` |
-| `TupleTypeNode` | Resolve all elements → `getTupleOf(types)` |
-| `FunctionTypeNode` | Resolve params + return → `getFunctionType(params, ret)` |
+| `PrimitiveTypeNode` | `SymbolTable::getIntType()`, `getDoubleType()`, etc. |
+| `NamedTypeNode` | Scope lookup → must be `TypeSymbol` → `SymbolTable::resolveType(name)` |
+| `PointerTypeNode` | Recursive resolve → `SymbolTable::getPointerTo()` |
+| `ArrayTypeNode` | Recursive resolve → `SymbolTable::getArrayOf(elementType, size)` |
+| `TupleTypeNode` | Resolve all elements → `SymbolTable::getTupleOf(types)` |
+| `FunctionTypeNode` | Resolve params + return → `FunctionTypeSymbol` with `ParameterInfo` |
 
 ### Reference Parameter Unwrapping
 

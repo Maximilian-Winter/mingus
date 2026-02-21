@@ -6,7 +6,7 @@ This document describes the Mingus grammar (ANTLR4) and the AST node types produ
 - `grammar/MingusLexer.g4` — Lexer rules
 - `grammar/MingusParser.g4` — Parser rules
 - `src/mingus/parser/ASTGenerator.cpp` — Parse tree to AST conversion
-- `include/mingus/ast/` — AST node headers
+- `include/mingus/AstNode.h`, `Expressions.h`, `Statements.h`, `Declarations.h` — AST node headers
 
 ---
 
@@ -303,12 +303,14 @@ From highest to lowest:
 
 | Class | Base | Purpose |
 |-------|------|---------|
-| `ASTNode` | — | Root with `SourceLocation` |
-| `ExpressionNode` | `ASTNode` | Has `resolvedType` (filled by sema) |
-| `StatementNode` | `ASTNode` | Statements |
-| `DeclarationNode` | `ASTNode` | Top-level declarations |
+| `AstBaseNode` | — | Root with `DebugInfo` (V2: replaces `SourceLocation`), `astScopeNode` (baked scope pointer) |
+| `ExpressionNode` | `AstBaseNode` | Has `resolvedType`, `resolvedSymbol` (filled by sema) |
+| `StatementNode` | `AstBaseNode` | Statements |
+| `DeclarationNode` | `AstBaseNode` | Top-level declarations |
 
 All nodes support `accept(ASTVisitor&)` for the visitor pattern and `as<T>()`/`is<T>()` for downcasting.
+
+V2 additions: `CallExpression::resolvedCallee` (FunctionSymbol for direct calls), `ArgumentsNode::isReference` (per-argument ref flags), `ParameterNode::resolvedSymbol` (eliminates scanForParamSymbols).
 
 ### 4.2 Program Nodes
 

@@ -1,7 +1,7 @@
-# Mingus v1 — Language Status Report
+# Mingus — Language Status Report
 
 **Date:** February 2026
-**Status:** Compiles and executes optimized native binaries — **30 feature tests + 21 stress tests passing (51/51)**
+**Status:** Compiles and executes optimized native binaries — **33 feature tests + 21 stress tests passing (54/54)**
 
 ---
 
@@ -24,7 +24,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Import Resolution -> Semantic Analys
 | Compilation | Clang (from LLVM distribution) compiles IR to native |
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
-**Test Runner:** `run_tests.bat` (combined 51 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
+**Test Runner:** `run_tests.bat` (combined 54 tests), `tests/run_all_tests.bat` (features), `tests/run_stress_tests.bat` (stress) — supports `--code`, `--ir`, `--output` flags
 **Showcase:** `examples/showcase.bat` — 9 example programs (including multi-module import demo); `tools/README.md` — compiler and API tools
 
 ---
@@ -46,7 +46,7 @@ Detailed technical documentation of the compiler internals:
 
 ## Working Features
 
-### Verified by test suite (30 feature tests + 21 stress tests = 51/51 passing)
+### Verified by test suite (33 feature tests + 21 stress tests = 54/54 passing)
 
 #### 1. Core Language (Test 01)
 - Integer types: `int`, `byte`, `bool`
@@ -297,8 +297,8 @@ Detailed technical documentation of the compiler internals:
 | **Reference lifetime** | `[&x]` captures that escape their scope produce dangling references. This is the programmer's responsibility, same as C++. |
 | **Self-capture lifetime** | Self-capturing closures use an unretained self-reference to avoid RC cycles. The closure is valid only while the owning variable is in scope. |
 | **Temporary closure leak** | Closures passed directly as function arguments without variable storage leak one refcount. |
-| **Closures with struct params** | Closures that take struct-typed parameters have a calling convention mismatch: the generated lambda expects the struct by value (`%Vec2`), but the fat-pointer call site passes a pointer (`ptr`). Workaround: pass struct fields as separate scalar arguments. |
-| **Closures with ref params** | Closures that take reference parameters (`int&`) have a similar mismatch: the caller passes the integer value instead of a pointer to the alloca. Workaround: use regular parameters and return the result, or use a non-closure function. |
+| ~~**Closures with struct params**~~ | **Fixed in V2.** `mapParamType()` consistently returns `ptr` for struct params across all call types. Verified by test_31. |
+| ~~**Closures with ref params**~~ | **Fixed in V2.** `FunctionTypeSymbol::ParameterInfo::isReference` carries ref info to all call sites. Verified by test_32. |
 | **Duplicate cross-module externs** | If two modules both declare the same `extern func` (e.g. `sin`), codegen creates duplicate LLVM declarations that get name-mangled (`sin.3`), causing linker errors. Workaround: declare externs in one module only, import them in others. |
 | **ABI** | Struct return by value relies on LLVM's default ABI lowering. Not tested with very large structs. |
 | **Error recovery** | Parser and sema generally stop at the first error. No multi-error recovery or cascading diagnostics. |
@@ -340,6 +340,9 @@ Detailed technical documentation of the compiler internals:
 | test_28_explicit_captures | `[]`, `[=]`, `[&]`, `[x]`, `[&x]`, `[=, &x]`, `[&, x]`, nested captures, capture-time vs call-time semantics | PASS |
 | test_29_ref_params | `func swap(int& a, int& b)`, `func increment(int& x)`, mixed ref/value params, `divmod` with output params | PASS |
 | test_30_capture_writeback | `[&counter]` increment, `[&sum]` accumulator, `[&min, &max]` tracker, `[=, &total]` mixed, `[&]` default ref, write-back through HOF | PASS |
+| test_31_closure_struct_params | Closures taking struct params (Vec2), direct call, through HOF, lambda literal, capturing closure | PASS |
+| test_32_closure_ref_params | Closures taking ref params (int&), direct call, through HOF, addStep, double, swap with multiple refs | PASS |
+| test_33_interface_params | Passing class pointers (Dog*, Cat*) as interface-typed params (Printable*), single and multi-param, interface var passthrough | PASS |
 
 ### Stress Tests (21/21 passing)
 
@@ -367,7 +370,7 @@ Detailed technical documentation of the compiler internals:
 | stress_21_cyclic_capture | 10k heap objects with closure fields, no explicit ctor/dtor (auto-generated) | PASS |
 | stress_22_destructor_reentrant | 10k destructor bodies calling closure fields before epilogue releases them | PASS |
 
-**All 51 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+**All 54 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
@@ -424,11 +427,11 @@ mingus/
 │   ├── mingus_ir_tool.exe                  # Copied here by CMake post-build
 │   └── archive/                            # Retired scratch/debug .mingus files
 ├── tests/
-│   ├── test_01_basics.mingus … test_30_capture_writeback.mingus  # 30 feature tests
+│   ├── test_01_basics.mingus … test_33_interface_params.mingus   # 33 feature tests
 │   ├── stress_01_closure_churn.mingus … stress_22_destructor_reentrant.mingus  # 21 stress tests
 │   ├── *.expected                          # Expected output for automated validation
 │   ├── MathLib.mingus                      # Copy for test_12 imports
-│   ├── run_all_tests.bat                   # Feature test runner (30 tests)
+│   ├── run_all_tests.bat                   # Feature test runner (33 tests)
 │   ├── run_stress_tests.bat                # Stress test runner (21 tests)
 │   └── mingus_ir_tool.exe                  # Copied here by CMake post-build
 └── CMakeLists.txt                          # Build system (LLVM, ANTLR4, MSVC)
@@ -437,6 +440,16 @@ mingus/
 ---
 
 ## Recently Completed
+
+### Calling Convention Bug Fixes (February 2026)
+
+Fixed all 3 HIGH-severity calling convention bugs that were documented in KNOWN_LIMITATIONS.md:
+
+1. **Closures with struct params** (Bug 1): V2's `mapParamType()` consistently returns `ptr` for struct params across all call sites (lambdas, HOFs, indirect calls). V1 used `mapType()` which returned the raw struct LLVM type, causing ABI mismatch. *Verified by test_31.*
+
+2. **Closures with ref params** (Bug 2): V2's `FunctionTypeSymbol::ParameterInfo::isReference` carries reference info into the function type itself. V1 only had `isReference` on `VariableSymbol`, invisible to lambda codegen. `ArgumentsNode::isReference` propagated to all call types. *Verified by test_32.*
+
+3. **Interface parameters** (Bug 3): Added class-to-interface fat pointer wrapping in arg building. When a function expects `Printable*` (fat pointer `{ptr, ptr}`) but receives `Dog*` (raw `ptr`), codegen now wraps via `emitWrapToInterfacePtr()`. Key fix: extract `FunctionSymbol` directly from `ident->resolvedSymbol` in the IdentifierExpression handler. *Verified by test_33.*
 
 ### C++ Capture Lists and Reference Parameters (February 2026)
 

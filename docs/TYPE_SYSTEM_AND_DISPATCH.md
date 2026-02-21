@@ -5,8 +5,8 @@ This document describes how Mingus types are represented in LLVM IR, how virtual
 **Source files:**
 - `src/mingus/codegen/IRGenerator.cpp` — Type mapping, dispatch codegen
 - `include/mingus/codegen/IRGenerator.h` — Caches and helpers
-- `include/mingus/ast/Type.h` — Type hierarchy
-- `include/mingus/sema/Symbol.h` — Symbol hierarchy
+- `include/mingus/TypeSymbol.h` — TypeSymbol hierarchy (V2: types ARE symbols)
+- `include/mingus/Symbols.h` — Symbol hierarchy (FunctionSymbol, ClassSymbol, etc.)
 
 ---
 
@@ -120,7 +120,7 @@ All function-typed values are fat pointers: `{ ptr, ptr }` = `{ fnPtr, envPtr }`
 
 ### Reference Types
 
-`T&` → `ptr` (transparent alias to caller's alloca). The `isReference` flag on `VariableSymbol` distinguishes from regular pointers at codegen time.
+`T&` → `ptr` (transparent alias to caller's alloca). The `isReference` flag on `VariableSymbol` distinguishes from regular pointers at codegen time. In V2, `FunctionTypeSymbol::ParameterInfo::isReference` also carries this flag into function types, enabling correct calling convention for closures with ref params.
 
 ### Complete Type Layout Summary
 
@@ -137,7 +137,7 @@ Class (no virtual):  %Name = type { inherited..., own... }
 Enum:                i32 (or underlying type)
 Tuple:               { T0, T1, ... }  (anonymous)
 
-FunctionType:        { ptr, ptr }  (fat pointer: fnPtr + envPtr)
+FunctionTypeSymbol:  { ptr, ptr }  (fat pointer: fnPtr + envPtr)
 InterfaceType*:      { ptr, ptr }  (fat pointer: objPtr + itablePtr)
 PointerType*:        ptr
 ReferenceType&:      ptr
@@ -390,9 +390,9 @@ Operator overload resolution happens in Pass 3 (TypeChecker). When a `BinaryExpr
 
 ## 6. Dispatch Limitations
 
-### Interface Parameters to Methods
+### ~~Interface Parameters to Methods~~ (Fixed)
 
-Passing an interface fat pointer as a function argument has a calling convention mismatch. The function type expects `ptr` but the caller has a `{ ptr, ptr }` fat pointer. This makes interface-typed parameters unreliable.
+~~Passing an interface fat pointer as a function argument had a calling convention mismatch.~~ **Fixed in V2**: Arg building now detects when expected param type is `PointerTypeSymbol(InterfaceSymbol)` and actual arg is `PointerTypeSymbol(ClassSymbol)`, wrapping via `emitWrapToInterfacePtr()`. Verified by test_33.
 
 ### Vtable Ordering
 

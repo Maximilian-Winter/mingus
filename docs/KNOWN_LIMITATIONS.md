@@ -37,7 +37,7 @@ Consolidated reference of all known limitations across grammar, semantic analysi
 
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
-| **VariableDeclaration cast quirk** | Local `var` declarations are wrapped in `ExpressionStatement` with `VariableDeclaration` cast to `ExpressionNode`. Downstream passes must special-case this. | Internal |
+| ~~**VariableDeclaration cast quirk**~~ | ~~Local `var` declarations are wrapped in `ExpressionStatement` with `VariableDeclaration` cast to `ExpressionNode`.~~ **Fixed in V2**: `VariableDeclarationExpression` is a proper expression node. | ~~Internal~~ Fixed |
 | **Char literal escapes** | ASTGenerator reads `text[1]` without processing escape sequences in char literals (e.g., `'\n'` may not work correctly). | Low |
 | **Separate identifier types** | Simple identifiers → `IdentifierExpression`, dotted names → `QualifiedNameExpression`. These are semantically related but separate AST types. | Internal |
 | **Match as ExpressionStatement** | `matchStatement` is represented as `ExpressionStatement{MatchExpression}`, requiring match to handle both expression and statement contexts. | Internal |
@@ -94,9 +94,9 @@ Consolidated reference of all known limitations across grammar, semantic analysi
 
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
-| **Closures with struct params** | Lambda function types are built from `FunctionType::parameterTypes` via `mapType()`, which returns the struct LLVM type (not pointer). Regular functions pass structs by pointer. This ABI mismatch means closures taking struct parameters crash at runtime. | High |
-| **Closures with reference params** | `isReference` is a `VariableSymbol` property, not part of `FunctionType`. Lambda codegen doesn't detect reference params, so `i32` is passed instead of `ptr`. | High |
-| **Interface parameters** | Passing an interface fat pointer (`{ ptr, ptr }`) as a function argument has a calling convention mismatch — the function signature expects `ptr` but receives a struct. | High |
+| ~~**Closures with struct params**~~ | ~~Lambda function types had ABI mismatch: `mapType()` returned struct LLVM type, not pointer.~~ **Fixed in V2**: `mapParamType()` always returns `ptr` for struct params, consistent across all call types. Verified by test_31. | ~~High~~ Fixed |
+| ~~**Closures with ref params**~~ | ~~`isReference` was not part of `FunctionType`, so lambda codegen couldn't detect ref params.~~ **Fixed in V2**: `FunctionTypeSymbol::ParameterInfo::isReference` carries ref info; `ArgumentsNode::isReference` propagated to all call types. Verified by test_32. | ~~High~~ Fixed |
+| ~~**Interface parameters**~~ | ~~Passing class pointer where interface expected had type mismatch.~~ **Fixed in V2**: Arg building extracts `FunctionSymbol` from `ident->resolvedSymbol`, checks expected param type, wraps class pointer to interface fat pointer via `emitWrapToInterfacePtr()`. Verified by test_33. | ~~High~~ Fixed |
 
 ### Other Codegen Issues
 

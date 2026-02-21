@@ -378,6 +378,8 @@ define void @swap(ptr %a.ref, ptr %b.ref) {
 
 No copy, no alloca in callee for reference params. Reads and writes go through to the caller's stack.
 
+**V2 improvement**: `FunctionTypeSymbol::ParameterInfo::isReference` carries the ref flag into function types themselves, so closures taking ref params work correctly. The `ArgumentsNode::isReference` vector is populated for ALL call types (direct, closure, HOF).
+
 ---
 
 ## 7. Constructor and Destructor Codegen
