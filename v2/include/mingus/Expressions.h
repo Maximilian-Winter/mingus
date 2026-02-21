@@ -93,6 +93,8 @@ public:
     // Enum access resolution (set by TypeChecker)
     bool isEnumAccess = false;
     int64_t resolvedEnumValue = 0;
+    std::string resolvedEnumStringValue;
+    bool isStringEnumAccess = false;
 
     // resolvedSymbol inherited from ExpressionBaseNode
 };

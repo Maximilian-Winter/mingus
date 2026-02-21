@@ -2059,7 +2059,13 @@ void IRGenerator::visit(IdentifierExpression& node) {
 void IRGenerator::visit(QualifiedNameExpression& node) {
     // Enum member access (resolved by TypeChecker)
     if (node.isEnumAccess) {
-        // Use enum's underlying type or default to i32
+        // String-backed enum → global string pointer
+        if (node.isStringEnumAccess) {
+            lastValue_ = builder_.CreateGlobalStringPtr(
+                node.resolvedEnumStringValue, "enum.str");
+            return;
+        }
+        // Integer-backed enum → constant int with underlying type
         llvm::Type* enumTy = llvm::Type::getInt32Ty(context_);
         if (node.resolvedSymbol) {
             if (auto* enumSym = node.resolvedSymbol->as<EnumSymbol>()) {

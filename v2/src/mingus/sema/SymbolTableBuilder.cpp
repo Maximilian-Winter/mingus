@@ -295,10 +295,12 @@ void SymbolTableBuilder::visit(EnumDeclaration& node) {
             info.hasExplicitValue = (member->value != nullptr);
 
             if (info.hasExplicitValue) {
-                // Evaluate constant integer literal
+                // Evaluate constant literal value
                 if (auto* intLit = member->value->as<IntegerLiteral>()) {
                     info.intValue = intLit->value;
                     nextValue = info.intValue + 1;
+                } else if (auto* strLit = member->value->as<StringLiteral>()) {
+                    info.stringValue = strLit->value;
                 } else {
                     info.intValue = nextValue++;
                 }
@@ -804,6 +806,14 @@ void SymbolTableBuilder::visit(MatchExpression& node) {
 
         if (arm.pattern) {
             arm.pattern->astScopeNode = armScope;
+
+            // Literal patterns: set scope on value expression (e.g., Enum.Member)
+            if (auto* litPat = arm.pattern->as<LiteralPattern>()) {
+                if (litPat->value) {
+                    litPat->value->astScopeNode = armScope;
+                }
+            }
+
             // Binding patterns create variables
             if (auto* idPat = arm.pattern->as<IdentifierPattern>()) {
                 auto bindSym = std::make_shared<VariableSymbol>(idPat->name, nullptr);

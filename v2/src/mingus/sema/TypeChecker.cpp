@@ -89,6 +89,17 @@ bool TypeChecker::checkAssignability(
 
 TypeSymbolPtr TypeChecker::getWiderType(TypeSymbol* a, TypeSymbol* b) {
     if (!a || !b) return symbolTable_.getErrorType();
+
+    // Unwrap enum types to underlying type for arithmetic
+    if (auto* ea = a->as<EnumSymbol>()) {
+        a = ea->underlyingType ? ea->underlyingType.get()
+            : symbolTable_.getIntType().get();
+    }
+    if (auto* eb = b->as<EnumSymbol>()) {
+        b = eb->underlyingType ? eb->underlyingType.get()
+            : symbolTable_.getIntType().get();
+    }
+
     if (a == b) return std::dynamic_pointer_cast<TypeSymbol>(
         symbolTable_.resolveType(a->getName()));
 
@@ -150,9 +161,14 @@ OverloadableOp TypeChecker::binaryOpToOverloadable(BinaryOp op) {
 
 bool TypeChecker::isLValue(ExpressionBaseNode* expr) {
     if (!expr) return false;
-    return expr->is<IdentifierExpression>()
-        || expr->is<MemberAccessExpression>()
-        || expr->is<IndexExpression>();
+    if (expr->is<IdentifierExpression>()) return true;
+    if (expr->is<MemberAccessExpression>()) return true;
+    if (expr->is<IndexExpression>()) return true;
+    // Dereference (*ptr) is an lvalue
+    if (auto* unary = expr->as<UnaryExpression>()) {
+        return unary->op == UnaryOp::Dereference;
+    }
+    return false;
 }
 
 // ============================================================================
@@ -552,11 +568,26 @@ void TypeChecker::visit(QualifiedNameExpression& node) {
                 // Store the EnumSymbol as resolved (codegen uses it + member name)
                 node.resolvedSymbol = std::dynamic_pointer_cast<Symbol>(
                     symbolTable_.resolveType(enumSym->getName()));
-                node.resolvedType = node.resolvedSymbol
-                    ? std::dynamic_pointer_cast<TypeSymbol>(node.resolvedSymbol)
-                    : symbolTable_.getIntType();
                 node.isEnumAccess = true;
-                node.resolvedEnumValue = member->intValue;
+
+                // Detect string-backed enum
+                bool isStringEnum = false;
+                if (enumSym->underlyingType) {
+                    if (auto* prim = enumSym->underlyingType->as<PrimitiveTypeSymbol>()) {
+                        isStringEnum = (prim->primitiveKind == PrimitiveKind::String);
+                    }
+                }
+
+                if (isStringEnum) {
+                    node.isStringEnumAccess = true;
+                    node.resolvedEnumStringValue = member->stringValue;
+                    node.resolvedType = symbolTable_.getStringType();
+                } else {
+                    node.resolvedEnumValue = member->intValue;
+                    node.resolvedType = node.resolvedSymbol
+                        ? std::dynamic_pointer_cast<TypeSymbol>(node.resolvedSymbol)
+                        : symbolTable_.getIntType();
+                }
                 return;
             }
             errors_.error("'" + node.parts[i] + "' not found in enum '"
@@ -610,8 +641,21 @@ void TypeChecker::visit(MemberAccessExpression& node) {
             node.isEnumAccess = true;
             node.resolvedEnumValue = member->intValue;
             node.resolvedEnumStringValue = member->stringValue;
-            node.resolvedType = std::dynamic_pointer_cast<TypeSymbol>(
-                symbolTable_.resolveType(enumSym->getName()));
+
+            // Detect string-backed enum
+            bool isStringEnum = false;
+            if (enumSym->underlyingType) {
+                if (auto* prim = enumSym->underlyingType->as<PrimitiveTypeSymbol>()) {
+                    isStringEnum = (prim->primitiveKind == PrimitiveKind::String);
+                }
+            }
+            if (isStringEnum) {
+                node.isStringEnumAccess = true;
+                node.resolvedType = symbolTable_.getStringType();
+            } else {
+                node.resolvedType = std::dynamic_pointer_cast<TypeSymbol>(
+                    symbolTable_.resolveType(enumSym->getName()));
+            }
             return;
         }
     }
@@ -686,10 +730,27 @@ void TypeChecker::visit(BinaryExpression& node) {
                 node.resolvedType = symbolTable_.getStringType();
                 return;
             }
+            // Pointer arithmetic: ptr + int → ptr, int + ptr → ptr
+            if (leftType->is<PointerTypeSymbol>()) {
+                node.resolvedType = leftType;
+                return;
+            }
+            if (rightType->is<PointerTypeSymbol>()) {
+                node.resolvedType = rightType;
+                return;
+            }
             node.resolvedType = getWiderType(leftType.get(), rightType.get());
             return;
         }
-        case BinaryOp::Sub:
+        case BinaryOp::Sub: {
+            // Pointer arithmetic: ptr - int → ptr
+            if (leftType->is<PointerTypeSymbol>()) {
+                node.resolvedType = leftType;
+                return;
+            }
+            node.resolvedType = getWiderType(leftType.get(), rightType.get());
+            return;
+        }
         case BinaryOp::Mul:
         case BinaryOp::Div:
         case BinaryOp::Mod:
@@ -912,6 +973,27 @@ void TypeChecker::visit(CallExpression& node) {
         }
     }
 
+    // String builtin method call
+    if (!funcType && node.callee->is<MemberAccessExpression>()) {
+        auto* memberAccess = node.callee->as<MemberAccessExpression>();
+        if (memberAccess->isStringBuiltinMethod) {
+            // Resolve return type based on method name
+            if (memberAccess->memberName == "length" ||
+                memberAccess->memberName == "charAt" ||
+                memberAccess->memberName == "indexOf" ||
+                memberAccess->memberName == "toInt") {
+                node.resolvedType = symbolTable_.getIntType();
+            } else if (memberAccess->memberName == "toDouble") {
+                node.resolvedType = symbolTable_.getDoubleType();
+            } else if (memberAccess->memberName == "substring") {
+                node.resolvedType = symbolTable_.getStringType();
+            } else {
+                node.resolvedType = symbolTable_.getIntType();
+            }
+            return;
+        }
+    }
+
     // Closure/function variable call (callee type is FunctionTypeSymbol)
     if (!funcType) {
         funcType = calleeType->as<FunctionTypeSymbol>();
@@ -925,8 +1007,10 @@ void TypeChecker::visit(CallExpression& node) {
             funcTypeHolder = classSym->constructor->buildFunctionType();
             if (funcTypeHolder) funcType = funcTypeHolder.get();
         }
-        // Result of constructor call is a pointer to the class
-        node.resolvedType = symbolTable_.getPointerType(calleeType);
+        // Result of constructor call is the class type (stack-allocated value)
+        // Only 'new' expressions produce pointer types
+        node.resolvedType = std::dynamic_pointer_cast<TypeSymbol>(
+            symbolTable_.resolveType(classSym->getName()));
         node.resolvedCallee = funcSym;
 
         // Set isReference on arguments
@@ -1046,8 +1130,13 @@ void TypeChecker::visit(MatchExpression& node) {
 
     TypeSymbolPtr resultType = nullptr;
     for (auto& arm : node.arms) {
-        // Pattern bindings: set type from subject
+        // Resolve pattern values and bindings
         if (arm.pattern) {
+            // Literal patterns: type-check the value expression (e.g., Enum.Member)
+            if (auto* litPat = arm.pattern->as<LiteralPattern>()) {
+                if (litPat->value) litPat->value->accept(*this);
+            }
+
             if (auto* idPat = arm.pattern->as<IdentifierPattern>()) {
                 if (idPat->resolvedSymbol && node.subject && node.subject->resolvedType) {
                     idPat->resolvedSymbol->setType(node.subject->resolvedType);

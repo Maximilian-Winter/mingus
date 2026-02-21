@@ -250,12 +250,18 @@ bool SymbolTable::isCompatible(TypeSymbol* from, TypeSymbol* to) const {
         }
     }
 
-    // 5. Enum ↔ underlying (bidirectional)
+    // 5. Enum ↔ underlying (bidirectional, with widening)
     if (auto* fromEnum = from->as<EnumSymbol>()) {
-        if (fromEnum->underlyingType.get() == to) return true;
+        auto* underlying = fromEnum->underlyingType
+            ? fromEnum->underlyingType.get() : getIntType().get();
+        if (underlying == to) return true;
+        if (isCompatible(underlying, to)) return true;
     }
     if (auto* toEnum = to->as<EnumSymbol>()) {
-        if (toEnum->underlyingType.get() == from) return true;
+        auto* underlying = toEnum->underlyingType
+            ? toEnum->underlyingType.get() : getIntType().get();
+        if (underlying == from) return true;
+        if (isCompatible(from, underlying)) return true;
     }
 
     // 6. Interface upcast: Dog* → Drawable* if Dog implements Drawable
