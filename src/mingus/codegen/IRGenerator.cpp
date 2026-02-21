@@ -1,9 +1,15 @@
 //================================================================================
-// MINGUS v1 - LLVM IR Generator Implementation
+// MINGUS V2 - LLVM IR Generator Implementation
+//
+// Ported from V1 (~4400 lines) with key V2 improvements:
+//   - Unified TypeSymbol* for type mapping (no separate Type hierarchy)
+//   - Pre-resolved symbols on AST nodes (no scope navigation)
+//   - ParameterNode::resolvedSymbol eliminates scanForParamSymbols
+//   - mapParamType() handles struct/ref/interface params uniformly
+//   - ArgumentsNode::isReference[] for per-arg ref param tracking
 //================================================================================
 
 #include "mingus/codegen/IRGenerator.h"
-#include "mingus/sema/Scope.h"
 
 #pragma warning(push, 0)
 #include <llvm/IR/LLVMContext.h>
@@ -12,6 +18,7 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/TargetParser/Triple.h>
 #include <llvm/Support/raw_ostream.h>
 #pragma warning(pop)
 
@@ -22,80 +29,81 @@
 namespace mingus {
 namespace codegen {
 
-using namespace mingus::ast;
-using namespace mingus::sema;
-
 //================================================================================
-// Local helpers
+// V2 type query helpers (unified TypeSymbol hierarchy)
 //================================================================================
-static bool isIntegerKind(const Type* t) {
-    if (auto* p = t->as<PrimitiveType>()) {
-        return p->kind == PrimitiveType::PrimitiveKind::Int ||
-               p->kind == PrimitiveType::PrimitiveKind::Byte ||
-               p->kind == PrimitiveType::PrimitiveKind::Char;
+bool IRGenerator::isIntegerKind(TypeSymbol* t) {
+    if (!t) return false;
+    if (auto* p = t->as<PrimitiveTypeSymbol>()) {
+        return p->primitiveKind == PrimitiveKind::Int ||
+               p->primitiveKind == PrimitiveKind::Byte ||
+               p->primitiveKind == PrimitiveKind::Char;
     }
-    if (t->is<UserType>() && t->as<UserType>()->underlyingKind == Type::Kind::Enum) {
-        auto* enumSym = static_cast<EnumSymbol*>(t->as<UserType>()->symbol);
-        if (enumSym && enumSym->underlyingType)
-            return isIntegerKind(enumSym->underlyingType.get());
-        return true;  // default (int) is integer
-    }
-    if (t->is<EnumType>()) return true;
-    return false;
-}
-
-static bool isFloatingKind(const Type* t) {
-    if (auto* p = t->as<PrimitiveType>()) {
-        return p->kind == PrimitiveType::PrimitiveKind::Double ||
-               p->kind == PrimitiveType::PrimitiveKind::Float;
+    if (auto* e = t->as<EnumSymbol>()) {
+        if (e->underlyingType) return isIntegerKind(e->underlyingType.get());
+        return true;  // default int
     }
     return false;
 }
 
-static bool isBoolKind(const Type* t) {
-    if (auto* p = t->as<PrimitiveType>()) {
-        return p->kind == PrimitiveType::PrimitiveKind::Bool;
+bool IRGenerator::isFloatingKind(TypeSymbol* t) {
+    if (!t) return false;
+    if (auto* p = t->as<PrimitiveTypeSymbol>()) {
+        return p->primitiveKind == PrimitiveKind::Double ||
+               p->primitiveKind == PrimitiveKind::Float;
     }
     return false;
 }
 
-static bool isStringKind(const Type* t) {
-    return t->is<PrimitiveType>() &&
-           t->as<PrimitiveType>()->kind == PrimitiveType::PrimitiveKind::String;
-}
-
-static bool isPointerKind(const Type* t) {
-    return t->is<PointerType>() ||
-           (t->is<PrimitiveType>() &&
-            t->as<PrimitiveType>()->kind == PrimitiveType::PrimitiveKind::String);
-}
-
-static bool isUserStructKind(const Type* t) {
-    if (auto* u = t->as<UserType>()) {
-        return u->underlyingKind == Type::Kind::Struct ||
-               u->underlyingKind == Type::Kind::Class;
+bool IRGenerator::isBoolKind(TypeSymbol* t) {
+    if (!t) return false;
+    if (auto* p = t->as<PrimitiveTypeSymbol>()) {
+        return p->primitiveKind == PrimitiveKind::Bool;
     }
     return false;
+}
+
+bool IRGenerator::isStringKind(TypeSymbol* t) {
+    if (!t) return false;
+    if (auto* p = t->as<PrimitiveTypeSymbol>()) {
+        return p->primitiveKind == PrimitiveKind::String;
+    }
+    return false;
+}
+
+bool IRGenerator::isPointerKind(TypeSymbol* t) {
+    if (!t) return false;
+    if (t->is<PointerTypeSymbol>()) return true;
+    // String is a pointer (char*)
+    if (auto* p = t->as<PrimitiveTypeSymbol>()) {
+        return p->primitiveKind == PrimitiveKind::String;
+    }
+    return false;
+}
+
+bool IRGenerator::isUserStructKind(TypeSymbol* t) {
+    if (!t) return false;
+    return t->is<StructSymbol>() || t->is<ClassSymbol>();
+}
+
+bool IRGenerator::isEnumKind(TypeSymbol* t) {
+    if (!t) return false;
+    return t->is<EnumSymbol>();
+}
+
+bool IRGenerator::isFunctionKind(TypeSymbol* t) {
+    if (!t) return false;
+    return t->is<FunctionTypeSymbol>();
 }
 
 //================================================================================
 // Constructor
 //================================================================================
-IRGenerator::IRGenerator(SymbolTable& symbolTable, TypeRegistry& registry,
-                         bool emitDebugInfo, const std::string& sourceFile)
+IRGenerator::IRGenerator(SymbolTable& symbolTable,
+                         const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo)
     : builder_(context_)
     , symbolTable_(symbolTable)
-    , registry_(registry)
-    , currentFunction_(nullptr)
-    , currentThisPtr_(nullptr)
-    , currentType_(nullptr)
-    , lastValue_(nullptr)
-    , loopExitBlock_(nullptr)
-    , loopIterBlock_(nullptr)
-    , emitDebugInfo_(emitDebugInfo)
-    , sourceFile_(sourceFile)
-    , lambdaCounter_(0)
-    , currentScope_(nullptr)
+    , raiiInfo_(raiiInfo)
 {}
 
 //================================================================================
@@ -103,157 +111,25 @@ IRGenerator::IRGenerator(SymbolTable& symbolTable, TypeRegistry& registry,
 //================================================================================
 std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     module_ = std::make_unique<llvm::Module>("mingus_module", context_);
-
-    // Initialize debug info if requested
-    if (emitDebugInfo_) {
-        diBuilder_ = std::make_unique<llvm::DIBuilder>(*module_);
-
-        // Extract directory and filename from source path
-        std::string dir = ".";
-        std::string file = sourceFile_;
-        auto lastSlash = sourceFile_.find_last_of("/\\");
-        if (lastSlash != std::string::npos) {
-            dir = sourceFile_.substr(0, lastSlash);
-            file = sourceFile_.substr(lastSlash + 1);
-        }
-
-        diFile_ = diBuilder_->createFile(file, dir);
-        diCompileUnit_ = diBuilder_->createCompileUnit(
-            llvm::dwarf::DW_LANG_C,  // Use C as closest language tag
-            diFile_,
-            "Mingus Compiler 1.0",    // Producer
-            false,                     // isOptimized (set false for now)
-            "",                        // Flags
-            0                          // Runtime version
-        );
-
-        // Add module flags for DWARF
-        module_->addModuleFlag(llvm::Module::Warning, "Debug Info Version",
-                               llvm::DEBUG_METADATA_VERSION);
-        // On Windows, use CodeView format
-        module_->addModuleFlag(llvm::Module::Warning, "CodeView", 1);
-    }
-
-    currentScope_ = symbolTable_.getGlobalScope();
+    module_->setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 
     // Phase A: Forward declarations
-    declareStructTypes();
-    declareExternFunctions();
-    declareFunctions();
-    declareVtables();
-    declareItables();
+    declareStructTypes(program);
+    declareExternFunctions(program);
+    declareFunctions(program);
+    declareVtables(program);
+    declareItables(program);
 
     // Phase B: Function bodies (visitor-based)
     program.accept(*this);
-
-    // Finalize debug info
-    if (emitDebugInfo_ && diBuilder_) {
-        diBuilder_->finalize();
-    }
 
     return std::move(module_);
 }
 
 //================================================================================
-// Debug information helpers
+// Type Mapping — unified TypeSymbol* -> llvm::Type*
 //================================================================================
-llvm::DIType* IRGenerator::mapDIType(const Type* type) {
-    if (!type || !emitDebugInfo_ || !diBuilder_) return nullptr;
-
-    auto it = diTypeCache_.find(type);
-    if (it != diTypeCache_.end()) return it->second;
-
-    llvm::DIType* result = nullptr;
-
-    if (auto* prim = type->as<PrimitiveType>()) {
-        switch (prim->kind) {
-            case PrimitiveType::PrimitiveKind::Int:
-                result = diBuilder_->createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
-                break;
-            case PrimitiveType::PrimitiveKind::Double:
-                result = diBuilder_->createBasicType("double", 64, llvm::dwarf::DW_ATE_float);
-                break;
-            case PrimitiveType::PrimitiveKind::Bool:
-                result = diBuilder_->createBasicType("bool", 8, llvm::dwarf::DW_ATE_boolean);
-                break;
-            case PrimitiveType::PrimitiveKind::Char:
-                result = diBuilder_->createBasicType("char", 8, llvm::dwarf::DW_ATE_unsigned_char);
-                break;
-            case PrimitiveType::PrimitiveKind::String:
-                result = diBuilder_->createPointerType(
-                    diBuilder_->createBasicType("char", 8, llvm::dwarf::DW_ATE_unsigned_char), 64);
-                break;
-            case PrimitiveType::PrimitiveKind::Void:
-                result = nullptr;  // void has no DIType
-                break;
-            default:
-                result = diBuilder_->createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
-                break;
-        }
-    } else if (type->is<PointerType>()) {
-        result = diBuilder_->createPointerType(nullptr, 64);
-    } else if (type->is<FunctionType>()) {
-        // Fat pointer { ptr, ptr } — represent as a 128-bit struct
-        result = diBuilder_->createBasicType("closure", 128, llvm::dwarf::DW_ATE_unsigned);
-    } else {
-        // Default: opaque type
-        result = diBuilder_->createBasicType("opaque", 64, llvm::dwarf::DW_ATE_unsigned);
-    }
-
-    if (result) diTypeCache_[type] = result;
-    return result;
-}
-
-void IRGenerator::emitDebugLocation(const SourceLocation& loc) {
-    if (!emitDebugInfo_ || !diFile_) return;
-    if (loc.line == 0) return;
-
-    // Get the current function's subprogram for the scope
-    llvm::DIScope* scope = nullptr;
-    if (currentFunction_ && currentFunction_->getSubprogram()) {
-        scope = currentFunction_->getSubprogram();
-    } else {
-        scope = diFile_;
-    }
-
-    builder_.SetCurrentDebugLocation(
-        llvm::DILocation::get(context_, loc.line, loc.column, scope));
-}
-
-void IRGenerator::clearDebugLocation() {
-    if (!emitDebugInfo_) return;
-    builder_.SetCurrentDebugLocation(llvm::DebugLoc());
-}
-
-//================================================================================
-// Scope navigation (same pattern as sema passes)
-//================================================================================
-void IRGenerator::enterNamedScope(Scope* scope) {
-    childIndexStack_.push_back(0);
-    currentScope_ = scope;
-}
-
-void IRGenerator::leaveNamedScope() {
-    currentScope_ = currentScope_->parent;
-    childIndexStack_.pop_back();
-}
-
-void IRGenerator::enterNextChildScope() {
-    size_t idx = childIndexStack_.back();
-    childIndexStack_.back() = idx + 1;
-    childIndexStack_.push_back(0);
-    currentScope_ = currentScope_->children[idx].get();
-}
-
-void IRGenerator::leaveChildScope() {
-    currentScope_ = currentScope_->parent;
-    childIndexStack_.pop_back();
-}
-
-//================================================================================
-// Type Mapping
-//================================================================================
-llvm::Type* IRGenerator::mapType(const TypePtr<Type>& type) {
+llvm::Type* IRGenerator::mapType(const TypeSymbolPtr& type) {
     if (!type) return llvm::Type::getVoidTy(context_);
     return mapType(type.get());
 }
@@ -263,120 +139,105 @@ llvm::StructType* IRGenerator::getFatPtrType() {
     return llvm::StructType::get(context_, { ptrTy, ptrTy });
 }
 
-llvm::Type* IRGenerator::mapType(const Type* type) {
+llvm::Type* IRGenerator::mapType(TypeSymbol* type) {
     if (!type) return llvm::Type::getVoidTy(context_);
 
-    // Check cache
-    auto it = typeCache_.find(type);
-    if (it != typeCache_.end()) return it->second;
-
-    llvm::Type* result = nullptr;
-
-    if (auto* prim = type->as<PrimitiveType>()) {
-        switch (prim->kind) {
-            case PrimitiveType::PrimitiveKind::Int:
-                result = llvm::Type::getInt32Ty(context_);
-                break;
-            case PrimitiveType::PrimitiveKind::Double:
-                result = llvm::Type::getDoubleTy(context_);
-                break;
-            case PrimitiveType::PrimitiveKind::Float:
-                result = llvm::Type::getFloatTy(context_);
-                break;
-            case PrimitiveType::PrimitiveKind::Byte:
-                result = llvm::Type::getInt8Ty(context_);
-                break;
-            case PrimitiveType::PrimitiveKind::Char:
-                result = llvm::Type::getInt8Ty(context_);
-                break;
-            case PrimitiveType::PrimitiveKind::Bool:
-                result = llvm::Type::getInt1Ty(context_);
-                break;
-            case PrimitiveType::PrimitiveKind::Void:
-                result = llvm::Type::getVoidTy(context_);
-                break;
-            case PrimitiveType::PrimitiveKind::String:
-                result = llvm::PointerType::getUnqual(context_);
-                break;
+    // Primitives
+    if (auto* prim = type->as<PrimitiveTypeSymbol>()) {
+        switch (prim->primitiveKind) {
+            case PrimitiveKind::Int:    return llvm::Type::getInt32Ty(context_);
+            case PrimitiveKind::Double: return llvm::Type::getDoubleTy(context_);
+            case PrimitiveKind::Float:  return llvm::Type::getFloatTy(context_);
+            case PrimitiveKind::Byte:   return llvm::Type::getInt8Ty(context_);
+            case PrimitiveKind::Char:   return llvm::Type::getInt8Ty(context_);
+            case PrimitiveKind::Bool:   return llvm::Type::getInt1Ty(context_);
+            case PrimitiveKind::Void:   return llvm::Type::getVoidTy(context_);
+            case PrimitiveKind::String: return llvm::PointerType::getUnqual(context_);
         }
     }
-    else if (auto* ptrType = type->as<PointerType>()) {
-        // Interface pointer → fat pointer { ptr, ptr }
-        if (auto* inner = ptrType->baseType->as<UserType>()) {
-            if (inner->underlyingKind == Type::Kind::Interface) {
-                result = getFatPtrType();
-            } else {
-                result = llvm::PointerType::getUnqual(context_);
-            }
-        } else {
-            result = llvm::PointerType::getUnqual(context_);
+
+    // Pointer types
+    if (auto* ptrType = type->as<PointerTypeSymbol>()) {
+        // Interface pointer -> fat pointer { ptr, ptr }
+        if (ptrType->baseType && ptrType->baseType->is<InterfaceSymbol>()) {
+            return getFatPtrType();
         }
+        return llvm::PointerType::getUnqual(context_);
     }
-    else if (auto* arr = type->as<ArrayType>()) {
+
+    // Array types
+    if (auto* arr = type->as<ArrayTypeSymbol>()) {
         llvm::Type* elemTy = mapType(arr->elementType);
-        if (arr->size > 0) {
-            result = llvm::ArrayType::get(elemTy, arr->size);
+        if (arr->arraySize > 0) {
+            return llvm::ArrayType::get(elemTy, arr->arraySize);
         } else {
-            result = llvm::PointerType::getUnqual(context_);
+            return llvm::PointerType::getUnqual(context_);
         }
     }
-    else if (auto* tup = type->as<TupleType>()) {
+
+    // Tuple types
+    if (auto* tup = type->as<TupleTypeSymbol>()) {
         std::vector<llvm::Type*> elements;
         for (const auto& et : tup->elementTypes) {
             elements.push_back(mapType(et));
         }
-        result = llvm::StructType::get(context_, elements);
-    }
-    else if (auto* user = type->as<UserType>()) {
-        if (user->underlyingKind == Type::Kind::Enum) {
-            auto* enumSym = static_cast<EnumSymbol*>(user->symbol);
-            if (enumSym && enumSym->underlyingType) {
-                result = mapType(enumSym->underlyingType);
-            } else {
-                result = llvm::Type::getInt32Ty(context_);
-            }
-        } else {
-            auto sit = structTypeCache_.find(type);
-            if (sit != structTypeCache_.end()) {
-                result = sit->second;
-            } else {
-                result = llvm::StructType::create(context_, user->name);
-                structTypeCache_[type] = llvm::cast<llvm::StructType>(result);
-            }
-        }
-    }
-    else if (auto* func = type->as<FunctionType>()) {
-        // Function-typed values are fat pointers: { fnPtr, envPtr }
-        result = getFatPtrType();
-    }
-    else if (auto* ref = type->as<ReferenceType>()) {
-        // Reference types map to ptr (same as pointer) in LLVM IR
-        result = llvm::PointerType::getUnqual(context_);
-    }
-    else if (type->is<ErrorType>() || type->is<NullType>()) {
-        result = llvm::PointerType::getUnqual(context_);
+        return llvm::StructType::get(context_, elements);
     }
 
-    if (!result) {
-        result = llvm::Type::getInt32Ty(context_);
+    // Enum types -> underlying type
+    if (auto* enumSym = type->as<EnumSymbol>()) {
+        if (enumSym->underlyingType) return mapType(enumSym->underlyingType);
+        return llvm::Type::getInt32Ty(context_);
     }
 
-    typeCache_[type] = result;
-    return result;
+    // Struct/Class types -> cached LLVM StructType
+    if (type->is<StructSymbol>() || type->is<ClassSymbol>()) {
+        auto sit = structTypeCache_.find(type);
+        if (sit != structTypeCache_.end()) return sit->second;
+        // Create opaque if not found (shouldn't happen after Phase A)
+        auto* structTy = llvm::StructType::create(context_, type->getName());
+        structTypeCache_[type] = structTy;
+        return structTy;
+    }
+
+    // Function types -> fat pointer { fnPtr, envPtr }
+    if (type->is<FunctionTypeSymbol>()) {
+        return getFatPtrType();
+    }
+
+    // Reference types -> ptr
+    if (type->is<ReferenceTypeSymbol>()) {
+        return llvm::PointerType::getUnqual(context_);
+    }
+
+    // Error/Null types -> ptr
+    if (type->is<ErrorTypeSymbol>() || type->is<NullTypeSymbol>()) {
+        return llvm::PointerType::getUnqual(context_);
+    }
+
+    // Interface types -> fat pointer
+    if (type->is<InterfaceSymbol>()) {
+        return getFatPtrType();
+    }
+
+    // Fallback
+    return llvm::Type::getInt32Ty(context_);
 }
 
-llvm::StructType* IRGenerator::getStructType(const Type* type) {
+// V2 improvement: unified param type mapping (fixes 3 HIGH bugs)
+llvm::Type* IRGenerator::mapParamType(TypeSymbol* type, bool isReference) {
+    if (isReference) return llvm::PointerType::getUnqual(context_);
+    if (!type) return llvm::Type::getInt32Ty(context_);
+    if (type->is<ClassSymbol>() || type->is<StructSymbol>()) {
+        return llvm::PointerType::getUnqual(context_);
+    }
+    if (type->is<InterfaceSymbol>()) return getFatPtrType();
+    return mapType(type);
+}
+
+llvm::StructType* IRGenerator::getStructType(TypeSymbol* type) {
     auto it = structTypeCache_.find(type);
     if (it != structTypeCache_.end()) return it->second;
-
-    if (auto* user = type->as<UserType>()) {
-        for (auto& [t, st] : structTypeCache_) {
-            if (auto* u = t->as<UserType>()) {
-                if (u->name == user->name) return st;
-            }
-        }
-    }
-
     return nullptr;
 }
 
@@ -385,18 +246,19 @@ llvm::StructType* IRGenerator::getStructType(const Type* type) {
 //================================================================================
 std::string IRGenerator::opToString(OverloadableOp op) {
     switch (op) {
-        case OverloadableOp::Plus:         return "add";
-        case OverloadableOp::Minus:        return "sub";
-        case OverloadableOp::Star:         return "mul";
-        case OverloadableOp::Slash:        return "div";
-        case OverloadableOp::Modulo:       return "mod";
-        case OverloadableOp::Index:        return "index";
-        case OverloadableOp::Equals:       return "eq";
-        case OverloadableOp::NotEquals:    return "ne";
-        case OverloadableOp::Less:         return "lt";
-        case OverloadableOp::Greater:      return "gt";
-        case OverloadableOp::LessEqual:    return "le";
-        case OverloadableOp::GreaterEqual: return "ge";
+        case OverloadableOp::Add:       return "add";
+        case OverloadableOp::Sub:       return "sub";
+        case OverloadableOp::Mul:       return "mul";
+        case OverloadableOp::Div:       return "div";
+        case OverloadableOp::Mod:       return "mod";
+        case OverloadableOp::Index:     return "index";
+        case OverloadableOp::Equal:     return "eq";
+        case OverloadableOp::NotEqual:  return "ne";
+        case OverloadableOp::Less:      return "lt";
+        case OverloadableOp::Greater:   return "gt";
+        case OverloadableOp::LessEq:    return "le";
+        case OverloadableOp::GreaterEq: return "ge";
+        case OverloadableOp::Negate:    return "neg";
     }
     return "unknown";
 }
@@ -404,38 +266,50 @@ std::string IRGenerator::opToString(OverloadableOp op) {
 std::string IRGenerator::mangleName(Symbol* sym) {
     if (!sym) return "__unknown__";
 
+    // Extern functions use their own name (no mangling)
     if (auto* func = sym->as<FunctionSymbol>()) {
-        if (func->isExtern) return func->name;
+        if (func->isExtern) return func->getName();
     }
 
+    // Operator symbols: TypeName_operator_op
     if (auto* opSym = sym->as<OperatorSymbol>()) {
-        auto* ownerType = opSym->ownerType;
-        if (ownerType) {
-            return ownerType->name + "_operator_" + opToString(opSym->op);
+        if (opSym->ownerType) {
+            return opSym->ownerType->getName() + "_operator_" + opToString(opSym->op);
         }
         return "operator_" + opToString(opSym->op);
     }
 
-    if (sym->kind == SymbolKind::Constructor) {
-        if (sym->owner) return sym->owner->name + "_constructor";
-        return "constructor";
+    // Constructor: ClassName_constructor
+    if (sym->is<ConstructorSymbol>()) {
+        auto scope = sym->getSymbolScope();
+        if (scope) {
+            // Walk up to find the class
+            auto parentSym = scope->resolve(sym->getName());
+            // Use the scope name
+        }
+        // Use qualified name from symbol
+        if (auto* func = sym->as<FunctionSymbol>()) {
+            return func->getQualifiedName();
+        }
     }
 
-    if (sym->kind == SymbolKind::Destructor) {
-        if (sym->owner) return sym->owner->name + "_destructor";
-        return "destructor";
+    // Destructor: ClassName_destructor
+    if (sym->is<DestructorSymbol>()) {
+        if (auto* func = sym->as<FunctionSymbol>()) {
+            return func->getQualifiedName();
+        }
     }
 
+    // Method: ClassName_methodName
     if (auto* func = sym->as<FunctionSymbol>()) {
-        if (func->isMethod && sym->owner) {
-            return sym->owner->name + "_" + sym->name;
+        if (func->isMethod) {
+            return func->getQualifiedName();
         }
-        if (sym->owner && sym->owner->is<ModuleSymbol>()) {
-            return sym->owner->name + "_" + sym->name;
-        }
+        // Module-level function: ModuleName_funcName
+        return func->getQualifiedName();
     }
 
-    return sym->name;
+    return sym->getName();
 }
 
 //================================================================================
@@ -452,99 +326,86 @@ llvm::AllocaInst* IRGenerator::createEntryBlockAlloca(
 // Forward Declarations — Phase A
 //================================================================================
 
-void IRGenerator::declareStructTypes() {
-    auto* globalScope = symbolTable_.getGlobalScope();
-
-    for (auto& [name, sym] : globalScope->getSymbolMap()) {
-        auto* moduleSym = sym->as<ModuleSymbol>();
-        if (!moduleSym || !moduleSym->moduleScope) continue;
-
-        for (auto& [declName, declSym] : moduleSym->moduleScope->getSymbolMap()) {
-            if (auto* structSym = declSym->as<StructSymbol>()) {
+void IRGenerator::declareStructTypes(ProgramNode& program) {
+    // First pass: create opaque struct types
+    for (auto& mod : program.modules) {
+        if (!mod->resolvedModule) continue;
+        auto allSyms = mod->resolvedModule->getAllSymbols();
+        for (auto& sym : allSyms) {
+            if (auto* structSym = sym->as<StructSymbol>()) {
                 declareStructTypeForSymbol(structSym);
-            } else if (auto* classSym = declSym->as<ClassSymbol>()) {
+            } else if (auto* classSym = sym->as<ClassSymbol>()) {
                 declareClassTypeForSymbol(classSym);
             }
         }
     }
 
-    for (auto& [type, structTy] : structTypeCache_) {
-        if (structTy->isOpaque()) {
-            auto* user = type->as<UserType>();
-            if (!user) continue;
+    // Second pass: set bodies
+    for (auto& [typeSym, structTy] : structTypeCache_) {
+        if (!structTy->isOpaque()) continue;
 
-            auto* typeSym = static_cast<TypeSymbol*>(user->symbol);
-            std::vector<llvm::Type*> fieldTypes;
+        std::vector<llvm::Type*> fieldTypes;
 
-            if (auto* ss = typeSym->as<StructSymbol>()) {
-                for (auto* field : ss->fields) {
-                    fieldTypes.push_back(mapType(field->type));
-                }
-            } else if (auto* cs = typeSym->as<ClassSymbol>()) {
-                // Prepend vtable pointer if class has virtual methods
-                if (cs->vtableSize > 0) {
-                    fieldTypes.push_back(llvm::PointerType::getUnqual(context_));
-                }
-                // Use allFields (inherited + own) for layout
-                for (auto* field : cs->allFields) {
-                    fieldTypes.push_back(mapType(field->type));
-                }
+        if (auto* ss = typeSym->as<StructSymbol>()) {
+            for (auto& field : ss->fields) {
+                fieldTypes.push_back(mapType(field->getType()));
             }
-
-            if (!fieldTypes.empty()) {
-                structTy->setBody(fieldTypes);
-            } else {
-                structTy->setBody(llvm::Type::getInt8Ty(context_));
+        } else if (auto* cs = typeSym->as<ClassSymbol>()) {
+            // Prepend vtable pointer if class has virtual methods
+            if (cs->hasVtable()) {
+                fieldTypes.push_back(llvm::PointerType::getUnqual(context_));
             }
+            // Use allFields (inherited + own) for layout
+            for (auto& field : cs->allFields) {
+                fieldTypes.push_back(mapType(field->getType()));
+            }
+        }
+
+        if (!fieldTypes.empty()) {
+            structTy->setBody(fieldTypes);
+        } else {
+            structTy->setBody(llvm::Type::getInt8Ty(context_));
         }
     }
 }
 
 void IRGenerator::declareStructTypeForSymbol(StructSymbol* sym) {
-    auto userType = registry_.getUserType(sym->name, Type::Kind::Struct, sym);
-    auto it = structTypeCache_.find(userType.get());
+    auto it = structTypeCache_.find(sym);
     if (it != structTypeCache_.end()) return;
 
-    auto* structTy = llvm::StructType::create(context_, sym->name);
-    structTypeCache_[userType.get()] = structTy;
-    typeCache_[userType.get()] = structTy;
+    auto* structTy = llvm::StructType::create(context_, sym->getName());
+    structTypeCache_[sym] = structTy;
 }
 
 void IRGenerator::declareClassTypeForSymbol(ClassSymbol* sym) {
-    auto userType = registry_.getUserType(sym->name, Type::Kind::Class, sym);
-    auto it = structTypeCache_.find(userType.get());
+    auto it = structTypeCache_.find(sym);
     if (it != structTypeCache_.end()) return;
 
-    // Also ensure base class struct types are declared first
-    if (sym->baseClass) {
-        declareClassTypeForSymbol(sym->baseClass);
+    // Ensure base class is declared first
+    if (sym->resolvedBaseClass) {
+        declareClassTypeForSymbol(sym->resolvedBaseClass);
     }
 
-    auto* structTy = llvm::StructType::create(context_, sym->name);
-    structTypeCache_[userType.get()] = structTy;
-    typeCache_[userType.get()] = structTy;
+    auto* structTy = llvm::StructType::create(context_, sym->getName());
+    structTypeCache_[sym] = structTy;
 }
 
-void IRGenerator::declareVtables() {
-    auto* globalScope = symbolTable_.getGlobalScope();
+void IRGenerator::declareVtables(ProgramNode& program) {
+    for (auto& mod : program.modules) {
+        if (!mod->resolvedModule) continue;
+        auto allSyms = mod->resolvedModule->getAllSymbols();
+        for (auto& sym : allSyms) {
+            auto* classSym = sym->as<ClassSymbol>();
+            if (!classSym || !classSym->hasVtable()) continue;
+            if (classSym->isAbstract) continue;
 
-    for (auto& [name, sym] : globalScope->getSymbolMap()) {
-        auto* moduleSym = sym->as<ModuleSymbol>();
-        if (!moduleSym || !moduleSym->moduleScope) continue;
-
-        for (auto& [declName, declSym] : moduleSym->moduleScope->getSymbolMap()) {
-            auto* classSym = declSym->as<ClassSymbol>();
-            if (!classSym || classSym->vtableSize <= 0) continue;
-            if (classSym->isAbstract) continue;  // Abstract classes don't need vtable globals
-
-            // Build array of function pointers
             auto* ptrTy = llvm::PointerType::getUnqual(context_);
             auto* vtableArrayTy = llvm::ArrayType::get(ptrTy, classSym->vtableSize);
 
             std::vector<llvm::Constant*> vtableEntries;
-            for (auto* methodSym : classSym->vtable) {
+            for (auto& methodSym : classSym->vtable) {
                 if (methodSym && !methodSym->isAbstract) {
-                    auto it = functionCache_.find(methodSym);
+                    auto it = functionCache_.find(methodSym.get());
                     if (it != functionCache_.end()) {
                         vtableEntries.push_back(it->second);
                     } else {
@@ -559,30 +420,30 @@ void IRGenerator::declareVtables() {
             auto* vtableGlobal = new llvm::GlobalVariable(
                 *module_, vtableArrayTy, true,
                 llvm::GlobalValue::InternalLinkage,
-                vtableInit, classSym->name + "_vtable");
+                vtableInit, classSym->getName() + "_vtable");
             vtableCache_[classSym] = vtableGlobal;
         }
     }
 }
 
-void IRGenerator::declareItables() {
-    auto* globalScope = symbolTable_.getGlobalScope();
+void IRGenerator::declareItables(ProgramNode& program) {
     auto* ptrTy = llvm::PointerType::getUnqual(context_);
 
-    for (auto& [name, sym] : globalScope->getSymbolMap()) {
-        auto* moduleSym = sym->as<ModuleSymbol>();
-        if (!moduleSym || !moduleSym->moduleScope) continue;
-
-        for (auto& [declName, declSym] : moduleSym->moduleScope->getSymbolMap()) {
-            auto* classSym = declSym->as<ClassSymbol>();
+    for (auto& mod : program.modules) {
+        if (!mod->resolvedModule) continue;
+        auto allSyms = mod->resolvedModule->getAllSymbols();
+        for (auto& sym : allSyms) {
+            auto* classSym = sym->as<ClassSymbol>();
             if (!classSym || classSym->isAbstract) continue;
 
-            for (auto* ifaceSym : classSym->implementedInterfaces) {
+            for (auto& ifaceSym : classSym->implementedInterfaces) {
                 std::vector<llvm::Constant*> slots;
-                for (auto* ifaceMethod : ifaceSym->methods) {
-                    auto* implMethod = classSym->findMethod(ifaceMethod->name);
-                    if (implMethod) {
-                        auto it = functionCache_.find(implMethod);
+                for (auto& ifaceMethod : ifaceSym->methods) {
+                    // Find the class's implementation of this interface method
+                    auto implSym = classSym->resolve(ifaceMethod->getName());
+                    auto* implFunc = implSym ? implSym->as<FunctionSymbol>() : nullptr;
+                    if (implFunc) {
+                        auto it = functionCache_.find(implFunc);
                         if (it != functionCache_.end()) {
                             slots.push_back(it->second);
                         } else {
@@ -593,13 +454,15 @@ void IRGenerator::declareItables() {
                     }
                 }
 
+                if (slots.empty()) continue;
+
                 auto* arrTy = llvm::ArrayType::get(ptrTy, slots.size());
                 auto* init = llvm::ConstantArray::get(arrTy, slots);
                 auto* global = new llvm::GlobalVariable(*module_, arrTy, true,
                     llvm::GlobalValue::InternalLinkage,
                     init,
-                    classSym->name + "." + ifaceSym->name + ".itable");
-                itableCache_[{classSym, ifaceSym}] = global;
+                    classSym->getName() + "." + ifaceSym->getName() + ".itable");
+                itableCache_[{classSym, ifaceSym.get()}] = global;
             }
         }
     }
@@ -609,7 +472,7 @@ llvm::Value* IRGenerator::emitWrapToInterfacePtr(llvm::Value* objPtr,
                                                    ClassSymbol* cls,
                                                    InterfaceSymbol* iface) {
     auto it = itableCache_.find({cls, iface});
-    if (it == itableCache_.end()) return objPtr;  // fallback (shouldn't happen)
+    if (it == itableCache_.end()) return objPtr;
 
     auto* fatTy = getFatPtrType();
     llvm::Value* fat = llvm::UndefValue::get(fatTy);
@@ -619,9 +482,9 @@ llvm::Value* IRGenerator::emitWrapToInterfacePtr(llvm::Value* objPtr,
 }
 
 int IRGenerator::getFieldGEPIndex(ClassSymbol* cls, VariableSymbol* field) {
-    int offset = cls->vtableSize > 0 ? 1 : 0;
+    int offset = cls->hasVtable() ? 1 : 0;
     for (size_t i = 0; i < cls->allFields.size(); ++i) {
-        if (cls->allFields[i] == field) {
+        if (cls->allFields[i].get() == field) {
             return offset + static_cast<int>(i);
         }
     }
@@ -629,85 +492,95 @@ int IRGenerator::getFieldGEPIndex(ClassSymbol* cls, VariableSymbol* field) {
 }
 
 void IRGenerator::storeVtablePtr(llvm::Value* objPtr, ClassSymbol* cls) {
-    if (cls->vtableSize <= 0) return;
+    if (!cls->hasVtable()) return;
     auto it = vtableCache_.find(cls);
     if (it == vtableCache_.end()) return;
 
-    auto userType = registry_.getUserType(cls->name, Type::Kind::Class, cls);
-    auto* structTy = getStructType(userType.get());
+    auto* structTy = getStructType(cls);
     if (!structTy) return;
 
     auto* vtableSlot = builder_.CreateStructGEP(structTy, objPtr, 0, "vtable.slot");
     builder_.CreateStore(it->second, vtableSlot);
 }
 
-void IRGenerator::declareExternFunctions() {
-    auto* globalScope = symbolTable_.getGlobalScope();
-
-    for (auto& [name, sym] : globalScope->getSymbolMap()) {
-        auto* moduleSym = sym->as<ModuleSymbol>();
-        if (!moduleSym || !moduleSym->moduleScope) continue;
-
-        for (auto& [declName, declSym] : moduleSym->moduleScope->getSymbolMap()) {
-            auto* funcSym = declSym->as<FunctionSymbol>();
+void IRGenerator::declareExternFunctions(ProgramNode& program) {
+    for (auto& mod : program.modules) {
+        if (!mod->resolvedModule) continue;
+        auto allSyms = mod->resolvedModule->getAllSymbols();
+        for (auto& sym : allSyms) {
+            auto* funcSym = sym->as<FunctionSymbol>();
             if (!funcSym || !funcSym->isExtern) continue;
             if (functionCache_.count(funcSym)) continue;
 
             auto* fnTy = buildFunctionType(funcSym);
-            bool isVarArg = (funcSym->name == "printf" || funcSym->name == "snprintf");
+            // Handle vararg functions (printf, snprintf)
+            bool isVarArg = (funcSym->getName() == "printf" || funcSym->getName() == "snprintf");
             if (isVarArg) {
                 std::vector<llvm::Type*> paramTypes;
-                for (auto* param : funcSym->parameters) {
-                    paramTypes.push_back(mapType(param->type));
+                for (auto& param : funcSym->parameters) {
+                    paramTypes.push_back(mapParamType(param->getType().get(), param->isReference));
                 }
                 fnTy = llvm::FunctionType::get(mapType(funcSym->returnType),
                                                 paramTypes, true);
             }
 
             auto* fn = llvm::Function::Create(fnTy,
-                llvm::Function::ExternalLinkage, funcSym->name, module_.get());
+                llvm::Function::ExternalLinkage, funcSym->getName(), module_.get());
             functionCache_[funcSym] = fn;
         }
     }
 }
 
-void IRGenerator::declareFunctions() {
-    auto* globalScope = symbolTable_.getGlobalScope();
-
-    for (auto& [name, sym] : globalScope->getSymbolMap()) {
-        auto* moduleSym = sym->as<ModuleSymbol>();
-        if (!moduleSym || !moduleSym->moduleScope) continue;
-
-        for (auto& [declName, declSym] : moduleSym->moduleScope->getSymbolMap()) {
-            if (auto* funcSym = declSym->as<FunctionSymbol>()) {
-                if (!funcSym->isExtern) {
+void IRGenerator::declareFunctions(ProgramNode& program) {
+    for (auto& mod : program.modules) {
+        if (!mod->resolvedModule) continue;
+        auto allSyms = mod->resolvedModule->getAllSymbols();
+        for (auto& sym : allSyms) {
+            // Module-level functions
+            if (auto* funcSym = sym->as<FunctionSymbol>()) {
+                if (!funcSym->isExtern && !funcSym->isAbstract) {
                     declareFunctionSymbol(funcSym);
                 }
             }
 
-            if (auto* typeSym = declSym->as<TypeSymbol>()) {
-                if (!typeSym->memberScope) continue;
-
-                for (auto& [mName, mSym] : typeSym->memberScope->getSymbolMap()) {
+            // Type members (methods, ctor, dtor, operators)
+            if (auto* classSym = sym->as<ClassSymbol>()) {
+                // Methods
+                auto classSyms = classSym->getAllSymbols();
+                for (auto& mSym : classSyms) {
                     if (auto* methodSym = mSym->as<FunctionSymbol>()) {
-                        // Skip extern and abstract (no body) methods
                         if (!methodSym->isExtern && !methodSym->isAbstract) {
                             declareFunctionSymbol(methodSym);
                         }
                     }
                 }
+                // Constructor
+                if (classSym->constructor) {
+                    declareFunctionSymbol(classSym->constructor.get());
+                }
+                // Destructor
+                if (classSym->destructor) {
+                    declareFunctionSymbol(classSym->destructor.get());
+                }
+                // Operators
+                auto ops = classSym->getAllOperators();
+                for (auto& opSym : ops) {
+                    declareOperatorSymbol(opSym.get());
+                }
+            }
 
-                if (auto* classSym = typeSym->as<ClassSymbol>()) {
-                    if (classSym->constructor) {
-                        declareFunctionSymbol(classSym->constructor);
-                    }
-                    if (classSym->destructor) {
-                        declareFunctionSymbol(classSym->destructor);
+            if (auto* structSym = sym->as<StructSymbol>()) {
+                auto structSyms = structSym->getAllSymbols();
+                for (auto& mSym : structSyms) {
+                    if (auto* methodSym = mSym->as<FunctionSymbol>()) {
+                        if (!methodSym->isExtern && !methodSym->isAbstract) {
+                            declareFunctionSymbol(methodSym);
+                        }
                     }
                 }
-
-                for (auto* opSym : typeSym->memberScope->getOperatorList()) {
-                    declareOperatorSymbol(opSym);
+                auto ops = structSym->getAllOperators();
+                for (auto& opSym : ops) {
+                    declareOperatorSymbol(opSym.get());
                 }
             }
         }
@@ -728,9 +601,9 @@ void IRGenerator::declareFunctionSymbol(FunctionSymbol* sym) {
         fn->getArg(idx)->setName("this");
         idx++;
     }
-    for (auto* param : sym->parameters) {
+    for (auto& param : sym->parameters) {
         if (idx < fn->arg_size()) {
-            fn->getArg(idx)->setName(param->name);
+            fn->getArg(idx)->setName(param->getName());
             idx++;
         }
     }
@@ -749,9 +622,9 @@ void IRGenerator::declareOperatorSymbol(OperatorSymbol* sym) {
 
     unsigned idx = 0;
     fn->getArg(idx++)->setName("this");
-    for (auto* param : sym->parameters) {
+    for (auto& param : sym->parameters) {
         if (idx < fn->arg_size()) {
-            fn->getArg(idx)->setName(param->name);
+            fn->getArg(idx)->setName(param->getName());
             idx++;
         }
     }
@@ -762,7 +635,7 @@ void IRGenerator::declareOperatorSymbol(OperatorSymbol* sym) {
 llvm::FunctionType* IRGenerator::buildFunctionType(FunctionSymbol* sym) {
     // Constructors and destructors always return void
     llvm::Type* retTy;
-    if (sym->kind == SymbolKind::Constructor || sym->kind == SymbolKind::Destructor) {
+    if (sym->is<ConstructorSymbol>() || sym->is<DestructorSymbol>()) {
         retTy = llvm::Type::getVoidTy(context_);
     } else {
         retTy = mapType(sym->returnType);
@@ -770,19 +643,14 @@ llvm::FunctionType* IRGenerator::buildFunctionType(FunctionSymbol* sym) {
 
     std::vector<llvm::Type*> paramTypes;
 
-    if (sym->hasThisParam && sym->owner) {
+    // Implicit 'this' parameter
+    if (sym->hasThisParam) {
         paramTypes.push_back(llvm::PointerType::getUnqual(context_));
     }
 
-    for (auto* param : sym->parameters) {
-        llvm::Type* paramTy = mapType(param->type);
-        if (param->isReference) {
-            // Reference param: caller passes pointer to its alloca
-            paramTy = llvm::PointerType::getUnqual(context_);
-        } else if (param->type && isUserStructKind(param->type.get())) {
-            paramTy = llvm::PointerType::getUnqual(context_);
-        }
-        paramTypes.push_back(paramTy);
+    // Named parameters — V2 uses mapParamType for unified handling
+    for (auto& param : sym->parameters) {
+        paramTypes.push_back(mapParamType(param->getType().get(), param->isReference));
     }
 
     return llvm::FunctionType::get(retTy, paramTypes, false);
@@ -792,16 +660,11 @@ llvm::FunctionType* IRGenerator::buildOperatorType(OperatorSymbol* sym) {
     llvm::Type* retTy = mapType(sym->returnType);
     std::vector<llvm::Type*> paramTypes;
 
+    // Always has 'this'
     paramTypes.push_back(llvm::PointerType::getUnqual(context_));
 
-    for (auto* param : sym->parameters) {
-        llvm::Type* paramTy = mapType(param->type);
-        if (param->isReference) {
-            paramTy = llvm::PointerType::getUnqual(context_);
-        } else if (param->type && isUserStructKind(param->type.get())) {
-            paramTy = llvm::PointerType::getUnqual(context_);
-        }
-        paramTypes.push_back(paramTy);
+    for (auto& param : sym->parameters) {
+        paramTypes.push_back(mapParamType(param->getType().get(), param->isReference));
     }
 
     return llvm::FunctionType::get(retTy, paramTypes, false);
@@ -810,31 +673,27 @@ llvm::FunctionType* IRGenerator::buildOperatorType(OperatorSymbol* sym) {
 //================================================================================
 // LValue emission — returns a pointer, does NOT load
 //================================================================================
-llvm::Value* IRGenerator::emitLValue(ExpressionNode& expr) {
-    // IdentifierExpression → alloca from namedValues_
+llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
+    // IdentifierExpression -> alloca from namedValues_
     if (auto* ident = expr.as<IdentifierExpression>()) {
         if (ident->resolvedSymbol) {
-            auto it = namedValues_.find(ident->resolvedSymbol);
+            auto it = namedValues_.find(ident->resolvedSymbol.get());
             if (it != namedValues_.end()) return it->second;
         }
         return nullptr;
     }
 
-    // MemberAccessExpression → GEP to field
+    // MemberAccessExpression -> GEP to field
     if (auto* mem = expr.as<MemberAccessExpression>()) {
-        // Get the object pointer
         llvm::Value* objPtr = nullptr;
         if (mem->isArrow) {
-            // Arrow: load pointer, then GEP
             mem->object->accept(*this);
             objPtr = lastValue_;
         } else {
-            // Dot: get lvalue of object (its alloca)
             objPtr = emitLValue(*mem->object);
             if (!objPtr) {
                 mem->object->accept(*this);
                 objPtr = lastValue_;
-                // If result is a struct value, store in temp alloca for GEP
                 if (objPtr && objPtr->getType()->isStructTy()) {
                     auto* tmp = createEntryBlockAlloca(currentFunction_,
                         objPtr->getType(), "member.tmp");
@@ -845,29 +704,30 @@ llvm::Value* IRGenerator::emitLValue(ExpressionNode& expr) {
         }
         if (!objPtr) return nullptr;
 
-        // Find the struct type and field index
-        const Type* objType = mem->object->resolvedType.get();
+        // V2: resolve field from the resolved symbol
+        TypeSymbol* objType = mem->object->resolvedType ?
+            mem->object->resolvedType->as<TypeSymbol>() : nullptr;
         // Auto-dereference pointer types
-        if (auto* ptrType = objType->as<PointerType>()) {
-            objType = ptrType->baseType.get();
+        if (auto* ptrTS = objType ? objType->as<PointerTypeSymbol>() : nullptr) {
+            objType = ptrTS->baseType ? ptrTS->baseType->as<TypeSymbol>() : nullptr;
         }
+        if (!objType) return nullptr;
+
         auto* structTy = getStructType(objType);
         if (!structTy) return nullptr;
 
-        // Find field index
-        if (auto* userType = objType->as<UserType>()) {
-            auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-            auto* fieldSym = typeSym->findField(mem->memberName);
-            if (fieldSym) {
-                // For classes, account for vtable pointer and inherited fields
-                if (auto* classSym = typeSym->as<ClassSymbol>()) {
-                    int gepIdx = getFieldGEPIndex(classSym, fieldSym);
-                    if (gepIdx >= 0) {
-                        return builder_.CreateStructGEP(structTy, objPtr, gepIdx,
-                                                        mem->memberName + "_ptr");
-                    }
-                } else {
-                    // Structs: direct field index
+        // V2: use resolvedSymbol to find the field
+        auto* fieldSym = mem->resolvedSymbol ? mem->resolvedSymbol->as<VariableSymbol>() : nullptr;
+        if (fieldSym) {
+            if (auto* classSym = objType->as<ClassSymbol>()) {
+                int gepIdx = getFieldGEPIndex(classSym, fieldSym);
+                if (gepIdx >= 0) {
+                    return builder_.CreateStructGEP(structTy, objPtr, gepIdx,
+                                                    mem->memberName + "_ptr");
+                }
+            } else {
+                // Structs: direct field index
+                if (fieldSym->fieldIndex >= 0) {
                     return builder_.CreateStructGEP(structTy, objPtr, fieldSym->fieldIndex,
                                                     mem->memberName + "_ptr");
                 }
@@ -876,7 +736,7 @@ llvm::Value* IRGenerator::emitLValue(ExpressionNode& expr) {
         return nullptr;
     }
 
-    // UnaryExpression(Dereference) → emit operand, return pointer value
+    // UnaryExpression(Dereference) -> emit operand, return pointer value
     if (auto* unary = expr.as<UnaryExpression>()) {
         if (unary->op == UnaryOp::Dereference) {
             unary->operand->accept(*this);
@@ -884,7 +744,7 @@ llvm::Value* IRGenerator::emitLValue(ExpressionNode& expr) {
         }
     }
 
-    // IndexExpression → GEP to element
+    // IndexExpression -> GEP to element
     if (auto* idx = expr.as<IndexExpression>()) {
         if (!idx->isOperatorOverload) {
             llvm::Value* arrPtr = emitLValue(*idx->object);
@@ -897,25 +757,23 @@ llvm::Value* IRGenerator::emitLValue(ExpressionNode& expr) {
 
             if (!arrPtr || !indexVal) return nullptr;
 
-            const Type* objType = idx->object->resolvedType.get();
-            if (auto* arrType = objType->as<ArrayType>()) {
+            TypeSymbol* objType = idx->object->resolvedType ?
+                idx->object->resolvedType->as<TypeSymbol>() : nullptr;
+            if (auto* arrType = objType ? objType->as<ArrayTypeSymbol>() : nullptr) {
                 llvm::Type* elemTy = mapType(arrType->elementType);
-                if (arrType->size > 0) {
-                    // Sized array: GEP with two indices [0, idx]
-                    auto* llvmArrTy = llvm::ArrayType::get(elemTy, arrType->size);
+                if (arrType->arraySize > 0) {
+                    auto* llvmArrTy = llvm::ArrayType::get(elemTy, arrType->arraySize);
                     return builder_.CreateGEP(llvmArrTy, arrPtr,
                         { llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), 0), indexVal },
                         "elem_ptr");
                 } else {
-                    // Unsized array (pointer): GEP with one index
                     return builder_.CreateGEP(elemTy, arrPtr, indexVal, "elem_ptr");
                 }
             }
             if (isPointerKind(objType)) {
-                // Pointer indexing
-                const Type* baseType = nullptr;
-                if (auto* ptrTy = objType->as<PointerType>()) {
-                    baseType = ptrTy->baseType.get();
+                TypeSymbol* baseType = nullptr;
+                if (auto* ptrTy = objType->as<PointerTypeSymbol>()) {
+                    baseType = ptrTy->baseType ? ptrTy->baseType->as<TypeSymbol>() : nullptr;
                 }
                 llvm::Type* elemTy = baseType ? mapType(baseType)
                                               : llvm::Type::getInt8Ty(context_);
@@ -949,9 +807,7 @@ void IRGenerator::registerRAII(llvm::Value* ptr, llvm::Function* dtor) {
 void IRGenerator::emitScopeDestructors() {
     if (raiiScopeStack_.empty()) return;
     auto& scope = raiiScopeStack_.back();
-    // LIFO order — reverse iterate
     for (auto it = scope.destructibles.rbegin(); it != scope.destructibles.rend(); ++it) {
-        // Skip variables that are being returned
         bool skip = false;
         for (auto& [sym, val] : namedValues_) {
             if (val == it->first && scope.returnedVars.count(sym)) {
@@ -966,7 +822,6 @@ void IRGenerator::emitScopeDestructors() {
 }
 
 void IRGenerator::emitReturnDestructors() {
-    // Emit destructors for ALL active scopes, innermost to outermost, LIFO
     for (auto scopeIt = raiiScopeStack_.rbegin();
          scopeIt != raiiScopeStack_.rend(); ++scopeIt) {
         for (auto it = scopeIt->destructibles.rbegin();
@@ -986,9 +841,6 @@ void IRGenerator::emitReturnDestructors() {
 }
 
 void IRGenerator::emitBreakDestructors() {
-    // Emit destructors for scopes created inside the loop body only.
-    // Walk from innermost scope down to loopRAIIScopeDepth_ (exclusive),
-    // which is the stack depth recorded when the loop was entered.
     for (size_t i = raiiScopeStack_.size(); i > loopRAIIScopeDepth_; --i) {
         auto& scope = raiiScopeStack_[i - 1];
         for (auto it = scope.destructibles.rbegin();
@@ -1022,8 +874,7 @@ llvm::Function* IRGenerator::getOrCreateClosureRetainFn() {
 
     llvm::IRBuilder<> b(entry);
     auto* env = closureRetainFn_->getArg(0);
-    auto* isNull = b.CreateICmpEQ(env,
-        llvm::ConstantPointerNull::get(ptrTy), "is_null");
+    auto* isNull = b.CreateICmpEQ(env, llvm::ConstantPointerNull::get(ptrTy), "is_null");
     b.CreateCondBr(isNull, done, doRetain);
 
     b.SetInsertPoint(doRetain);
@@ -1061,8 +912,7 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseFn() {
 
     llvm::IRBuilder<> b(entry);
     auto* env = closureReleaseFn_->getArg(0);
-    auto* isNull = b.CreateICmpEQ(env,
-        llvm::ConstantPointerNull::get(ptrTy), "is_null");
+    auto* isNull = b.CreateICmpEQ(env, llvm::ConstantPointerNull::get(ptrTy), "is_null");
     b.CreateCondBr(isNull, done, doRelease);
 
     b.SetInsertPoint(doRelease);
@@ -1071,8 +921,7 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseFn() {
     auto* rc = b.CreateLoad(i64Ty, rcPtr, "rc");
     auto* rcDec = b.CreateSub(rc, llvm::ConstantInt::get(i64Ty, 1), "rc_dec");
     b.CreateStore(rcDec, rcPtr);
-    auto* isZero = b.CreateICmpEQ(rcDec,
-        llvm::ConstantInt::get(i64Ty, 0), "is_zero");
+    auto* isZero = b.CreateICmpEQ(rcDec, llvm::ConstantInt::get(i64Ty, 0), "is_zero");
     b.CreateCondBr(isZero, cleanup, done);
 
     b.SetInsertPoint(cleanup);
@@ -1101,9 +950,9 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseFn() {
 
 llvm::Function* IRGenerator::generateClosureCleanupFn(
     llvm::StructType* closureTy,
-    const std::vector<sema::Symbol*>& capturedVars,
+    const std::vector<SymbolPtr>& capturedVars,
     int headerOffset,
-    const std::vector<ast::CaptureMode>* captureModes)
+    const std::vector<CaptureMode>* captureModes)
 {
     auto* ptrTy = llvm::PointerType::getUnqual(context_);
     auto* voidTy = llvm::Type::getVoidTy(context_);
@@ -1116,30 +965,23 @@ llvm::Function* IRGenerator::generateClosureCleanupFn(
     auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
     llvm::IRBuilder<> b(entry);
     auto* env = fn->getArg(0);
-
     auto* fatPtrTy = getFatPtrType();
 
     for (size_t i = 0; i < capturedVars.size(); i++) {
-        // By-reference captures don't own the value — skip cleanup
         if (captureModes && i < captureModes->size() &&
-            (*captureModes)[i] == ast::CaptureMode::ByReference) {
+            (*captureModes)[i] == CaptureMode::ByReference) {
             continue;
         }
 
-        auto* capSym = capturedVars[i];
-        auto* varSym = capSym->as<sema::VariableSymbol>();
+        auto* varSym = capturedVars[i]->as<VariableSymbol>();
         if (!varSym) continue;
 
-        // Check if this captured variable is a closure (FunctionType)
-        if (varSym->type && varSym->type->is<FunctionType>()) {
+        if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
             unsigned fieldIdx = headerOffset + (unsigned)i;
             auto* fieldPtr = b.CreateStructGEP(closureTy, env, fieldIdx,
-                                                capSym->name + ".cleanup.slot");
-            // Load the captured fat pointer { fnPtr, envPtr }
-            auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr, capSym->name + ".fat");
-            // Extract envPtr (index 1)
-            auto* envPtr = b.CreateExtractValue(fatVal, {1}, capSym->name + ".env");
-            // Release the inner closure
+                                                varSym->getName() + ".cleanup.slot");
+            auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr, varSym->getName() + ".fat");
+            auto* envPtr = b.CreateExtractValue(fatVal, {1}, varSym->getName() + ".env");
             b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
         }
     }
@@ -1154,7 +996,6 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseWrapper() {
     auto* ptrTy = llvm::PointerType::getUnqual(context_);
     auto* voidTy = llvm::Type::getVoidTy(context_);
 
-    // Takes ptr to the fat pointer alloca
     auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
     closureReleaseWrapperFn_ = llvm::Function::Create(
         fnTy, llvm::Function::InternalLinkage,
@@ -1164,32 +1005,24 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseWrapper() {
     llvm::IRBuilder<> b(entry);
     auto* allocaPtr = closureReleaseWrapperFn_->getArg(0);
 
-    // Load the fat pointer { fnPtr, envPtr } from the alloca
     auto* fatPtrTy = getFatPtrType();
     auto* fatVal = b.CreateLoad(fatPtrTy, allocaPtr, "fat");
-
-    // Extract envPtr (index 1)
     auto* envPtr = b.CreateExtractValue(fatVal, {1}, "env.ptr");
-
-    // Call __mingus_closure_release(envPtr)
     b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
 
     b.CreateRetVoid();
     return closureReleaseWrapperFn_;
 }
 
-//================================================================================
-// Struct cleanup for closure-typed fields
-//================================================================================
 llvm::Function* IRGenerator::getOrCreateStructCleanupFn(StructSymbol* structSym) {
-    auto it = structCleanupCache_.find(structSym->name);
+    auto it = structCleanupCache_.find(structSym->getName());
     if (it != structCleanupCache_.end()) return it->second;
 
     auto* ptrTy = llvm::PointerType::getUnqual(context_);
     auto* voidTy = llvm::Type::getVoidTy(context_);
     auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
 
-    std::string name = "__struct_cleanup_" + structSym->name;
+    std::string name = "__struct_cleanup_" + structSym->getName();
     auto* fn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage,
                                        name, module_.get());
 
@@ -1197,23 +1030,22 @@ llvm::Function* IRGenerator::getOrCreateStructCleanupFn(StructSymbol* structSym)
     llvm::IRBuilder<> b(entry);
     auto* structPtr = fn->getArg(0);
 
-    auto userType = registry_.getUserType(structSym->name, Type::Kind::Struct, structSym);
-    auto* structTy = getStructType(userType.get());
+    auto* structTy = getStructType(structSym);
     auto* fatPtrTy = getFatPtrType();
 
-    for (auto* field : structSym->fields) {
-        if (field->type && field->type->is<FunctionType>()) {
+    for (auto& field : structSym->fields) {
+        if (field->getType() && field->getType()->is<FunctionTypeSymbol>()) {
             auto* fieldPtr = b.CreateStructGEP(structTy, structPtr,
                                                 field->fieldIndex,
-                                                field->name + ".cleanup");
-            auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr, field->name + ".fat");
-            auto* envPtr = b.CreateExtractValue(fatVal, {1}, field->name + ".env");
+                                                field->getName() + ".cleanup");
+            auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr, field->getName() + ".fat");
+            auto* envPtr = b.CreateExtractValue(fatVal, {1}, field->getName() + ".env");
             b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
         }
     }
 
     b.CreateRetVoid();
-    structCleanupCache_[structSym->name] = fn;
+    structCleanupCache_[structSym->getName()] = fn;
     return fn;
 }
 
@@ -1242,36 +1074,23 @@ llvm::Value* IRGenerator::emitStringConcat(llvm::Value* left, llvm::Value* right
     auto ptrTy = llvm::PointerType::getUnqual(context_);
     auto i64Ty = llvm::Type::getInt64Ty(context_);
 
-    // Declare strlen
     auto strlenCallee = module_->getOrInsertFunction("strlen",
         llvm::FunctionType::get(i64Ty, {ptrTy}, false));
-    // Declare strcpy
     auto strcpyCallee = module_->getOrInsertFunction("strcpy",
         llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy}, false));
-    // Declare strcat
     auto strcatCallee = module_->getOrInsertFunction("strcat",
         llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy}, false));
-    // Declare malloc
     auto mallocCallee = module_->getOrInsertFunction("malloc",
         llvm::FunctionType::get(ptrTy, {i64Ty}, false));
 
-    // len1 = strlen(left)
     llvm::Value* len1 = builder_.CreateCall(strlenCallee, {left}, "len1");
-    // len2 = strlen(right)
     llvm::Value* len2 = builder_.CreateCall(strlenCallee, {right}, "len2");
-    // total = len1 + len2 + 1
     llvm::Value* sum = builder_.CreateAdd(len1, len2, "sum");
-    llvm::Value* total = builder_.CreateAdd(sum,
-        llvm::ConstantInt::get(i64Ty, 1), "total");
-    // buf = malloc(total)
+    llvm::Value* total = builder_.CreateAdd(sum, llvm::ConstantInt::get(i64Ty, 1), "total");
     llvm::Value* buf = builder_.CreateCall(mallocCallee, {total}, "str.buf");
-    // strcpy(buf, left)
     builder_.CreateCall(strcpyCallee, {buf, left});
-    // strcat(buf, right)
     builder_.CreateCall(strcatCallee, {buf, right});
-    // Register for RAII cleanup
     registerRAII(buf, getOrCreateStringFreeFn());
-
     return buf;
 }
 
@@ -1286,144 +1105,76 @@ void IRGenerator::visit(ProgramNode& node) {
 
 void IRGenerator::visit(ModuleNode& node) {
     currentModuleName_ = node.name;
-
-    // Enter module scope
-    auto* modSym = currentScope_->lookupLocal(node.name);
-    auto* moduleSym = modSym ? modSym->as<ModuleSymbol>() : nullptr;
-    if (moduleSym && moduleSym->moduleScope) {
-        enterNamedScope(moduleSym->moduleScope);
-    }
-
     for (auto& decl : node.declarations) {
         decl->accept(*this);
     }
-
-    if (moduleSym && moduleSym->moduleScope) {
-        leaveNamedScope();
-    }
-
     currentModuleName_.clear();
 }
 
-void IRGenerator::visit(ImportNode& /*node*/) {}
-
-//================================================================================
-// Type node visitors (no-op in codegen)
-//================================================================================
-void IRGenerator::visit(TypeNode& /*node*/) {}
-void IRGenerator::visit(PrimitiveTypeNode& /*node*/) {}
-void IRGenerator::visit(NamedTypeNode& /*node*/) {}
-void IRGenerator::visit(PointerTypeNode& /*node*/) {}
-void IRGenerator::visit(ArrayTypeNode& /*node*/) {}
-void IRGenerator::visit(TupleTypeNode& /*node*/) {}
-void IRGenerator::visit(FunctionTypeNode& /*node*/) {}
+void IRGenerator::visit(ImportDeclaration& /*node*/) {}
 
 //================================================================================
 // Declaration visitors
 //================================================================================
 
 void IRGenerator::visit(FunctionDeclaration& node) {
-    // Look up the FunctionSymbol in current scope
-    auto* sym = currentScope_->lookupLocal(node.name);
-    auto* funcSym = sym ? sym->as<FunctionSymbol>() : nullptr;
+    auto* funcSym = node.resolvedFunction.get();
     if (!funcSym) return;
 
     auto it = functionCache_.find(funcSym);
     if (it == functionCache_.end()) return;
 
     llvm::Function* fn = it->second;
-    if (!node.body) return;  // Forward declaration only
+    if (!node.body) return;
 
-    // Create entry block
     auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
     builder_.SetInsertPoint(entryBB);
-
-    // Attach debug info subprogram
-    if (emitDebugInfo_ && diBuilder_ && diFile_) {
-        llvm::DIScope* scope = diCompileUnit_;
-        auto* retDIType = funcSym->returnType ? mapDIType(funcSym->returnType.get()) : nullptr;
-
-        llvm::SmallVector<llvm::Metadata*, 8> paramDITypes;
-        paramDITypes.push_back(retDIType);  // Return type is first in subroutine type
-        for (auto* param : funcSym->parameters) {
-            paramDITypes.push_back(param->type ? mapDIType(param->type.get()) : nullptr);
-        }
-        auto* subroutineTy = diBuilder_->createSubroutineType(
-            diBuilder_->getOrCreateTypeArray(paramDITypes));
-
-        auto* sp = diBuilder_->createFunction(
-            scope, node.name, fn->getName(), diFile_,
-            node.location.line, subroutineTy,
-            node.location.line,
-            llvm::DINode::FlagPrototyped,
-            llvm::DISubprogram::SPFlagDefinition);
-        fn->setSubprogram(sp);
-
-        // Set initial debug location
-        builder_.SetCurrentDebugLocation(
-            llvm::DILocation::get(context_, node.location.line, 0, sp));
-    }
 
     auto* prevFunction = currentFunction_;
     auto* prevThisPtr = currentThisPtr_;
     currentFunction_ = fn;
 
-    // Save and clear namedValues for this function scope
     auto savedNamedValues = namedValues_;
     namedValues_.clear();
 
-    // Handle parameters
     unsigned argIdx = 0;
-
-    // Implicit 'this' parameter for methods
     if (funcSym->hasThisParam) {
         currentThisPtr_ = fn->getArg(argIdx++);
     } else {
         currentThisPtr_ = nullptr;
     }
 
-    // Named parameters
-    for (auto* paramSym : funcSym->parameters) {
+    // V2: use ParameterNode::resolvedSymbol directly (no scanForParamSymbols!)
+    for (size_t i = 0; i < node.parameters.size(); i++) {
+        auto& paramNode = node.parameters[i];
+        auto* paramSym = paramNode->resolvedSymbol.get();
         llvm::Value* argVal = fn->getArg(argIdx++);
-        if (paramSym->isReference) {
-            // Reference parameter: argVal is a pointer to the caller's alloca.
-            // Use it directly — reads/writes go through to the original variable.
-            argVal->setName(paramSym->name + ".ref");
+
+        if (paramSym && paramSym->isReference) {
+            argVal->setName(paramSym->getName() + ".ref");
             namedValues_[paramSym] = argVal;
-        }
-        // If param is a struct/class passed by pointer, copy the struct into a local alloca
-        // so that GEP field access works correctly on the alloca
-        else if (paramSym->type && isUserStructKind(paramSym->type.get())) {
-            llvm::Type* structTy = mapType(paramSym->type);
-            auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->name);
-            auto* val = builder_.CreateLoad(structTy, argVal, paramSym->name + ".val");
+        } else if (paramSym && isUserStructKind(paramSym->getType().get())) {
+            llvm::Type* structTy = mapType(paramSym->getType());
+            auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->getName());
+            auto* val = builder_.CreateLoad(structTy, argVal, paramSym->getName() + ".val");
             builder_.CreateStore(val, alloca);
             namedValues_[paramSym] = alloca;
         } else {
             llvm::Type* paramTy = argVal->getType();
-            auto* alloca = createEntryBlockAlloca(fn, paramTy, paramSym->name);
+            std::string pName = paramSym ? paramSym->getName() : paramNode->name;
+            auto* alloca = createEntryBlockAlloca(fn, paramTy, pName);
             builder_.CreateStore(argVal, alloca);
-            namedValues_[paramSym] = alloca;
+            if (paramSym) namedValues_[paramSym] = alloca;
         }
     }
 
-    // Enter function body scope
-    if (funcSym->bodyScope) {
-        enterNamedScope(funcSym->bodyScope);
-    }
-
-    // Push RAII scope for function body (ensures destructors fire for
-    // variables declared directly in the function body, not just in nested blocks)
     pushRAIIScope();
 
-    // Visit body statements
     for (auto& stmt : node.body->statements) {
         stmt->accept(*this);
-        // Stop emitting if current block already has a terminator
         if (builder_.GetInsertBlock()->getTerminator()) break;
     }
 
-    // Add default terminator if needed
     if (!builder_.GetInsertBlock()->getTerminator()) {
         emitScopeDestructors();
         if (fn->getReturnType()->isVoidTy()) {
@@ -1435,22 +1186,15 @@ void IRGenerator::visit(FunctionDeclaration& node) {
 
     popRAIIScope();
 
-    if (funcSym->bodyScope) {
-        leaveNamedScope();
-    }
-
-    // Restore state
     namedValues_ = savedNamedValues;
     currentFunction_ = prevFunction;
     currentThisPtr_ = prevThisPtr;
 }
 
 void IRGenerator::visit(ConstructorDeclaration& node) {
-    if (!currentType_) return;
-    auto* classSym = currentType_->as<ClassSymbol>();
-    if (!classSym || !classSym->constructor) return;
+    if (!currentClassSym_ || !currentClassSym_->constructor) return;
 
-    auto* ctorSym = classSym->constructor;
+    auto* ctorSym = currentClassSym_->constructor.get();
     auto it = functionCache_.find(ctorSym);
     if (it == functionCache_.end()) return;
 
@@ -1467,35 +1211,40 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
     auto savedNamedValues = namedValues_;
     namedValues_.clear();
 
-    // First arg is 'this'
     unsigned argIdx = 0;
     currentThisPtr_ = fn->getArg(argIdx++);
 
-    for (auto* paramSym : ctorSym->parameters) {
+    for (size_t i = 0; i < node.parameters.size(); i++) {
+        auto& paramNode = node.parameters[i];
+        auto* paramSym = paramNode->resolvedSymbol.get();
         llvm::Value* argVal = fn->getArg(argIdx++);
-        if (paramSym->isReference) {
-            argVal->setName(paramSym->name + ".ref");
+
+        if (paramSym && paramSym->isReference) {
+            argVal->setName(paramSym->getName() + ".ref");
             namedValues_[paramSym] = argVal;
-        } else if (paramSym->type && isUserStructKind(paramSym->type.get())) {
-            llvm::Type* structTy = mapType(paramSym->type);
-            auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->name);
-            auto* val = builder_.CreateLoad(structTy, argVal, paramSym->name + ".val");
+        } else if (paramSym && isUserStructKind(paramSym->getType().get())) {
+            llvm::Type* structTy = mapType(paramSym->getType());
+            auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->getName());
+            auto* val = builder_.CreateLoad(structTy, argVal, paramSym->getName() + ".val");
             builder_.CreateStore(val, alloca);
             namedValues_[paramSym] = alloca;
         } else {
             llvm::Type* paramTy = argVal->getType();
-            auto* alloca = createEntryBlockAlloca(fn, paramTy, paramSym->name);
+            std::string pName = paramSym ? paramSym->getName() : ("p" + std::to_string(i));
+            auto* alloca = createEntryBlockAlloca(fn, paramTy, pName);
             builder_.CreateStore(argVal, alloca);
-            namedValues_[paramSym] = alloca;
+            if (paramSym) namedValues_[paramSym] = alloca;
         }
     }
 
-    // Super constructor call (before body, after parameter setup)
-    if (node.hasSuperCall && classSym->baseClass && classSym->baseClass->constructor) {
-        auto baseCtorIt = functionCache_.find(classSym->baseClass->constructor);
+    // Super constructor call
+    if (node.hasSuperCall && currentClassSym_->resolvedBaseClass &&
+        currentClassSym_->resolvedBaseClass->constructor) {
+        auto baseCtorIt = functionCache_.find(
+            currentClassSym_->resolvedBaseClass->constructor.get());
         if (baseCtorIt != functionCache_.end()) {
             std::vector<llvm::Value*> superArgs;
-            superArgs.push_back(currentThisPtr_);  // pass this to base ctor
+            superArgs.push_back(currentThisPtr_);
             for (auto& arg : node.superArgs) {
                 arg->accept(*this);
                 if (lastValue_) {
@@ -1510,29 +1259,23 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
         }
     }
 
-    // Store vtable pointer (overwrites whatever base ctor set)
-    storeVtablePtr(currentThisPtr_, classSym);
+    // Store vtable pointer
+    storeVtablePtr(currentThisPtr_, currentClassSym_);
 
-    // Zero-initialize closure-typed fields to prevent releasing garbage
-    // if destructor fires before all closure fields are assigned
+    // Zero-init closure-typed fields
     {
-        auto userType = registry_.getUserType(classSym->name, Type::Kind::Class, classSym);
-        auto* structTy = getStructType(userType.get());
+        auto* structTy = getStructType(currentClassSym_);
         auto* fatPtrTy = getFatPtrType();
-        for (auto* field : classSym->fields) {
-            if (field->type && field->type->is<FunctionType>()) {
-                int gepIdx = getFieldGEPIndex(classSym, field);
+        for (auto& field : currentClassSym_->fields) {
+            if (field->getType() && field->getType()->is<FunctionTypeSymbol>()) {
+                int gepIdx = getFieldGEPIndex(currentClassSym_, field.get());
                 if (gepIdx >= 0) {
                     auto* fieldPtr = builder_.CreateStructGEP(structTy, currentThisPtr_,
-                                                              gepIdx, field->name + ".init");
+                                                              gepIdx, field->getName() + ".init");
                     builder_.CreateStore(llvm::ConstantAggregateZero::get(fatPtrTy), fieldPtr);
                 }
             }
         }
-    }
-
-    if (ctorSym->bodyScope) {
-        enterNamedScope(ctorSym->bodyScope);
     }
 
     for (auto& stmt : node.body->statements) {
@@ -1544,21 +1287,15 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
         builder_.CreateRetVoid();
     }
 
-    if (ctorSym->bodyScope) {
-        leaveNamedScope();
-    }
-
     namedValues_ = savedNamedValues;
     currentFunction_ = prevFunction;
     currentThisPtr_ = prevThisPtr;
 }
 
 void IRGenerator::visit(DestructorDeclaration& node) {
-    if (!currentType_) return;
-    auto* classSym = currentType_->as<ClassSymbol>();
-    if (!classSym || !classSym->destructor) return;
+    if (!currentClassSym_ || !currentClassSym_->destructor) return;
 
-    auto* dtorSym = classSym->destructor;
+    auto* dtorSym = currentClassSym_->destructor.get();
     auto it = functionCache_.find(dtorSym);
     if (it == functionCache_.end()) return;
 
@@ -1577,48 +1314,40 @@ void IRGenerator::visit(DestructorDeclaration& node) {
 
     currentThisPtr_ = fn->getArg(0);
 
-    if (dtorSym->bodyScope) {
-        enterNamedScope(dtorSym->bodyScope);
-    }
-
     for (auto& stmt : node.body->statements) {
         stmt->accept(*this);
         if (builder_.GetInsertBlock()->getTerminator()) break;
     }
 
-    // Release closure-typed fields (own fields only; base dtor handles its own)
+    // Release closure-typed fields
     if (!builder_.GetInsertBlock()->getTerminator()) {
-        auto userType = registry_.getUserType(classSym->name, Type::Kind::Class, classSym);
-        auto* structTy = getStructType(userType.get());
+        auto* structTy = getStructType(currentClassSym_);
         auto* fatPtrTy = getFatPtrType();
 
-        for (auto* field : classSym->fields) {
-            if (field->type && field->type->is<FunctionType>()) {
-                int gepIdx = getFieldGEPIndex(classSym, field);
+        for (auto& field : currentClassSym_->fields) {
+            if (field->getType() && field->getType()->is<FunctionTypeSymbol>()) {
+                int gepIdx = getFieldGEPIndex(currentClassSym_, field.get());
                 if (gepIdx >= 0) {
                     auto* fieldPtr = builder_.CreateStructGEP(structTy, currentThisPtr_,
-                                                              gepIdx, field->name + ".dtor.ptr");
-                    auto* fatVal = builder_.CreateLoad(fatPtrTy, fieldPtr, field->name + ".dtor.fat");
-                    auto* envPtr = builder_.CreateExtractValue(fatVal, {1}, field->name + ".dtor.env");
+                                                              gepIdx, field->getName() + ".dtor.ptr");
+                    auto* fatVal = builder_.CreateLoad(fatPtrTy, fieldPtr, field->getName() + ".dtor.fat");
+                    auto* envPtr = builder_.CreateExtractValue(fatVal, {1}, field->getName() + ".dtor.env");
                     builder_.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
                 }
             }
         }
     }
 
-    // Chain to base destructor after body (derived cleanup first, then base)
+    // Chain to base destructor
     if (!builder_.GetInsertBlock()->getTerminator()) {
-        if (classSym->baseClass && classSym->baseClass->destructor) {
-            auto baseDtorIt = functionCache_.find(classSym->baseClass->destructor);
+        if (currentClassSym_->resolvedBaseClass && currentClassSym_->resolvedBaseClass->destructor) {
+            auto baseDtorIt = functionCache_.find(
+                currentClassSym_->resolvedBaseClass->destructor.get());
             if (baseDtorIt != functionCache_.end()) {
                 builder_.CreateCall(baseDtorIt->second, {currentThisPtr_});
             }
         }
         builder_.CreateRetVoid();
-    }
-
-    if (dtorSym->bodyScope) {
-        leaveNamedScope();
     }
 
     namedValues_ = savedNamedValues;
@@ -1627,27 +1356,8 @@ void IRGenerator::visit(DestructorDeclaration& node) {
 }
 
 void IRGenerator::visit(OperatorDeclaration& node) {
-    if (!currentType_) return;
-
-    // Find the operator symbol
-    OverloadableOp op;
-    switch (node.op) {
-        case OperatorKind::Plus:         op = OverloadableOp::Plus; break;
-        case OperatorKind::Minus:        op = OverloadableOp::Minus; break;
-        case OperatorKind::Star:         op = OverloadableOp::Star; break;
-        case OperatorKind::Divide:       op = OverloadableOp::Slash; break;
-        case OperatorKind::Modulo:       op = OverloadableOp::Modulo; break;
-        case OperatorKind::Index:        op = OverloadableOp::Index; break;
-        case OperatorKind::Equal:        op = OverloadableOp::Equals; break;
-        case OperatorKind::NotEqual:     op = OverloadableOp::NotEquals; break;
-        case OperatorKind::Less:         op = OverloadableOp::Less; break;
-        case OperatorKind::LessEqual:    op = OverloadableOp::LessEqual; break;
-        case OperatorKind::Greater:      op = OverloadableOp::Greater; break;
-        case OperatorKind::GreaterEqual: op = OverloadableOp::GreaterEqual; break;
-        default: return;
-    }
-
-    auto* opSym = currentType_->findOperator(op);
+    // V2: resolvedOperator gives us the symbol directly
+    auto* opSym = node.resolvedOperator.get();
     if (!opSym) return;
 
     auto it = functionCache_.find(opSym);
@@ -1669,27 +1379,27 @@ void IRGenerator::visit(OperatorDeclaration& node) {
     unsigned argIdx = 0;
     currentThisPtr_ = fn->getArg(argIdx++);
 
-    for (auto* paramSym : opSym->parameters) {
+    for (size_t i = 0; i < node.parameters.size(); i++) {
+        auto& paramNode = node.parameters[i];
+        auto* paramSym = paramNode->resolvedSymbol.get();
         llvm::Value* argVal = fn->getArg(argIdx++);
-        if (paramSym->isReference) {
-            argVal->setName(paramSym->name + ".ref");
+
+        if (paramSym && paramSym->isReference) {
+            argVal->setName(paramSym->getName() + ".ref");
             namedValues_[paramSym] = argVal;
-        } else if (paramSym->type && isUserStructKind(paramSym->type.get())) {
-            llvm::Type* structTy = mapType(paramSym->type);
-            auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->name);
-            auto* val = builder_.CreateLoad(structTy, argVal, paramSym->name + ".val");
+        } else if (paramSym && isUserStructKind(paramSym->getType().get())) {
+            llvm::Type* structTy = mapType(paramSym->getType());
+            auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->getName());
+            auto* val = builder_.CreateLoad(structTy, argVal, paramSym->getName() + ".val");
             builder_.CreateStore(val, alloca);
             namedValues_[paramSym] = alloca;
         } else {
             llvm::Type* paramTy = argVal->getType();
-            auto* alloca = createEntryBlockAlloca(fn, paramTy, paramSym->name);
+            std::string pName = paramSym ? paramSym->getName() : ("p" + std::to_string(i));
+            auto* alloca = createEntryBlockAlloca(fn, paramTy, pName);
             builder_.CreateStore(argVal, alloca);
-            namedValues_[paramSym] = alloca;
+            if (paramSym) namedValues_[paramSym] = alloca;
         }
-    }
-
-    if (opSym->bodyScope) {
-        enterNamedScope(opSym->bodyScope);
     }
 
     for (auto& stmt : node.body->statements) {
@@ -1705,10 +1415,6 @@ void IRGenerator::visit(OperatorDeclaration& node) {
         }
     }
 
-    if (opSym->bodyScope) {
-        leaveNamedScope();
-    }
-
     namedValues_ = savedNamedValues;
     currentFunction_ = prevFunction;
     currentThisPtr_ = prevThisPtr;
@@ -1719,13 +1425,8 @@ void IRGenerator::visit(EnumMemberNode& /*node*/) {}
 void IRGenerator::visit(EnumDeclaration& /*node*/) {}
 
 void IRGenerator::visit(StructDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal(node.name);
-    auto* prevType = currentType_;
-    currentType_ = sym ? sym->as<TypeSymbol>() : nullptr;
-
-    if (currentType_ && currentType_->memberScope) {
-        enterNamedScope(currentType_->memberScope);
-    }
+    auto* prevStructSym = currentStructSym_;
+    currentStructSym_ = node.resolvedStruct.get();
 
     for (auto& method : node.methods) {
         method->accept(*this);
@@ -1734,26 +1435,17 @@ void IRGenerator::visit(StructDeclaration& node) {
         op->accept(*this);
     }
 
-    if (currentType_ && currentType_->memberScope) {
-        leaveNamedScope();
-    }
-
-    currentType_ = prevType;
+    currentStructSym_ = prevStructSym;
 }
 
 void IRGenerator::visit(ClassDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal(node.name);
-    auto* prevType = currentType_;
-    currentType_ = sym ? sym->as<TypeSymbol>() : nullptr;
+    auto* prevClassSym = currentClassSym_;
+    currentClassSym_ = node.resolvedClass.get();
 
-    if (currentType_ && currentType_->memberScope) {
-        enterNamedScope(currentType_->memberScope);
-    }
-
-    if (node.hasConstructor()) {
+    if (node.constructor) {
         node.constructor->accept(*this);
     }
-    if (node.hasDestructor()) {
+    if (node.destructor) {
         node.destructor->accept(*this);
     }
     for (auto& method : node.methods) {
@@ -1763,24 +1455,15 @@ void IRGenerator::visit(ClassDeclaration& node) {
         op->accept(*this);
     }
 
-    if (currentType_ && currentType_->memberScope) {
-        leaveNamedScope();
-    }
-
-    currentType_ = prevType;
+    currentClassSym_ = prevClassSym;
 }
 
-void IRGenerator::visit(InterfaceDeclaration& /*node*/) {
-    // Interfaces have no runtime representation — nothing to emit
-}
-
-void IRGenerator::visit(ParameterNode& /*node*/) {}
+void IRGenerator::visit(InterfaceDeclaration& /*node*/) {}
 
 //================================================================================
 // Statement visitors
 //================================================================================
-void IRGenerator::visit(BlockStatement& node) {
-    enterNextChildScope();
+void IRGenerator::visit(BlockStatementNode& node) {
     pushRAIIScope();
 
     for (auto& stmt : node.statements) {
@@ -1788,32 +1471,26 @@ void IRGenerator::visit(BlockStatement& node) {
         if (builder_.GetInsertBlock()->getTerminator()) break;
     }
 
-    // Only emit scope destructors if the block wasn't terminated (e.g. by a return).
-    // Return statements already call emitReturnDestructors() which handles ALL scopes.
     if (!builder_.GetInsertBlock()->getTerminator()) {
         emitScopeDestructors();
     }
     popRAIIScope();
-    leaveChildScope();
 }
 
 void IRGenerator::visit(ExpressionStatement& node) {
-    emitDebugLocation(node.location);
     node.expression->accept(*this);
-    // Discard result
 }
 
 void IRGenerator::visit(ReturnStatement& node) {
-    emitDebugLocation(node.location);
-    if (node.hasValue()) {
+    if (node.value) {
         // Mark returned RAII variable for suppression
         if (auto* ident = node.value->as<IdentifierExpression>()) {
             if (ident->resolvedSymbol && !raiiScopeStack_.empty()) {
                 for (auto& scope : raiiScopeStack_) {
                     for (auto& [ptr, dtor] : scope.destructibles) {
-                        auto it = namedValues_.find(ident->resolvedSymbol);
+                        auto it = namedValues_.find(ident->resolvedSymbol.get());
                         if (it != namedValues_.end() && it->second == ptr) {
-                            scope.returnedVars.insert(ident->resolvedSymbol);
+                            scope.returnedVars.insert(ident->resolvedSymbol.get());
                         }
                     }
                 }
@@ -1821,7 +1498,6 @@ void IRGenerator::visit(ReturnStatement& node) {
         }
 
         node.value->accept(*this);
-
         emitReturnDestructors();
 
         if (lastValue_ && !currentFunction_->getReturnType()->isVoidTy()) {
@@ -1836,15 +1512,9 @@ void IRGenerator::visit(ReturnStatement& node) {
 }
 
 void IRGenerator::visit(IfStatement& node) {
-    emitDebugLocation(node.location);
-    // Emit condition
     node.condition->accept(*this);
     llvm::Value* condVal = lastValue_;
-    if (!condVal) {
-        condVal = llvm::ConstantInt::getFalse(context_);
-    }
-
-    // Ensure condition is i1
+    if (!condVal) condVal = llvm::ConstantInt::getFalse(context_);
     if (!condVal->getType()->isIntegerTy(1)) {
         condVal = builder_.CreateICmpNE(condVal,
             llvm::ConstantInt::get(condVal->getType(), 0), "ifcond");
@@ -1853,19 +1523,17 @@ void IRGenerator::visit(IfStatement& node) {
     auto* thenBB = llvm::BasicBlock::Create(context_, "then", currentFunction_);
     auto* mergeBB = llvm::BasicBlock::Create(context_, "ifmerge", currentFunction_);
 
-    if (node.hasElse() || node.hasElseIf()) {
+    if (node.elseBody || !node.elseIfClauses.empty()) {
         auto* elseBB = llvm::BasicBlock::Create(context_, "else", currentFunction_);
         builder_.CreateCondBr(condVal, thenBB, elseBB);
 
-        // Then
         builder_.SetInsertPoint(thenBB);
         node.thenBody->accept(*this);
         if (!builder_.GetInsertBlock()->getTerminator())
             builder_.CreateBr(mergeBB);
 
-        // Else-if chain + else
         builder_.SetInsertPoint(elseBB);
-        if (node.hasElseIf()) {
+        if (!node.elseIfClauses.empty()) {
             for (size_t i = 0; i < node.elseIfClauses.size(); i++) {
                 auto& clause = node.elseIfClauses[i];
                 clause.condition->accept(*this);
@@ -1888,14 +1556,13 @@ void IRGenerator::visit(IfStatement& node) {
                 builder_.SetInsertPoint(eifNextBB);
             }
         }
-        if (node.hasElse()) {
+        if (node.elseBody) {
             node.elseBody->accept(*this);
         }
         if (!builder_.GetInsertBlock()->getTerminator())
             builder_.CreateBr(mergeBB);
     } else {
         builder_.CreateCondBr(condVal, thenBB, mergeBB);
-
         builder_.SetInsertPoint(thenBB);
         node.thenBody->accept(*this);
         if (!builder_.GetInsertBlock()->getTerminator())
@@ -1906,36 +1573,25 @@ void IRGenerator::visit(IfStatement& node) {
 }
 
 void IRGenerator::visit(SwitchStatement& node) {
-    // Emit subject
     node.subject->accept(*this);
     llvm::Value* subjectVal = lastValue_;
     if (!subjectVal) return;
 
     auto* mergeBB = llvm::BasicBlock::Create(context_, "switch.merge", currentFunction_);
-    auto* defaultBB = node.hasDefault()
+    auto* defaultBB = !node.defaultCase.empty()
         ? llvm::BasicBlock::Create(context_, "switch.default", currentFunction_)
         : mergeBB;
 
-    // Check if all cases are constant integers → use LLVM switch instruction
-    bool allConstant = true;
-    for (auto& sc : node.cases) {
-        if (!sc.value) { allConstant = false; break; }
-        // We'll try to evaluate and see if we get a ConstantInt
-    }
-
-    if (allConstant && subjectVal->getType()->isIntegerTy()) {
+    if (subjectVal->getType()->isIntegerTy()) {
         auto* switchInst = builder_.CreateSwitch(subjectVal, defaultBB,
                                                   (unsigned)node.cases.size());
-
         for (auto& sc : node.cases) {
+            if (!sc.value) continue;
             auto* caseBB = llvm::BasicBlock::Create(context_, "switch.case", currentFunction_);
-
-            // Emit case value at module level to get constant
             sc.value->accept(*this);
             if (auto* constInt = llvm::dyn_cast<llvm::ConstantInt>(lastValue_)) {
                 switchInst->addCase(constInt, caseBB);
             }
-
             builder_.SetInsertPoint(caseBB);
             for (auto& stmt : sc.body) {
                 stmt->accept(*this);
@@ -1945,9 +1601,9 @@ void IRGenerator::visit(SwitchStatement& node) {
                 builder_.CreateBr(mergeBB);
         }
     } else {
-        // Emit as chain of if/else
         for (size_t i = 0; i < node.cases.size(); i++) {
             auto& sc = node.cases[i];
+            if (!sc.value) continue;
             sc.value->accept(*this);
             llvm::Value* caseVal = lastValue_;
 
@@ -1962,7 +1618,6 @@ void IRGenerator::visit(SwitchStatement& node) {
             auto* nextBB = (i + 1 < node.cases.size())
                 ? llvm::BasicBlock::Create(context_, "switch.next", currentFunction_)
                 : defaultBB;
-
             builder_.CreateCondBr(cond, caseBB, nextBB);
 
             builder_.SetInsertPoint(caseBB);
@@ -1977,8 +1632,7 @@ void IRGenerator::visit(SwitchStatement& node) {
         }
     }
 
-    // Default case
-    if (node.hasDefault()) {
+    if (!node.defaultCase.empty()) {
         builder_.SetInsertPoint(defaultBB);
         for (auto& stmt : node.defaultCase) {
             stmt->accept(*this);
@@ -1992,18 +1646,11 @@ void IRGenerator::visit(SwitchStatement& node) {
 }
 
 void IRGenerator::visit(ForStatement& node) {
-    emitDebugLocation(node.location);
-    // For loop has its own scope (for the loop variable)
-    enterNextChildScope();
-
-    // Emit initializer
-    if (node.hasInitDeclaration()) {
+    if (node.initDeclaration) {
         node.initDeclaration->accept(*this);
     }
-    if (node.hasInitExpressions()) {
-        for (auto& expr : node.initExpressions) {
-            expr->accept(*this);
-        }
+    for (auto& expr : node.initExpressions) {
+        expr->accept(*this);
     }
 
     auto* condBB = llvm::BasicBlock::Create(context_, "for.cond", currentFunction_);
@@ -2013,9 +1660,8 @@ void IRGenerator::visit(ForStatement& node) {
 
     builder_.CreateBr(condBB);
 
-    // Condition
     builder_.SetInsertPoint(condBB);
-    if (node.hasCondition()) {
+    if (node.condition) {
         node.condition->accept(*this);
         llvm::Value* condVal = lastValue_;
         if (!condVal) condVal = llvm::ConstantInt::getFalse(context_);
@@ -2028,7 +1674,6 @@ void IRGenerator::visit(ForStatement& node) {
         builder_.CreateBr(bodyBB);
     }
 
-    // Body
     builder_.SetInsertPoint(bodyBB);
     auto* prevExitBlock = loopExitBlock_;
     auto* prevIterBlock = loopIterBlock_;
@@ -2046,23 +1691,16 @@ void IRGenerator::visit(ForStatement& node) {
     if (!builder_.GetInsertBlock()->getTerminator())
         builder_.CreateBr(iterBB);
 
-    // Iterator
     builder_.SetInsertPoint(iterBB);
-    if (node.hasIterators()) {
-        for (auto& iter : node.iterators) {
-            iter->accept(*this);
-        }
+    for (auto& iter : node.iterators) {
+        iter->accept(*this);
     }
     builder_.CreateBr(condBB);
 
-    // Exit
     builder_.SetInsertPoint(exitBB);
-
-    leaveChildScope();
 }
 
 void IRGenerator::visit(WhileStatement& node) {
-    emitDebugLocation(node.location);
     auto* condBB = llvm::BasicBlock::Create(context_, "while.cond", currentFunction_);
     auto* bodyBB = llvm::BasicBlock::Create(context_, "while.body", currentFunction_);
     auto* exitBB = llvm::BasicBlock::Create(context_, "while.exit", currentFunction_);
@@ -2114,192 +1752,128 @@ void IRGenerator::visit(ContinueStatement& /*node*/) {
 }
 
 void IRGenerator::visit(DeleteStatement& node) {
-    emitDebugLocation(node.location);
     node.target->accept(*this);
     llvm::Value* ptrVal = lastValue_;
     if (!ptrVal) return;
 
-    const Type* targetType = node.target->resolvedType.get();
-    if (auto* ptrTy = targetType->as<PointerType>()) {
-        const Type* pointee = ptrTy->baseType.get();
-        if (auto* userType = pointee->as<UserType>()) {
-            if (userType->underlyingKind == Type::Kind::Interface) {
-                // Interface fat pointer { objPtr, itable } — free the object pointer
-                ptrVal = builder_.CreateExtractValue(ptrVal, {0}, "iface.del.obj");
-            } else {
-                // Class/struct: call destructor via vtable dispatch, then free
-                auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-                auto* classSym = typeSym ? typeSym->as<ClassSymbol>() : nullptr;
-                if (classSym && classSym->destructor) {
-                    if (classSym->vtableSize > 0 && classSym->destructor->vtableIndex >= 0) {
-                        // Virtual destructor dispatch: load vtable, GEP to slot 0
-                        auto vtUserType = registry_.getUserType(classSym->name,
-                            Type::Kind::Class, classSym);
-                        auto* structTy = getStructType(vtUserType.get());
-                        auto* ptrTy = llvm::PointerType::getUnqual(context_);
-                        auto* vtablePtrPtr = builder_.CreateStructGEP(structTy, ptrVal, 0, "del.vtable.ptr");
-                        auto* vtable = builder_.CreateLoad(ptrTy, vtablePtrPtr, "del.vtable");
-                        auto* dtorSlot = builder_.CreateGEP(ptrTy, vtable,
-                            builder_.getInt32(0), "del.dtor.slot");
-                        auto* dtorFn = builder_.CreateLoad(ptrTy, dtorSlot, "del.dtor.fn");
-                        auto* dtorFnTy = llvm::FunctionType::get(
-                            llvm::Type::getVoidTy(context_), {ptrTy}, false);
-                        builder_.CreateCall(dtorFnTy, dtorFn, {ptrVal});
-                    } else {
-                        // Fallback: direct destructor call (no vtable)
-                        auto it = functionCache_.find(classSym->destructor);
-                        if (it != functionCache_.end()) {
-                            builder_.CreateCall(it->second, {ptrVal});
-                        }
+    TypeSymbol* targetType = node.target->resolvedType ?
+        node.target->resolvedType->as<TypeSymbol>() : nullptr;
+
+    if (auto* ptrTS = targetType ? targetType->as<PointerTypeSymbol>() : nullptr) {
+        TypeSymbol* pointee = ptrTS->baseType ? ptrTS->baseType->as<TypeSymbol>() : nullptr;
+
+        if (pointee && pointee->is<InterfaceSymbol>()) {
+            // Interface fat pointer — free the object pointer
+            ptrVal = builder_.CreateExtractValue(ptrVal, {0}, "iface.del.obj");
+        } else if (auto* classSym = pointee ? pointee->as<ClassSymbol>() : nullptr) {
+            if (classSym->destructor) {
+                if (classSym->hasVtable() && classSym->destructor->vtableIndex >= 0) {
+                    // Virtual destructor dispatch
+                    auto* structTy = getStructType(classSym);
+                    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+                    auto* vtablePtrPtr = builder_.CreateStructGEP(structTy, ptrVal, 0, "del.vtable.ptr");
+                    auto* vtable = builder_.CreateLoad(ptrTy, vtablePtrPtr, "del.vtable");
+                    auto* dtorSlot = builder_.CreateGEP(ptrTy, vtable,
+                        builder_.getInt32(0), "del.dtor.slot");
+                    auto* dtorFn = builder_.CreateLoad(ptrTy, dtorSlot, "del.dtor.fn");
+                    auto* dtorFnTy = llvm::FunctionType::get(
+                        llvm::Type::getVoidTy(context_), {ptrTy}, false);
+                    builder_.CreateCall(dtorFnTy, dtorFn, {ptrVal});
+                } else {
+                    auto dtorIt = functionCache_.find(classSym->destructor.get());
+                    if (dtorIt != functionCache_.end()) {
+                        builder_.CreateCall(dtorIt->second, {ptrVal});
                     }
                 }
             }
         }
     }
 
-    // Call free on the (possibly extracted) pointer
     auto freeCallee = module_->getOrInsertFunction("free",
         llvm::FunctionType::get(llvm::Type::getVoidTy(context_),
             {llvm::PointerType::getUnqual(context_)}, false));
     builder_.CreateCall(freeCallee, {ptrVal});
 }
 
-void IRGenerator::visit(RawBlock& node) {
-    // Raw blocks have their own scope (matching SymbolTableBuilder)
-    if (node.body) {
-        enterNextChildScope();
-        for (auto& stmt : node.body->statements) {
-            stmt->accept(*this);
-            if (builder_.GetInsertBlock()->getTerminator()) break;
-        }
-        leaveChildScope();
-    }
-}
-
 //================================================================================
 // Variable declaration
 //================================================================================
 void IRGenerator::visit(VariableDeclaration& node) {
-    emitDebugLocation(node.location);
-    // Look up the VariableSymbol
-    auto* sym = currentScope_->lookupLocal(node.name);
-    auto* varSym = sym ? sym->as<VariableSymbol>() : nullptr;
+    auto* varSym = node.resolvedVariable.get();
     if (!varSym) return;
 
-    // Get the LLVM type
-    llvm::Type* varTy = mapType(varSym->type);
+    llvm::Type* varTy = mapType(varSym->getType());
     if (varTy->isVoidTy()) return;
 
-    // Create alloca in entry block
     auto* alloca = createEntryBlockAlloca(currentFunction_, varTy, node.name);
     namedValues_[varSym] = alloca;
 
-    // Emit debug variable declaration
-    if (emitDebugInfo_ && diBuilder_ && currentFunction_ &&
-        currentFunction_->getSubprogram()) {
-        auto* diType = mapDIType(varSym->type.get());
-        if (diType) {
-            auto* diVar = diBuilder_->createAutoVariable(
-                currentFunction_->getSubprogram(),
-                node.name, diFile_, node.location.line, diType);
-            diBuilder_->insertDeclare(
-                alloca, diVar, diBuilder_->createExpression(),
-                llvm::DILocation::get(context_, node.location.line,
-                                       node.location.column,
-                                       currentFunction_->getSubprogram()),
-                builder_.GetInsertBlock());
-        }
-    }
-
-    // Zero-initialize closure allocas (prevents releasing garbage on reassignment)
-    if (varSym->type && varSym->type->is<FunctionType>()) {
+    // Zero-init closure allocas
+    if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
         builder_.CreateStore(llvm::ConstantAggregateZero::get(varTy), alloca);
     }
 
-    // Zero-initialize struct allocas that have closure-typed fields
-    // (prevents releasing garbage if cleanup runs before all fields assigned)
-    if (varSym->type && !varSym->type->is<FunctionType>()) {
-        if (auto* userType = varSym->type->as<UserType>()) {
-            if (userType->underlyingKind == Type::Kind::Struct) {
-                auto* structSym = static_cast<TypeSymbol*>(userType->symbol)->as<StructSymbol>();
-                if (structSym) {
-                    for (auto* field : structSym->fields) {
-                        if (field->type && field->type->is<FunctionType>()) {
-                            // Zero-init the entire struct
-                            builder_.CreateStore(llvm::Constant::getNullValue(varTy), alloca);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+    // Zero-init ALL structs (prevents undef propagation — universal zero-init invariant)
+    if (varSym->getType() && (varSym->getType()->is<StructSymbol>() ||
+                               varSym->getType()->is<ClassSymbol>())) {
+        builder_.CreateStore(llvm::Constant::getNullValue(varTy), alloca);
     }
 
     // Emit initializer
     if (node.initializer) {
         node.initializer->accept(*this);
         if (lastValue_) {
-            // Wrap class* → interface* if needed
-            if (varSym->type && node.initializer->resolvedType) {
-                const Type* dstTy = varSym->type.get();
-                const Type* srcTy = node.initializer->resolvedType.get();
-                if (auto* dstPtr = dstTy->as<PointerType>()) {
-                    if (auto* dstUser = dstPtr->baseType->as<UserType>()) {
-                        if (dstUser->underlyingKind == Type::Kind::Interface) {
-                            if (auto* srcPtr = srcTy->as<PointerType>()) {
-                                if (auto* srcUser = srcPtr->baseType->as<UserType>()) {
-                                    if (srcUser->underlyingKind == Type::Kind::Class) {
-                                        auto* cls = static_cast<ClassSymbol*>(srcUser->symbol);
-                                        auto* iface = static_cast<InterfaceSymbol*>(dstUser->symbol);
-                                        lastValue_ = emitWrapToInterfacePtr(lastValue_, cls, iface);
-                                    }
-                                }
+            // Wrap class* -> interface* if needed
+            if (varSym->getType() && node.initializer->resolvedType) {
+                auto* dstType = varSym->getType().get();
+                auto* srcType = node.initializer->resolvedType.get();
+                if (auto* dstPtr = dstType->as<PointerTypeSymbol>()) {
+                    if (auto* dstIface = dstPtr->baseType ?
+                        dstPtr->baseType->as<InterfaceSymbol>() : nullptr) {
+                        if (auto* srcPtr = srcType->as<PointerTypeSymbol>()) {
+                            if (auto* srcClass = srcPtr->baseType ?
+                                srcPtr->baseType->as<ClassSymbol>() : nullptr) {
+                                lastValue_ = emitWrapToInterfacePtr(lastValue_, srcClass, dstIface);
                             }
                         }
                     }
                 }
             }
-            // Convert null → zero fat pointer for FunctionType variables
-            if (varSym->type && varSym->type->is<FunctionType>() &&
+
+            // Convert null -> zero fat pointer for FunctionType variables
+            if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>() &&
                 llvm::isa<llvm::ConstantPointerNull>(lastValue_)) {
                 lastValue_ = llvm::ConstantAggregateZero::get(getFatPtrType());
             }
 
             builder_.CreateStore(lastValue_, alloca);
 
-            // Self-capturing closure: patch the env struct with the final fat pointer.
-            // The lambda captured a zero fat pointer for 'this variable' during compilation.
-            // Now that we have the real fat pointer, write it into the capture slot.
+            // Self-capturing closure: patch env struct
             if (auto* lambda = node.initializer->as<LambdaExpression>()) {
                 if (lambda->selfCapture && !lambda->capturedVariables.empty()) {
-                    // Find the self-capture slot index
                     int selfCaptureIdx = -1;
                     for (size_t i = 0; i < lambda->capturedVariables.size(); i++) {
-                        if (lambda->capturedVariables[i] == varSym) {
+                        if (lambda->capturedVariables[i].get() == varSym) {
                             selfCaptureIdx = static_cast<int>(i);
                             break;
                         }
                     }
                     if (selfCaptureIdx >= 0) {
-                        // Extract envPtr from the fat pointer
                         auto* envPtr = builder_.CreateExtractValue(lastValue_, {1}, "self.env");
-                        // Build the closure struct type to GEP into the env
                         auto* i64Ty = llvm::Type::getInt64Ty(context_);
                         auto* ptrTy = llvm::PointerType::getUnqual(context_);
                         std::vector<llvm::Type*> closureFields;
-                        closureFields.push_back(i64Ty);   // refcount
-                        closureFields.push_back(ptrTy);   // cleanup_fn
-                        for (auto* capSym : lambda->capturedVariables) {
+                        closureFields.push_back(i64Ty);
+                        closureFields.push_back(ptrTy);
+                        for (auto& capSym : lambda->capturedVariables) {
                             auto* capVar = capSym->as<VariableSymbol>();
-                            closureFields.push_back(capVar ? mapType(capVar->type)
+                            closureFields.push_back(capVar ? mapType(capVar->getType())
                                                            : llvm::Type::getInt32Ty(context_));
                         }
                         auto* closureTy = llvm::StructType::get(context_, closureFields);
                         const int headerOffset = 2;
                         auto* selfSlot = builder_.CreateStructGEP(closureTy, envPtr,
                             headerOffset + selfCaptureIdx, "self.capture.slot");
-                        // Store the fat pointer into the self-capture slot
-                        // Do NOT retain — self-reference is unretained to avoid cycles
                         builder_.CreateStore(lastValue_, selfSlot);
                     }
                 }
@@ -2307,67 +1881,45 @@ void IRGenerator::visit(VariableDeclaration& node) {
         }
     }
 
-    // Register RAII if the type has a destructor
-    if (varSym->type && isUserStructKind(varSym->type.get())) {
-        if (auto* userType = varSym->type->as<UserType>()) {
-            auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-            auto* classSym = typeSym ? typeSym->as<ClassSymbol>() : nullptr;
-            if (classSym && classSym->hasRAII()) {
-                auto it = functionCache_.find(classSym->destructor);
-                if (it != functionCache_.end()) {
-                    registerRAII(alloca, it->second);
-                }
+    // Register RAII for class types with destructors
+    if (varSym->getType() && varSym->getType()->is<ClassSymbol>()) {
+        auto* classSym = varSym->getType()->as<ClassSymbol>();
+        if (classSym && classSym->hasRAII()) {
+            auto dtorIt = functionCache_.find(classSym->destructor.get());
+            if (dtorIt != functionCache_.end()) {
+                registerRAII(alloca, dtorIt->second);
             }
         }
     }
 
-    // Register RAII for structs with closure-typed fields (synthetic cleanup)
-    if (varSym->type && !varSym->type->is<FunctionType>()) {
-        if (auto* userType = varSym->type->as<UserType>()) {
-            if (userType->underlyingKind == Type::Kind::Struct) {
-                auto* structSym = static_cast<TypeSymbol*>(userType->symbol)->as<StructSymbol>();
-                if (structSym) {
-                    bool hasClosureFields = false;
-                    for (auto* field : structSym->fields) {
-                        if (field->type && field->type->is<FunctionType>()) {
-                            hasClosureFields = true;
-                            break;
-                        }
-                    }
-                    if (hasClosureFields) {
-                        registerRAII(alloca, getOrCreateStructCleanupFn(structSym));
-                    }
-                }
-            }
+    // Register RAII for structs with closure-typed fields
+    if (varSym->getType() && varSym->getType()->is<StructSymbol>()) {
+        auto* structSym = varSym->getType()->as<StructSymbol>();
+        if (structSym && structSym->needsCleanup()) {
+            registerRAII(alloca, getOrCreateStructCleanupFn(structSym));
         }
     }
 
-    // Register RAII for closure-typed variables (release envPtr at scope exit)
-    // No initializer check — null-initialized closures also need RAII cleanup
-    if (varSym->type && varSym->type->is<FunctionType>()) {
+    // Register RAII for closure-typed variables
+    if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
         registerRAII(alloca, getOrCreateClosureReleaseWrapper());
     }
 }
 
 void IRGenerator::visit(TupleDestructuringDeclaration& node) {
-    // Emit initializer → produces a struct/tuple value
     node.initializer->accept(*this);
     llvm::Value* tupleVal = lastValue_;
     if (!tupleVal) return;
 
-    // For each binding: extractvalue, alloca, store
     for (size_t i = 0; i < node.elements.size(); i++) {
-        auto& elem = node.elements[i];
         llvm::Value* elemVal = builder_.CreateExtractValue(tupleVal, {(unsigned)i},
-                                                           elem.name);
-
-        // Look up the variable symbol
-        auto* sym = currentScope_->lookupLocal(elem.name);
-        if (sym) {
+                                                           node.elements[i].name);
+        if (i < node.resolvedVariables.size() && node.resolvedVariables[i]) {
+            auto* varSym = node.resolvedVariables[i].get();
             auto* alloca = createEntryBlockAlloca(currentFunction_,
-                                                   elemVal->getType(), elem.name);
+                                                   elemVal->getType(), node.elements[i].name);
             builder_.CreateStore(elemVal, alloca);
-            namedValues_[sym] = alloca;
+            namedValues_[varSym] = alloca;
         }
     }
 }
@@ -2392,18 +1944,15 @@ void IRGenerator::visit(CharLiteral& node) {
 }
 
 void IRGenerator::visit(StringLiteral& node) {
-    // Deduplicate string constants
     auto it = stringConstants_.find(node.value);
     if (it != stringConstants_.end()) {
-        // With opaque pointers, GlobalVariable* is already ptr type
         lastValue_ = it->second;
         return;
     }
     lastValue_ = builder_.CreateGlobalStringPtr(node.value, "str");
 }
 
-void IRGenerator::visit(InterpolatedString& node) {
-    // Build format string and collect expression values
+void IRGenerator::visit(InterpolatedStringExpression& node) {
     std::string formatStr;
     std::vector<llvm::Value*> args;
 
@@ -2411,14 +1960,13 @@ void IRGenerator::visit(InterpolatedString& node) {
         if (part.kind == InterpolatedPartKind::Text) {
             formatStr += part.text;
         } else {
-            // Expression part — emit and determine format specifier
             part.expression->accept(*this);
             llvm::Value* val = lastValue_;
             if (!val) continue;
 
-            const Type* exprType = part.expression->resolvedType.get();
+            TypeSymbol* exprType = part.expression->resolvedType ?
+                part.expression->resolvedType->as<TypeSymbol>() : nullptr;
             if (isFloatingKind(exprType)) {
-                // Promote float to double for printf
                 if (val->getType()->isFloatTy()) {
                     val = builder_.CreateFPExt(val,
                         llvm::Type::getDoubleTy(context_), "fpext");
@@ -2437,29 +1985,22 @@ void IRGenerator::visit(InterpolatedString& node) {
         }
     }
 
-    // Heap-allocate buffer: two-pass snprintf (get length, then format)
     auto ptrTy = llvm::PointerType::getUnqual(context_);
     auto i32Ty = llvm::Type::getInt32Ty(context_);
     auto i64Ty = llvm::Type::getInt64Ty(context_);
 
     llvm::Value* fmtStr = builder_.CreateGlobalStringPtr(formatStr, "fmt");
 
-    // Declare snprintf
     auto snprintfCallee = module_->getOrInsertFunction("snprintf",
         llvm::FunctionType::get(i32Ty, {ptrTy, i32Ty, ptrTy}, true));
 
-    // Pass 1: snprintf(nullptr, 0, fmt, args...) to get required length
     std::vector<llvm::Value*> sizeArgs;
-    sizeArgs.push_back(llvm::ConstantPointerNull::get(
-        llvm::PointerType::getUnqual(context_)));
+    sizeArgs.push_back(llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_)));
     sizeArgs.push_back(llvm::ConstantInt::get(i32Ty, 0));
     sizeArgs.push_back(fmtStr);
-    for (auto* arg : args) {
-        sizeArgs.push_back(arg);
-    }
+    for (auto* arg : args) sizeArgs.push_back(arg);
     llvm::Value* needed = builder_.CreateCall(snprintfCallee, sizeArgs, "snprintf.len");
 
-    // malloc(needed + 1)
     llvm::Value* needed64 = builder_.CreateSExt(needed, i64Ty, "needed.i64");
     llvm::Value* allocSize = builder_.CreateAdd(needed64,
         llvm::ConstantInt::get(i64Ty, 1), "alloc.size");
@@ -2467,19 +2008,15 @@ void IRGenerator::visit(InterpolatedString& node) {
         llvm::FunctionType::get(ptrTy, {i64Ty}, false));
     llvm::Value* buf = builder_.CreateCall(mallocCallee, {allocSize}, "interp.buf");
 
-    // Pass 2: snprintf(buf, needed + 1, fmt, args...)
     llvm::Value* bufSize = builder_.CreateAdd(needed,
         llvm::ConstantInt::get(i32Ty, 1), "buf.size");
     std::vector<llvm::Value*> fmtArgs;
     fmtArgs.push_back(buf);
     fmtArgs.push_back(bufSize);
     fmtArgs.push_back(fmtStr);
-    for (auto* arg : args) {
-        fmtArgs.push_back(arg);
-    }
+    for (auto* arg : args) fmtArgs.push_back(arg);
     builder_.CreateCall(snprintfCallee, fmtArgs);
 
-    // Register for RAII cleanup
     registerRAII(buf, getOrCreateStringFreeFn());
     lastValue_ = buf;
 }
@@ -2495,17 +2032,17 @@ void IRGenerator::visit(IdentifierExpression& node) {
         return;
     }
 
-    // Function symbol → return function pointer
+    // Function symbol -> return function pointer
     if (node.resolvedSymbol->is<FunctionSymbol>()) {
-        auto it = functionCache_.find(node.resolvedSymbol);
+        auto it = functionCache_.find(node.resolvedSymbol.get());
         if (it != functionCache_.end()) {
             lastValue_ = it->second;
             return;
         }
     }
 
-    // Variable symbol → load from alloca
-    auto it = namedValues_.find(node.resolvedSymbol);
+    // Variable symbol -> load from alloca
+    auto it = namedValues_.find(node.resolvedSymbol.get());
     if (it != namedValues_.end()) {
         llvm::Type* loadTy = mapType(node.resolvedType);
         if (loadTy->isVoidTy()) {
@@ -2520,31 +2057,43 @@ void IRGenerator::visit(IdentifierExpression& node) {
 }
 
 void IRGenerator::visit(QualifiedNameExpression& node) {
-    // Handle enum member access: TokenKind.Plus → constant int/string
+    // Enum member access (resolved by TypeChecker)
+    if (node.isEnumAccess) {
+        // String-backed enum → global string pointer
+        if (node.isStringEnumAccess) {
+            lastValue_ = builder_.CreateGlobalStringPtr(
+                node.resolvedEnumStringValue, "enum.str");
+            return;
+        }
+        // Integer-backed enum → constant int with underlying type
+        llvm::Type* enumTy = llvm::Type::getInt32Ty(context_);
+        if (node.resolvedSymbol) {
+            if (auto* enumSym = node.resolvedSymbol->as<EnumSymbol>()) {
+                if (enumSym->underlyingType) {
+                    enumTy = mapType(enumSym->underlyingType);
+                }
+            }
+        }
+        lastValue_ = llvm::ConstantInt::get(enumTy, node.resolvedEnumValue);
+        return;
+    }
+
+    // Fallback: try scope-based resolution
     if (node.resolvedSymbol) {
         if (auto* enumSym = node.resolvedSymbol->as<EnumSymbol>()) {
-            // Last part is the member name
-            const auto& parts = node.qualifiedName.parts;
-            if (parts.size() >= 2) {
-                const auto& memberName = parts.back();
-                for (const auto& member : enumSym->members) {
-                    if (member.name == memberName) {
-                        if (member.isString) {
-                            lastValue_ = builder_.CreateGlobalStringPtr(
-                                member.stringValue, "enum.str");
-                        } else {
-                            llvm::Type* enumTy = enumSym->underlyingType
-                                ? mapType(enumSym->underlyingType)
-                                : llvm::Type::getInt32Ty(context_);
-                            lastValue_ = llvm::ConstantInt::get(enumTy, member.value);
-                        }
-                        return;
-                    }
+            if (node.parts.size() >= 2) {
+                const auto& memberName = node.parts.back();
+                auto* member = enumSym->findMember(memberName);
+                if (member) {
+                    llvm::Type* enumTy = enumSym->underlyingType
+                        ? mapType(enumSym->underlyingType)
+                        : llvm::Type::getInt32Ty(context_);
+                    lastValue_ = llvm::ConstantInt::get(enumTy, member->intValue);
+                    return;
                 }
             }
         }
     }
-
     lastValue_ = nullptr;
 }
 
@@ -2553,14 +2102,13 @@ void IRGenerator::visit(ThisExpression& /*node*/) {
 }
 
 void IRGenerator::visit(MemberAccessExpression& node) {
-    // Handle static method access: ClassName.staticMethod
-    // This just produces a null placeholder — the actual call is handled in CallExpression
+    // Static access: no runtime value until called
     if (node.isStaticAccess) {
-        lastValue_ = nullptr;  // Static access has no runtime value until called
+        lastValue_ = nullptr;
         return;
     }
 
-    // Handle enum member access: Color.Red → constant int/string
+    // Enum member access
     if (node.isEnumAccess) {
         if (node.isStringEnumAccess) {
             lastValue_ = builder_.CreateGlobalStringPtr(
@@ -2568,12 +2116,9 @@ void IRGenerator::visit(MemberAccessExpression& node) {
         } else {
             llvm::Type* enumTy = llvm::Type::getInt32Ty(context_);
             if (node.resolvedType) {
-                if (auto* user = node.resolvedType->as<UserType>()) {
-                    if (user->underlyingKind == Type::Kind::Enum) {
-                        auto* enumSym = static_cast<EnumSymbol*>(user->symbol);
-                        if (enumSym && enumSym->underlyingType) {
-                            enumTy = mapType(enumSym->underlyingType);
-                        }
+                if (auto* enumSym = node.resolvedType->as<EnumSymbol>()) {
+                    if (enumSym->underlyingType) {
+                        enumTy = mapType(enumSym->underlyingType);
                     }
                 }
             }
@@ -2582,29 +2127,21 @@ void IRGenerator::visit(MemberAccessExpression& node) {
         return;
     }
 
-    // Get lvalue (pointer to field)
+    // Get lvalue
     llvm::Value* fieldPtr = emitLValue(node);
     if (!fieldPtr) {
         lastValue_ = nullptr;
         return;
     }
 
-    // Check if this is a method access vs a closure-typed field
-    if (node.resolvedType && node.resolvedType->is<FunctionType>()) {
-        // Distinguish closure fields (VariableSymbol) from methods (FunctionSymbol).
-        // Closure fields must be loaded as fat pointer values; methods pass through as GEP.
-        const Type* objType = node.object->resolvedType.get();
-        if (auto* pt = objType->as<PointerType>()) objType = pt->baseType.get();
-        if (auto* ut = objType->as<UserType>()) {
-            auto* typeSym = static_cast<TypeSymbol*>(ut->symbol);
-            auto* fieldSym = typeSym->findField(node.memberName);
-            if (fieldSym && fieldSym->type && fieldSym->type->is<FunctionType>()) {
-                // Closure-typed field — load the fat pointer value
-                lastValue_ = builder_.CreateLoad(getFatPtrType(), fieldPtr, node.memberName);
-                return;
-            }
+    // Check if this is a closure-typed field (must load fat pointer, not pass through)
+    if (node.resolvedType && node.resolvedType->is<FunctionTypeSymbol>()) {
+        auto* fieldSym = node.resolvedSymbol ? node.resolvedSymbol->as<VariableSymbol>() : nullptr;
+        if (fieldSym && fieldSym->getType() && fieldSym->getType()->is<FunctionTypeSymbol>()) {
+            lastValue_ = builder_.CreateLoad(getFatPtrType(), fieldPtr, node.memberName);
+            return;
         }
-        // Method reference — just pass through, CallExpression handles it
+        // Method reference — pass through
         lastValue_ = fieldPtr;
         return;
     }
@@ -2619,15 +2156,14 @@ void IRGenerator::visit(MemberAccessExpression& node) {
 }
 
 void IRGenerator::visit(BinaryExpression& node) {
-    // Check operator overload first
+    // Operator overload
     if (node.isOperatorOverload && node.resolvedOperatorFunction) {
-        auto it = functionCache_.find(node.resolvedOperatorFunction);
+        auto it = functionCache_.find(node.resolvedOperatorFunction.get());
         if (it != functionCache_.end()) {
             llvm::Value* lhsPtr = emitLValue(*node.left);
             if (!lhsPtr) {
                 node.left->accept(*this);
                 lhsPtr = lastValue_;
-                // If lhs is a struct value (not a pointer), store in temp alloca
                 if (lhsPtr && lhsPtr->getType()->isStructTy()) {
                     auto* tmp = createEntryBlockAlloca(currentFunction_,
                         lhsPtr->getType(), "op.lhs.tmp");
@@ -2636,21 +2172,17 @@ void IRGenerator::visit(BinaryExpression& node) {
                 }
             }
             node.right->accept(*this);
-            llvm::Value* rhsVal = lastValue_;
+            llvm::Value* rhsArg = lastValue_;
 
-            // Pass rhs by pointer if it's a struct type
-            llvm::Value* rhsArg = rhsVal;
             if (node.right->resolvedType && isUserStructKind(node.right->resolvedType.get())) {
-                rhsArg = emitLValue(*node.right);
-                if (!rhsArg) {
-                    rhsArg = rhsVal;
-                    // If rhs is a struct value, store in temp alloca
-                    if (rhsArg && rhsArg->getType()->isStructTy()) {
-                        auto* tmp = createEntryBlockAlloca(currentFunction_,
-                            rhsArg->getType(), "op.rhs.tmp");
-                        builder_.CreateStore(rhsArg, tmp);
-                        rhsArg = tmp;
-                    }
+                llvm::Value* rhsPtr = emitLValue(*node.right);
+                if (rhsPtr) {
+                    rhsArg = rhsPtr;
+                } else if (rhsArg && rhsArg->getType()->isStructTy()) {
+                    auto* tmp = createEntryBlockAlloca(currentFunction_,
+                        rhsArg->getType(), "op.rhs.tmp");
+                    builder_.CreateStore(rhsArg, tmp);
+                    rhsArg = tmp;
                 }
             }
 
@@ -2716,13 +2248,12 @@ void IRGenerator::visit(BinaryExpression& node) {
         return;
     }
 
-    const Type* leftType = node.left->resolvedType.get();
-    const Type* rightType = node.right->resolvedType.get();
+    TypeSymbol* leftType = node.left->resolvedType ?
+        node.left->resolvedType->as<TypeSymbol>() : nullptr;
+    TypeSymbol* rightType = node.right->resolvedType ?
+        node.right->resolvedType->as<TypeSymbol>() : nullptr;
 
-    // IMPORTANT: String checks must come BEFORE pointer checks because
-    // isPointerKind() returns true for strings. Order matters!
-
-    // String concatenation: s1 + s2
+    // String concatenation
     if (isStringKind(leftType) && isStringKind(rightType) && node.op == BinaryOp::Add) {
         lastValue_ = emitStringConcat(leftVal, rightVal);
         return;
@@ -2732,7 +2263,7 @@ void IRGenerator::visit(BinaryExpression& node) {
     if (isPointerKind(leftType) && isIntegerKind(rightType) &&
         (node.op == BinaryOp::Add || node.op == BinaryOp::Sub)) {
         llvm::Type* elemTy = llvm::Type::getInt8Ty(context_);
-        if (auto* ptrTy = leftType->as<PointerType>()) {
+        if (auto* ptrTy = leftType->as<PointerTypeSymbol>()) {
             elemTy = mapType(ptrTy->baseType);
         }
         if (node.op == BinaryOp::Add) {
@@ -2743,16 +2274,8 @@ void IRGenerator::visit(BinaryExpression& node) {
         }
         return;
     }
-    if (isIntegerKind(leftType) && isPointerKind(rightType) && node.op == BinaryOp::Add) {
-        llvm::Type* elemTy = llvm::Type::getInt8Ty(context_);
-        if (auto* ptrTy = rightType->as<PointerType>()) {
-            elemTy = mapType(ptrTy->baseType);
-        }
-        lastValue_ = builder_.CreateGEP(elemTy, rightVal, leftVal, "ptr.add");
-        return;
-    }
 
-    // String content comparison: s1 == s2, s1 != s2 (via strcmp)
+    // String comparison via strcmp
     if (isStringKind(leftType) && isStringKind(rightType)) {
         if (node.op == BinaryOp::Equal || node.op == BinaryOp::NotEqual) {
             auto ptrTy = llvm::PointerType::getUnqual(context_);
@@ -2761,62 +2284,42 @@ void IRGenerator::visit(BinaryExpression& node) {
                 llvm::FunctionType::get(i32Ty, {ptrTy, ptrTy}, false));
             llvm::Value* cmp = builder_.CreateCall(strcmpCallee, {leftVal, rightVal}, "strcmp");
             if (node.op == BinaryOp::Equal) {
-                lastValue_ = builder_.CreateICmpEQ(cmp,
-                    llvm::ConstantInt::get(i32Ty, 0), "str.eq");
+                lastValue_ = builder_.CreateICmpEQ(cmp, llvm::ConstantInt::get(i32Ty, 0), "str.eq");
             } else {
-                lastValue_ = builder_.CreateICmpNE(cmp,
-                    llvm::ConstantInt::get(i32Ty, 0), "str.ne");
+                lastValue_ = builder_.CreateICmpNE(cmp, llvm::ConstantInt::get(i32Ty, 0), "str.ne");
             }
             return;
         }
     }
 
-    // Fat pointer (closure/function) null comparison: f == null, null == f, f == g
-    if ((leftType && leftType->is<FunctionType>()) ||
-        (rightType && rightType->is<FunctionType>())) {
-        if (node.op == BinaryOp::Equal || node.op == BinaryOp::NotEqual) {
-            auto* ptrTy = llvm::PointerType::getUnqual(context_);
-            auto* nullPtr = llvm::ConstantPointerNull::get(ptrTy);
-            llvm::Value* lhsFnPtr = nullptr;
-            llvm::Value* rhsFnPtr = nullptr;
-
-            // Extract fnPtr (index 0) from fat pointer side(s)
-            if (leftType && leftType->is<FunctionType>()) {
-                lhsFnPtr = builder_.CreateExtractValue(leftVal, {0}, "lhs.fnptr");
-            } else {
-                // Left is null literal (bare ptr) — treat as null fnPtr
-                lhsFnPtr = nullPtr;
-            }
-            if (rightType && rightType->is<FunctionType>()) {
-                rhsFnPtr = builder_.CreateExtractValue(rightVal, {0}, "rhs.fnptr");
-            } else {
-                // Right is null literal (bare ptr) — treat as null fnPtr
-                rhsFnPtr = nullPtr;
-            }
-
-            if (node.op == BinaryOp::Equal) {
-                lastValue_ = builder_.CreateICmpEQ(lhsFnPtr, rhsFnPtr, "fatptr.eq");
-            } else {
-                lastValue_ = builder_.CreateICmpNE(lhsFnPtr, rhsFnPtr, "fatptr.ne");
-            }
-            return;
+    // Fat pointer null comparison
+    if ((isFunctionKind(leftType) || isFunctionKind(rightType)) &&
+        (node.op == BinaryOp::Equal || node.op == BinaryOp::NotEqual)) {
+        auto* ptrTy = llvm::PointerType::getUnqual(context_);
+        auto* nullPtr = llvm::ConstantPointerNull::get(ptrTy);
+        llvm::Value* lhsFnPtr = isFunctionKind(leftType)
+            ? builder_.CreateExtractValue(leftVal, {0}, "lhs.fnptr") : nullPtr;
+        llvm::Value* rhsFnPtr = isFunctionKind(rightType)
+            ? builder_.CreateExtractValue(rightVal, {0}, "rhs.fnptr") : nullPtr;
+        if (node.op == BinaryOp::Equal) {
+            lastValue_ = builder_.CreateICmpEQ(lhsFnPtr, rhsFnPtr, "fatptr.eq");
+        } else {
+            lastValue_ = builder_.CreateICmpNE(lhsFnPtr, rhsFnPtr, "fatptr.ne");
         }
+        return;
     }
 
     // Pointer comparison
     if (isPointerKind(leftType) || isPointerKind(rightType)) {
-        switch (node.op) {
-            case BinaryOp::Equal:
-                lastValue_ = builder_.CreateICmpEQ(leftVal, rightVal, "ptr.eq");
-                return;
-            case BinaryOp::NotEqual:
-                lastValue_ = builder_.CreateICmpNE(leftVal, rightVal, "ptr.ne");
-                return;
-            default: break;
+        if (node.op == BinaryOp::Equal) {
+            lastValue_ = builder_.CreateICmpEQ(leftVal, rightVal, "ptr.eq"); return;
+        }
+        if (node.op == BinaryOp::NotEqual) {
+            lastValue_ = builder_.CreateICmpNE(leftVal, rightVal, "ptr.ne"); return;
         }
     }
 
-    // Type widening: if one is int and other is double, widen the int
+    // Type widening
     bool leftIsFloat = isFloatingKind(leftType);
     bool rightIsFloat = isFloatingKind(rightType);
     bool leftIsInt = isIntegerKind(leftType);
@@ -2824,12 +2327,10 @@ void IRGenerator::visit(BinaryExpression& node) {
 
     if (leftIsInt && rightIsFloat) {
         leftVal = builder_.CreateSIToFP(leftVal, rightVal->getType(), "widen");
-        leftIsFloat = true;
-        leftIsInt = false;
+        leftIsFloat = true; leftIsInt = false;
     } else if (leftIsFloat && rightIsInt) {
         rightVal = builder_.CreateSIToFP(rightVal, leftVal->getType(), "widen");
-        rightIsFloat = true;
-        rightIsInt = false;
+        rightIsFloat = true; rightIsInt = false;
     }
 
     // Floating-point operations
@@ -2852,7 +2353,6 @@ void IRGenerator::visit(BinaryExpression& node) {
 
     // Integer operations
     if (leftIsInt && rightIsInt) {
-        // Ensure same width
         if (leftVal->getType() != rightVal->getType()) {
             if (leftVal->getType()->getIntegerBitWidth() < rightVal->getType()->getIntegerBitWidth()) {
                 leftVal = builder_.CreateSExt(leftVal, rightVal->getType(), "sext");
@@ -2860,7 +2360,6 @@ void IRGenerator::visit(BinaryExpression& node) {
                 rightVal = builder_.CreateSExt(rightVal, leftVal->getType(), "sext");
             }
         }
-
         switch (node.op) {
             case BinaryOp::Add: lastValue_ = builder_.CreateAdd(leftVal, rightVal, "add"); return;
             case BinaryOp::Sub: lastValue_ = builder_.CreateSub(leftVal, rightVal, "sub"); return;
@@ -2882,28 +2381,24 @@ void IRGenerator::visit(BinaryExpression& node) {
         }
     }
 
-    // Bool operations
+    // Bool comparison
     if (isBoolKind(leftType) && isBoolKind(rightType)) {
-        switch (node.op) {
-            case BinaryOp::Equal:    lastValue_ = builder_.CreateICmpEQ(leftVal, rightVal, "eq"); return;
-            case BinaryOp::NotEqual: lastValue_ = builder_.CreateICmpNE(leftVal, rightVal, "ne"); return;
-            default: break;
-        }
+        if (node.op == BinaryOp::Equal) { lastValue_ = builder_.CreateICmpEQ(leftVal, rightVal, "eq"); return; }
+        if (node.op == BinaryOp::NotEqual) { lastValue_ = builder_.CreateICmpNE(leftVal, rightVal, "ne"); return; }
     }
 
     lastValue_ = nullptr;
 }
 
 void IRGenerator::visit(UnaryExpression& node) {
-    const Type* operandType = node.operand->resolvedType.get();
+    TypeSymbol* operandType = node.operand->resolvedType ?
+        node.operand->resolvedType->as<TypeSymbol>() : nullptr;
 
-    // Address-of: return lvalue (pointer)
     if (node.op == UnaryOp::AddressOf) {
         lastValue_ = emitLValue(*node.operand);
         return;
     }
 
-    // Pre/Post increment/decrement need lvalue
     if (node.op == UnaryOp::PreIncrement || node.op == UnaryOp::PreDecrement ||
         node.op == UnaryOp::PostIncrement || node.op == UnaryOp::PostDecrement) {
         llvm::Value* ptr = emitLValue(*node.operand);
@@ -2911,13 +2406,9 @@ void IRGenerator::visit(UnaryExpression& node) {
 
         llvm::Type* valTy = mapType(operandType);
         llvm::Value* oldVal = builder_.CreateLoad(valTy, ptr, "old");
-        llvm::Value* one;
-
-        if (isFloatingKind(operandType)) {
-            one = llvm::ConstantFP::get(valTy, 1.0);
-        } else {
-            one = llvm::ConstantInt::get(valTy, 1);
-        }
+        llvm::Value* one = isFloatingKind(operandType)
+            ? (llvm::Value*)llvm::ConstantFP::get(valTy, 1.0)
+            : (llvm::Value*)llvm::ConstantInt::get(valTy, 1);
 
         llvm::Value* newVal;
         if (node.op == UnaryOp::PreIncrement || node.op == UnaryOp::PostIncrement) {
@@ -2936,7 +2427,6 @@ void IRGenerator::visit(UnaryExpression& node) {
         return;
     }
 
-    // Evaluate operand
     node.operand->accept(*this);
     llvm::Value* val = lastValue_;
     if (!val) { lastValue_ = nullptr; return; }
@@ -2949,23 +2439,18 @@ void IRGenerator::visit(UnaryExpression& node) {
                 lastValue_ = builder_.CreateNeg(val, "neg");
             }
             break;
-
         case UnaryOp::LogicalNot:
             if (!val->getType()->isIntegerTy(1)) {
-                val = builder_.CreateICmpNE(val,
-                    llvm::ConstantInt::get(val->getType(), 0));
+                val = builder_.CreateICmpNE(val, llvm::ConstantInt::get(val->getType(), 0));
             }
             lastValue_ = builder_.CreateXor(val, llvm::ConstantInt::getTrue(context_), "not");
             break;
-
         case UnaryOp::BitwiseNot:
             lastValue_ = builder_.CreateNot(val, "bitnot");
             break;
-
         case UnaryOp::Dereference: {
-            // Load from pointer
             llvm::Type* pointeeTy = llvm::Type::getInt8Ty(context_);
-            if (auto* ptrTy = operandType->as<PointerType>()) {
+            if (auto* ptrTy = operandType ? operandType->as<PointerTypeSymbol>() : nullptr) {
                 pointeeTy = mapType(ptrTy->baseType);
             }
             if (!pointeeTy->isVoidTy()) {
@@ -2973,59 +2458,50 @@ void IRGenerator::visit(UnaryExpression& node) {
             }
             break;
         }
-
-        default:
-            break;
+        default: break;
     }
 }
 
 void IRGenerator::visit(AssignmentExpression& node) {
-    // Get lvalue (pointer to target)
     llvm::Value* targetPtr = emitLValue(*node.target);
     if (!targetPtr) { lastValue_ = nullptr; return; }
 
+    TypeSymbol* targetType = node.target->resolvedType ?
+        node.target->resolvedType->as<TypeSymbol>() : nullptr;
+
     if (node.op == AssignOp::Assign) {
-        // Release old closure envPtr before overwriting a closure variable
-        if (node.target->resolvedType && node.target->resolvedType->is<FunctionType>()) {
+        // Release old closure envPtr before overwriting
+        if (isFunctionKind(targetType)) {
             auto* oldFat = builder_.CreateLoad(getFatPtrType(), targetPtr, "old.fat");
             auto* oldEnv = builder_.CreateExtractValue(oldFat, {1}, "old.env");
             builder_.CreateCall(getOrCreateClosureReleaseFn(), {oldEnv});
         }
 
-        // Simple assignment
         node.value->accept(*this);
         if (lastValue_) {
-            // Convert null → zero fat pointer for FunctionType assignments
-            if (node.target->resolvedType && node.target->resolvedType->is<FunctionType>() &&
-                llvm::isa<llvm::ConstantPointerNull>(lastValue_)) {
+            // Convert null -> zero fat pointer
+            if (isFunctionKind(targetType) && llvm::isa<llvm::ConstantPointerNull>(lastValue_)) {
                 lastValue_ = llvm::ConstantAggregateZero::get(getFatPtrType());
             }
 
             builder_.CreateStore(lastValue_, targetPtr);
 
-            // Retain new closure envPtr when storing into a field (struct/class).
-            // Local variable reassignment doesn't need this — RAII handles it.
-            // Field stores need retain because the source variable's RAII will
-            // release its own reference at scope exit.
-            if (node.target->resolvedType && node.target->resolvedType->is<FunctionType>() &&
-                node.target->as<MemberAccessExpression>()) {
+            // Retain new closure envPtr when storing into a field
+            if (isFunctionKind(targetType) && node.target->as<MemberAccessExpression>()) {
                 auto* newEnv = builder_.CreateExtractValue(lastValue_, {1}, "new.env");
                 builder_.CreateCall(getOrCreateClosureRetainFn(), {newEnv});
             }
         }
     } else {
-        // Compound assignment: load, operate, store
-        llvm::Type* valTy = mapType(node.target->resolvedType);
+        // Compound assignment
+        llvm::Type* valTy = mapType(targetType);
         llvm::Value* oldVal = builder_.CreateLoad(valTy, targetPtr, "old");
 
         node.value->accept(*this);
         llvm::Value* rhsVal = lastValue_;
         if (!rhsVal) return;
 
-        const Type* targetType = node.target->resolvedType.get();
         bool isFloat = isFloatingKind(targetType);
-
-        // Type widen rhs if needed
         if (isFloat && rhsVal->getType()->isIntegerTy()) {
             rhsVal = builder_.CreateSIToFP(rhsVal, oldVal->getType(), "widen");
         }
@@ -3033,10 +2509,7 @@ void IRGenerator::visit(AssignmentExpression& node) {
         llvm::Value* result = nullptr;
         switch (node.op) {
             case AssignOp::AddAssign:
-                if (isStringKind(targetType)) {
-                    result = emitStringConcat(oldVal, rhsVal);
-                    break;
-                }
+                if (isStringKind(targetType)) { result = emitStringConcat(oldVal, rhsVal); break; }
                 result = isFloat ? builder_.CreateFAdd(oldVal, rhsVal, "add")
                                  : builder_.CreateAdd(oldVal, rhsVal, "add"); break;
             case AssignOp::SubAssign:
@@ -3112,30 +2585,25 @@ void IRGenerator::visit(CallExpression& node) {
     bool isVirtualCall = false;
     FunctionSymbol* virtualMethodSym = nullptr;
     ClassSymbol* virtualCallClass = nullptr;
-    FunctionSymbol* calleeFuncSym = nullptr;  // tracks resolved callee for ref params
+    FunctionSymbol* calleeFuncSym = nullptr;
     std::vector<llvm::Value*> args;
+
+    // V2: use resolvedCallee for direct calls
+    if (node.resolvedCallee) {
+        calleeFuncSym = node.resolvedCallee.get();
+    }
 
     // Method call: callee is MemberAccessExpression
     if (auto* memAccess = node.callee->as<MemberAccessExpression>()) {
-        // Static method call: ClassName.staticMethod(args) — no this pointer
-        if (memAccess->isStaticAccess) {
-            const Type* objType = memAccess->object->resolvedType.get();
-            if (auto* userType = objType->as<UserType>()) {
-                auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-                auto* methodSym = typeSym->findMethod(memAccess->memberName);
-                if (methodSym) {
-                    auto it = functionCache_.find(methodSym);
-                    if (it != functionCache_.end()) {
-                        calleeFn = it->second;
-                        calleeFuncSym = methodSym;
-                    }
-                }
+        // Static method call
+        if (memAccess->isStaticAccess && calleeFuncSym) {
+            auto it = functionCache_.find(calleeFuncSym);
+            if (it != functionCache_.end()) {
+                calleeFn = it->second;
             }
-            // No thisPtr for static methods — skip to arg evaluation
         }
-        // String built-in methods: length(), charAt(i), substring(start, len)
-        else
-        if (memAccess->isStringBuiltinMethod) {
+        // String built-in methods
+        else if (memAccess->isStringBuiltinMethod) {
             memAccess->object->accept(*this);
             llvm::Value* strVal = lastValue_;
             if (!strVal) { lastValue_ = nullptr; return; }
@@ -3149,14 +2617,11 @@ void IRGenerator::visit(CallExpression& node) {
                 auto strlenCallee = module_->getOrInsertFunction("strlen",
                     llvm::FunctionType::get(i64Ty, {ptrTy}, false));
                 llvm::Value* len = builder_.CreateCall(strlenCallee, {strVal}, "strlen");
-                // Truncate i64 to i32 (Mingus int is i32)
                 lastValue_ = builder_.CreateTrunc(len, i32Ty, "len.i32");
             } else if (memAccess->memberName == "charAt") {
-                // Evaluate index argument
-                if (!node.arguments.empty() && node.arguments[0]) {
-                    node.arguments[0]->accept(*this);
+                if (node.arguments && !node.arguments->expressions.empty()) {
+                    node.arguments->expressions[0]->accept(*this);
                     llvm::Value* idx = lastValue_;
-                    // Sign-extend i32 index to i64 for GEP
                     if (idx->getType()->isIntegerTy(32)) {
                         idx = builder_.CreateSExt(idx, i64Ty, "idx.i64");
                     }
@@ -3166,286 +2631,246 @@ void IRGenerator::visit(CallExpression& node) {
                     lastValue_ = llvm::ConstantInt::get(i8Ty, 0);
                 }
             } else if (memAccess->memberName == "substring") {
-                // Evaluate args: start, len
                 llvm::Value* start = nullptr;
                 llvm::Value* len = nullptr;
-                if (node.arguments.size() >= 2) {
-                    node.arguments[0]->accept(*this);
+                if (node.arguments && node.arguments->expressions.size() >= 2) {
+                    node.arguments->expressions[0]->accept(*this);
                     start = lastValue_;
-                    node.arguments[1]->accept(*this);
+                    node.arguments->expressions[1]->accept(*this);
                     len = lastValue_;
                 }
                 if (!start || !len) { lastValue_ = nullptr; return; }
 
-                // Sign-extend to i64
-                if (start->getType()->isIntegerTy(32)) {
+                if (start->getType()->isIntegerTy(32))
                     start = builder_.CreateSExt(start, i64Ty, "start.i64");
-                }
-                if (len->getType()->isIntegerTy(32)) {
+                if (len->getType()->isIntegerTy(32))
                     len = builder_.CreateSExt(len, i64Ty, "len.i64");
-                }
 
-                // malloc(len + 1)
                 auto mallocCallee = module_->getOrInsertFunction("malloc",
                     llvm::FunctionType::get(ptrTy, {i64Ty}, false));
                 llvm::Value* allocSize = builder_.CreateAdd(len,
                     llvm::ConstantInt::get(i64Ty, 1), "alloc.size");
                 llvm::Value* buf = builder_.CreateCall(mallocCallee, {allocSize}, "sub.buf");
 
-                // memcpy(buf, str + start, len)
                 auto memcpyCallee = module_->getOrInsertFunction("memcpy",
                     llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy, i64Ty}, false));
                 llvm::Value* srcPtr = builder_.CreateGEP(i8Ty, strVal, start, "sub.src");
                 builder_.CreateCall(memcpyCallee, {buf, srcPtr, len});
 
-                // Null-terminate: buf[len] = 0
                 llvm::Value* endPtr = builder_.CreateGEP(i8Ty, buf, len, "sub.end");
                 builder_.CreateStore(llvm::ConstantInt::get(i8Ty, 0), endPtr);
 
-                // Register for RAII cleanup
                 registerRAII(buf, getOrCreateStringFreeFn());
                 lastValue_ = buf;
             }
             return;
         }
+        // Interface dispatch
+        else if (memAccess->isArrow && memAccess->object && memAccess->object->resolvedType) {
+            TypeSymbol* testObjType = memAccess->object->resolvedType->as<TypeSymbol>();
+            if (auto* testPtrTy = testObjType ? testObjType->as<PointerTypeSymbol>() : nullptr) {
+                if (auto* ifaceSym = testPtrTy->baseType ?
+                    testPtrTy->baseType->as<InterfaceSymbol>() : nullptr) {
+                    memAccess->object->accept(*this);
+                    llvm::Value* fat = lastValue_;
+                    llvm::Value* objPtr = builder_.CreateExtractValue(fat, {0}, "iface.obj");
+                    llvm::Value* itable = builder_.CreateExtractValue(fat, {1}, "iface.itable");
 
-        // Interface dispatch: d->method() where d is an interface fat pointer
-        if (memAccess->isArrow && memAccess->object && memAccess->object->resolvedType) {
-            const Type* testObjType = memAccess->object->resolvedType.get();
-            if (auto* testPtrTy = testObjType->as<PointerType>()) {
-                if (auto* testUser = testPtrTy->baseType->as<UserType>()) {
-                    if (testUser->underlyingKind == Type::Kind::Interface) {
-                        // Load the fat pointer {objPtr, itable}
-                        memAccess->object->accept(*this);
-                        llvm::Value* fat = lastValue_;
-                        llvm::Value* objPtr = builder_.CreateExtractValue(fat, {0}, "iface.obj");
-                        llvm::Value* itable = builder_.CreateExtractValue(fat, {1}, "iface.itable");
+                    auto methodSym = ifaceSym->findMethod(memAccess->memberName);
+                    if (!methodSym) { lastValue_ = nullptr; return; }
 
-                        auto* ifaceSym = static_cast<InterfaceSymbol*>(testUser->symbol);
-                        auto* methodSym = ifaceSym->findMethod(memAccess->memberName);
-                        if (!methodSym) { lastValue_ = nullptr; return; }
+                    auto* ptrTy2 = llvm::PointerType::getUnqual(context_);
+                    llvm::Value* fnSlot = builder_.CreateGEP(
+                        ptrTy2, itable,
+                        builder_.getInt32(methodSym->vtableIndex),
+                        "iface.slot");
+                    llvm::Value* fn = builder_.CreateLoad(ptrTy2, fnSlot, "iface.fn");
 
-                        // GEP into itable to the method slot
-                        auto* ptrTy2 = llvm::PointerType::getUnqual(context_);
-                        llvm::Value* fnSlot = builder_.CreateGEP(
-                            ptrTy2, itable,
-                            builder_.getInt32(methodSym->vtableIndex),
-                            "iface.slot");
-                        llvm::Value* fn = builder_.CreateLoad(ptrTy2, fnSlot, "iface.fn");
-
-                        // Build args: objPtr (this) + explicit call args
-                        std::vector<llvm::Value*> ifaceArgs = {objPtr};
-                        for (auto& arg : node.arguments) {
-                            if (arg) {
-                                arg->accept(*this);
-                                if (lastValue_) {
-                                    if (arg->resolvedType && isUserStructKind(arg->resolvedType.get())) {
-                                        llvm::Value* argPtr = emitLValue(*arg);
-                                        if (argPtr) { ifaceArgs.push_back(argPtr); continue; }
-                                    }
-                                    ifaceArgs.push_back(lastValue_);
+                    std::vector<llvm::Value*> ifaceArgs = {objPtr};
+                    if (node.arguments) {
+                        for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
+                            auto& arg = node.arguments->expressions[i];
+                            // V2: use ArgumentsNode::isReference
+                            if (i < node.arguments->isReference.size() && node.arguments->isReference[i]) {
+                                llvm::Value* lval = emitLValue(*arg);
+                                if (lval) { ifaceArgs.push_back(lval); continue; }
+                            }
+                            arg->accept(*this);
+                            if (lastValue_) {
+                                if (arg->resolvedType && isUserStructKind(arg->resolvedType.get())) {
+                                    llvm::Value* argPtr = emitLValue(*arg);
+                                    if (argPtr) { ifaceArgs.push_back(argPtr); continue; }
                                 }
+                                ifaceArgs.push_back(lastValue_);
                             }
                         }
-
-                        auto* fnTy = buildFunctionType(methodSym);
-                        if (fnTy->getReturnType()->isVoidTy()) {
-                            builder_.CreateCall(fnTy, fn, ifaceArgs);
-                            lastValue_ = nullptr;
-                        } else {
-                            lastValue_ = builder_.CreateCall(fnTy, fn, ifaceArgs, "iface.result");
-                        }
-                        return;
                     }
+
+                    auto* fnTy = buildFunctionType(methodSym.get());
+                    if (fnTy->getReturnType()->isVoidTy()) {
+                        builder_.CreateCall(fnTy, fn, ifaceArgs);
+                        lastValue_ = nullptr;
+                    } else {
+                        lastValue_ = builder_.CreateCall(fnTy, fn, ifaceArgs, "iface.result");
+                    }
+                    return;
                 }
             }
         }
 
-        // Get the object pointer (this for the method)
-        if (memAccess->isArrow) {
-            // Arrow call: evaluate object expression to get the pointer value
-            memAccess->object->accept(*this);
-            thisPtr = lastValue_;
-        } else {
-            // Dot call: get lvalue (alloca) of the object — IS the this pointer
-            thisPtr = emitLValue(*memAccess->object);
-            if (!thisPtr) {
+        // Regular method call
+        if (!calleeFn && !memAccess->isStaticAccess && !memAccess->isStringBuiltinMethod) {
+            // Get the object pointer (this for the method)
+            if (memAccess->isArrow) {
                 memAccess->object->accept(*this);
                 thisPtr = lastValue_;
-                // If result is a struct value (not a pointer), store in temp alloca
-                if (thisPtr && thisPtr->getType()->isStructTy()) {
-                    auto* tmp = createEntryBlockAlloca(currentFunction_,
-                        thisPtr->getType(), "method.this.tmp");
-                    builder_.CreateStore(thisPtr, tmp);
-                    thisPtr = tmp;
+            } else {
+                thisPtr = emitLValue(*memAccess->object);
+                if (!thisPtr) {
+                    memAccess->object->accept(*this);
+                    thisPtr = lastValue_;
+                    if (thisPtr && thisPtr->getType()->isStructTy()) {
+                        auto* tmp = createEntryBlockAlloca(currentFunction_,
+                            thisPtr->getType(), "method.this.tmp");
+                        builder_.CreateStore(thisPtr, tmp);
+                        thisPtr = tmp;
+                    }
                 }
             }
-        }
 
-        // Find the method function
-        const Type* objType = memAccess->object->resolvedType.get();
-        if (auto* ptrTy = objType->as<PointerType>()) {
-            objType = ptrTy->baseType.get();
-        }
-        if (auto* userType = objType->as<UserType>()) {
-            auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-            auto* methodSym = typeSym->findMethod(memAccess->memberName);
-            if (methodSym) {
-                auto* classSym = typeSym->as<ClassSymbol>();
-                if (classSym && methodSym->vtableIndex >= 0 && classSym->vtableSize > 0) {
-                    // Virtual dispatch
+            // Find the method
+            TypeSymbol* objType = memAccess->object->resolvedType ?
+                memAccess->object->resolvedType->as<TypeSymbol>() : nullptr;
+            if (auto* ptrTy = objType ? objType->as<PointerTypeSymbol>() : nullptr) {
+                objType = ptrTy->baseType ? ptrTy->baseType->as<TypeSymbol>() : nullptr;
+            }
+
+            if (calleeFuncSym) {
+                auto* classSym = objType ? objType->as<ClassSymbol>() : nullptr;
+                if (classSym && calleeFuncSym->vtableIndex >= 0 && classSym->hasVtable()) {
                     isVirtualCall = true;
-                    virtualMethodSym = methodSym;
+                    virtualMethodSym = calleeFuncSym;
                     virtualCallClass = classSym;
-                    calleeFuncSym = methodSym;
                 } else {
-                    // Direct dispatch (structs, static methods)
-                    auto it = functionCache_.find(methodSym);
+                    auto it = functionCache_.find(calleeFuncSym);
                     if (it != functionCache_.end()) {
                         calleeFn = it->second;
-                        calleeFuncSym = methodSym;
                     }
-                    // Static methods don't take 'this'
-                    if (methodSym->isStatic) {
-                        thisPtr = nullptr;
-                    }
+                    if (calleeFuncSym->isStatic) thisPtr = nullptr;
                 }
             } else {
                 // Not a method — check for closure-typed field
-                auto* fieldSym = typeSym->findField(memAccess->memberName);
-                if (fieldSym && fieldSym->type && fieldSym->type->is<FunctionType>()) {
-                    // Load the fat pointer from the field and use indirect call path
+                auto* fieldSym = memAccess->resolvedSymbol ?
+                    memAccess->resolvedSymbol->as<VariableSymbol>() : nullptr;
+                if (fieldSym && fieldSym->getType() && fieldSym->getType()->is<FunctionTypeSymbol>()) {
                     node.callee->accept(*this);
                     calleeVal = lastValue_;
-                    thisPtr = nullptr;  // Not a method call — no this pointer
+                    thisPtr = nullptr;
                 }
             }
-        }
 
-        if ((calleeFn || isVirtualCall) && thisPtr) {
-            args.push_back(thisPtr);
+            if ((calleeFn || isVirtualCall) && thisPtr) {
+                args.push_back(thisPtr);
+            }
         }
     }
-    // Constructor call via type name: callee is IdentifierExpression resolving to type
+    // Constructor call via type name
     else if (auto* ident = node.callee->as<IdentifierExpression>()) {
         if (ident->resolvedSymbol) {
-            // Check if it resolves to a ClassSymbol (constructor call)
             if (auto* classSym = ident->resolvedSymbol->as<ClassSymbol>()) {
                 if (classSym->constructor) {
-                    auto it = functionCache_.find(classSym->constructor);
+                    auto it = functionCache_.find(classSym->constructor.get());
                     if (it != functionCache_.end()) {
                         calleeFn = it->second;
-                        calleeFuncSym = classSym->constructor;
+                        calleeFuncSym = classSym->constructor.get();
                         isCtorCall = true;
-                        // Allocate storage for the object, pass as this
-                        auto userType = registry_.getUserType(classSym->name,
-                            Type::Kind::Class, classSym);
-                        llvm::Type* objTy = mapType(userType);
+                        llvm::Type* objTy = mapType(classSym);
                         thisPtr = createEntryBlockAlloca(currentFunction_, objTy, "ctor.tmp");
-                        // Store vtable pointer before constructor call
                         storeVtablePtr(thisPtr, classSym);
                         args.push_back(thisPtr);
                     }
                 }
-                // For class without constructor, just create undef
                 if (!calleeFn) {
-                    auto userType = registry_.getUserType(classSym->name,
-                        Type::Kind::Class, classSym);
-                    llvm::Type* objTy = mapType(userType);
+                    llvm::Type* objTy = mapType(classSym);
                     auto* tmp = createEntryBlockAlloca(currentFunction_, objTy, "class.tmp");
                     storeVtablePtr(tmp, classSym);
                     lastValue_ = builder_.CreateLoad(objTy, tmp, "class.val");
                     return;
                 }
             }
-            // Check if it resolves to a StructSymbol (struct construction)
             else if (auto* structSym = ident->resolvedSymbol->as<StructSymbol>()) {
-                auto userType = registry_.getUserType(structSym->name,
-                    Type::Kind::Struct, structSym);
-                // Zero-init all structs — prevents undef propagation when fields
-                // are read before assignment (e.g. accumulator pattern)
-                lastValue_ = llvm::Constant::getNullValue(mapType(userType));
+                // Struct construction: zero-init
+                lastValue_ = llvm::Constant::getNullValue(mapType(structSym));
                 return;
             }
-            // Regular function call
-            else if (auto* funcSym = ident->resolvedSymbol->as<FunctionSymbol>()) {
-                auto it = functionCache_.find(funcSym);
+            else if (!calleeFn && calleeFuncSym) {
+                auto it = functionCache_.find(calleeFuncSym);
                 if (it != functionCache_.end()) {
                     calleeFn = it->second;
-                    calleeFuncSym = funcSym;
                 }
             }
         }
-
-        // Indirect call through function pointer
-        if (!calleeFn) {
+        // Indirect call through variable
+        if (!calleeFn && !calleeFuncSym) {
             node.callee->accept(*this);
             calleeVal = lastValue_;
         }
     }
     else {
-        // Other callee expression
         node.callee->accept(*this);
         calleeVal = lastValue_;
     }
 
-    // Emit arguments
-    for (size_t argI = 0; argI < node.arguments.size(); argI++) {
-        auto& arg = node.arguments[argI];
+    // Emit arguments — V2 uses ArgumentsNode::isReference
+    if (node.arguments) {
+        for (size_t argI = 0; argI < node.arguments->expressions.size(); argI++) {
+            auto& arg = node.arguments->expressions[argI];
 
-        // Reference parameter: pass lvalue (pointer to alloca) instead of value
-        if (calleeFuncSym && argI < calleeFuncSym->parameters.size() &&
-            calleeFuncSym->parameters[argI]->isReference) {
-            llvm::Value* lval = emitLValue(*arg);
-            if (lval) {
-                args.push_back(lval);
-                continue;
-            }
-            // Fallback: evaluate and store in temp alloca
-            arg->accept(*this);
-            if (lastValue_) {
-                auto* tmp = createEntryBlockAlloca(currentFunction_,
-                    lastValue_->getType(), "ref.tmp");
-                builder_.CreateStore(lastValue_, tmp);
-                args.push_back(tmp);
-            }
-            continue;
-        }
+            // V2: check isReference from ArgumentsNode
+            bool isRef = (argI < node.arguments->isReference.size() &&
+                         node.arguments->isReference[argI]);
 
-        arg->accept(*this);
-        if (lastValue_) {
-            // Pass user types by pointer
-            if (arg->resolvedType && isUserStructKind(arg->resolvedType.get())) {
-                llvm::Value* argPtr = emitLValue(*arg);
-                if (argPtr) {
-                    args.push_back(argPtr);
-                    continue;
-                }
-                // If emitLValue failed but we have a struct value, store in temp
-                if (lastValue_->getType()->isStructTy()) {
+            if (isRef) {
+                llvm::Value* lval = emitLValue(*arg);
+                if (lval) { args.push_back(lval); continue; }
+                arg->accept(*this);
+                if (lastValue_) {
                     auto* tmp = createEntryBlockAlloca(currentFunction_,
-                        lastValue_->getType(), "arg.tmp");
+                        lastValue_->getType(), "ref.tmp");
                     builder_.CreateStore(lastValue_, tmp);
                     args.push_back(tmp);
-                    continue;
                 }
+                continue;
             }
-            // RAII-wrap temporary closure arguments to prevent leaks.
-            // If the argument is a lambda literal (temporary), its env was malloc'd
-            // but nobody owns it. Register cleanup so it's released after scope exit.
-            if (arg->resolvedType && arg->resolvedType->is<FunctionType>() &&
-                arg->is<LambdaExpression>()) {
-                auto* fatPtrTy = getFatPtrType();
-                auto* tmpAlloca = createEntryBlockAlloca(currentFunction_,
-                    fatPtrTy, "tmp.closure.arg");
-                builder_.CreateStore(lastValue_, tmpAlloca);
-                registerRAII(tmpAlloca, getOrCreateClosureReleaseWrapper());
+
+            arg->accept(*this);
+            if (lastValue_) {
+                if (arg->resolvedType && isUserStructKind(arg->resolvedType.get())) {
+                    llvm::Value* argPtr = emitLValue(*arg);
+                    if (argPtr) { args.push_back(argPtr); continue; }
+                    if (lastValue_->getType()->isStructTy()) {
+                        auto* tmp = createEntryBlockAlloca(currentFunction_,
+                            lastValue_->getType(), "arg.tmp");
+                        builder_.CreateStore(lastValue_, tmp);
+                        args.push_back(tmp);
+                        continue;
+                    }
+                }
+                // RAII-wrap temporary closure arguments
+                if (arg->resolvedType && arg->resolvedType->is<FunctionTypeSymbol>() &&
+                    arg->is<LambdaExpression>()) {
+                    auto* fatPtrTy = getFatPtrType();
+                    auto* tmpAlloca = createEntryBlockAlloca(currentFunction_,
+                        fatPtrTy, "tmp.closure.arg");
+                    builder_.CreateStore(lastValue_, tmpAlloca);
+                    registerRAII(tmpAlloca, getOrCreateClosureReleaseWrapper());
+                }
+                args.push_back(lastValue_);
             }
-            args.push_back(lastValue_);
         }
     }
 
-    // Implicit integer widening for arguments (e.g. byte enum → int param)
+    // Implicit integer widening for arguments
     llvm::FunctionType* callFnTy = nullptr;
     if (calleeFn) {
         callFnTy = calleeFn->getFunctionType();
@@ -3465,10 +2890,7 @@ void IRGenerator::visit(CallExpression& node) {
 
     // Emit the call
     if (isVirtualCall && thisPtr && virtualMethodSym && virtualCallClass) {
-        // Virtual dispatch: load vtable pointer, GEP to slot, indirect call
-        auto vtUserType = registry_.getUserType(virtualCallClass->name,
-            Type::Kind::Class, virtualCallClass);
-        auto* structTy = getStructType(vtUserType.get());
+        auto* structTy = getStructType(virtualCallClass);
         auto* vtablePtrPtr = builder_.CreateStructGEP(structTy, thisPtr, 0, "vtable.ptr");
         auto* ptrTy = llvm::PointerType::getUnqual(context_);
         auto* vtable = builder_.CreateLoad(ptrTy, vtablePtrPtr, "vtable");
@@ -3480,7 +2902,6 @@ void IRGenerator::visit(CallExpression& node) {
     } else if (calleeFn) {
         llvm::Value* callResult = builder_.CreateCall(calleeFn, args);
         if (isCtorCall && thisPtr) {
-            // Constructor call — return the constructed object value
             auto* allocaInst = llvm::dyn_cast<llvm::AllocaInst>(thisPtr);
             if (allocaInst) {
                 lastValue_ = builder_.CreateLoad(
@@ -3494,31 +2915,31 @@ void IRGenerator::visit(CallExpression& node) {
     } else if (calleeVal) {
         // Indirect call through function-typed value
         if (calleeVal->getType()->isStructTy()) {
-            // Fat pointer { fnPtr, envPtr } — extract both components
             llvm::Value* fnPtr = builder_.CreateExtractValue(calleeVal, {0}, "fn.ptr");
             llvm::Value* envPtr = builder_.CreateExtractValue(calleeVal, {1}, "env.ptr");
 
-            if (auto* funcType = node.callee->resolvedType->as<FunctionType>()) {
+            TypeSymbol* calleeType = node.callee->resolvedType ?
+                node.callee->resolvedType->as<TypeSymbol>() : nullptr;
+            if (auto* funcType = calleeType ? calleeType->as<FunctionTypeSymbol>() : nullptr) {
                 llvm::Type* retTy = mapType(funcType->returnType);
                 std::vector<llvm::Type*> paramTypes;
-                for (auto& pt : funcType->parameterTypes) {
-                    paramTypes.push_back(mapType(pt));
+                // V2: use FunctionTypeSymbol::ParameterInfo for correct param types
+                for (auto& pi : funcType->parameters) {
+                    paramTypes.push_back(mapParamType(pi.type.get(), pi.isReference));
                 }
-                // Add env pointer as last parameter (fat pointer calling convention)
                 paramTypes.push_back(llvm::PointerType::getUnqual(context_));
                 auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
-
-                // Append envPtr as last argument
                 args.push_back(envPtr);
                 lastValue_ = builder_.CreateCall(fnTy, fnPtr, args);
             }
         } else if (llvm::dyn_cast<llvm::PointerType>(calleeVal->getType())) {
-            // Bare function pointer fallback (legacy path)
-            if (auto* funcType = node.callee->resolvedType->as<FunctionType>()) {
+            TypeSymbol* calleeType = node.callee->resolvedType ?
+                node.callee->resolvedType->as<TypeSymbol>() : nullptr;
+            if (auto* funcType = calleeType ? calleeType->as<FunctionTypeSymbol>() : nullptr) {
                 llvm::Type* retTy = mapType(funcType->returnType);
                 std::vector<llvm::Type*> paramTypes;
-                for (auto& pt : funcType->parameterTypes) {
-                    paramTypes.push_back(mapType(pt));
+                for (auto& pi : funcType->parameters) {
+                    paramTypes.push_back(mapParamType(pi.type.get(), pi.isReference));
                 }
                 auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
                 lastValue_ = builder_.CreateCall(fnTy, calleeVal, args);
@@ -3530,57 +2951,55 @@ void IRGenerator::visit(CallExpression& node) {
 }
 
 void IRGenerator::visit(NewExpression& node) {
-    const Type* allocType = node.type->resolvedType.get();
+    TypeSymbol* allocType = node.type && node.type->resolvedType ?
+        node.type->resolvedType->as<TypeSymbol>() : nullptr;
     if (!allocType) {
-        lastValue_ = llvm::ConstantPointerNull::get(
-            llvm::PointerType::getUnqual(context_));
+        lastValue_ = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_));
         return;
     }
 
     if (node.isArray) {
-        // Array allocation: new Type[size]
         llvm::Type* elemTy = mapType(allocType);
         node.arraySize->accept(*this);
         llvm::Value* sizeVal = lastValue_;
 
-        // Calculate total bytes: size * sizeof(element)
         auto& dl = module_->getDataLayout();
         uint64_t elemSize = dl.getTypeAllocSize(elemTy);
         llvm::Value* elemSizeVal = llvm::ConstantInt::get(
             llvm::Type::getInt32Ty(context_), elemSize);
         llvm::Value* totalBytes = builder_.CreateMul(sizeVal, elemSizeVal, "arr.bytes");
 
-        // Call malloc
         auto mallocCallee = module_->getOrInsertFunction("malloc",
             llvm::FunctionType::get(llvm::PointerType::getUnqual(context_),
                 {llvm::Type::getInt32Ty(context_)}, false));
         lastValue_ = builder_.CreateCall(mallocCallee, {totalBytes}, "arr.ptr");
     } else {
-        // Object allocation: new Type(args)
         llvm::Type* objTy = mapType(allocType);
         auto& dl = module_->getDataLayout();
         uint64_t objSize = dl.getTypeAllocSize(objTy);
         llvm::Value* sizeVal = llvm::ConstantInt::get(
             llvm::Type::getInt32Ty(context_), objSize);
 
-        // Call malloc
         auto mallocCallee = module_->getOrInsertFunction("malloc",
             llvm::FunctionType::get(llvm::PointerType::getUnqual(context_),
                 {llvm::Type::getInt32Ty(context_)}, false));
         llvm::Value* rawPtr = builder_.CreateCall(mallocCallee, {sizeVal}, "new.ptr");
 
-        // If the type has a constructor, call it; store vtable pointer
-        if (auto* userType = allocType->as<UserType>()) {
-            auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-            auto* classSym = typeSym ? typeSym->as<ClassSymbol>() : nullptr;
-            if (classSym) {
-                if (classSym->constructor) {
-                    // Constructor handles vtable pointer storage internally
-                    auto it = functionCache_.find(classSym->constructor);
-                    if (it != functionCache_.end()) {
-                        std::vector<llvm::Value*> ctorArgs;
-                        ctorArgs.push_back(rawPtr);  // this
-                        for (auto& arg : node.arguments) {
+        if (auto* classSym = allocType->as<ClassSymbol>()) {
+            if (classSym->constructor) {
+                auto it = functionCache_.find(classSym->constructor.get());
+                if (it != functionCache_.end()) {
+                    std::vector<llvm::Value*> ctorArgs;
+                    ctorArgs.push_back(rawPtr);
+                    if (node.arguments) {
+                        for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
+                            auto& arg = node.arguments->expressions[i];
+                            bool isRef = (i < node.arguments->isReference.size() &&
+                                         node.arguments->isReference[i]);
+                            if (isRef) {
+                                llvm::Value* lval = emitLValue(*arg);
+                                if (lval) { ctorArgs.push_back(lval); continue; }
+                            }
                             arg->accept(*this);
                             if (lastValue_) {
                                 if (arg->resolvedType && isUserStructKind(arg->resolvedType.get())) {
@@ -3590,12 +3009,11 @@ void IRGenerator::visit(NewExpression& node) {
                                 ctorArgs.push_back(lastValue_);
                             }
                         }
-                        builder_.CreateCall(it->second, ctorArgs);
                     }
-                } else {
-                    // Defensive fallback — should not happen with auto-generated constructors
-                    storeVtablePtr(rawPtr, classSym);
+                    builder_.CreateCall(it->second, ctorArgs);
                 }
+            } else {
+                storeVtablePtr(rawPtr, classSym);
             }
         }
 
@@ -3604,15 +3022,13 @@ void IRGenerator::visit(NewExpression& node) {
 }
 
 void IRGenerator::visit(IndexExpression& node) {
-    // Operator overload
     if (node.isOperatorOverload && node.resolvedOperatorFunction) {
-        auto it = functionCache_.find(node.resolvedOperatorFunction);
+        auto it = functionCache_.find(node.resolvedOperatorFunction.get());
         if (it != functionCache_.end()) {
             llvm::Value* objPtr = emitLValue(*node.object);
             if (!objPtr) {
                 node.object->accept(*this);
                 objPtr = lastValue_;
-                // If result is a struct value, store in temp alloca
                 if (objPtr && objPtr->getType()->isStructTy()) {
                     auto* tmp = createEntryBlockAlloca(currentFunction_,
                         objPtr->getType(), "idx.obj.tmp");
@@ -3622,34 +3038,32 @@ void IRGenerator::visit(IndexExpression& node) {
             }
             node.index->accept(*this);
             llvm::Value* idxVal = lastValue_;
-
             lastValue_ = builder_.CreateCall(it->second, {objPtr, idxVal});
             return;
         }
     }
 
-    // String indexing: s[i] -> GEP + load i8
-    {
-        const Type* objType = node.object->resolvedType.get();
-        if (isStringKind(objType)) {
-            node.object->accept(*this);
-            llvm::Value* strPtr = lastValue_;
-            node.index->accept(*this);
-            llvm::Value* idx = lastValue_;
-            if (strPtr && idx) {
-                auto i64Ty = llvm::Type::getInt64Ty(context_);
-                if (idx->getType()->isIntegerTy(32)) {
-                    idx = builder_.CreateSExt(idx, i64Ty, "idx.i64");
-                }
-                llvm::Value* charPtr = builder_.CreateGEP(
-                    llvm::Type::getInt8Ty(context_), strPtr, idx, "str.idx");
-                lastValue_ = builder_.CreateLoad(
-                    llvm::Type::getInt8Ty(context_), charPtr, "char");
-            } else {
-                lastValue_ = nullptr;
+    // String indexing
+    TypeSymbol* objType = node.object->resolvedType ?
+        node.object->resolvedType->as<TypeSymbol>() : nullptr;
+    if (isStringKind(objType)) {
+        node.object->accept(*this);
+        llvm::Value* strPtr = lastValue_;
+        node.index->accept(*this);
+        llvm::Value* idx = lastValue_;
+        if (strPtr && idx) {
+            auto i64Ty = llvm::Type::getInt64Ty(context_);
+            if (idx->getType()->isIntegerTy(32)) {
+                idx = builder_.CreateSExt(idx, i64Ty, "idx.i64");
             }
-            return;
+            llvm::Value* charPtr = builder_.CreateGEP(
+                llvm::Type::getInt8Ty(context_), strPtr, idx, "str.idx");
+            lastValue_ = builder_.CreateLoad(
+                llvm::Type::getInt8Ty(context_), charPtr, "char");
+        } else {
+            lastValue_ = nullptr;
         }
+        return;
     }
 
     // Regular array/pointer indexing
@@ -3667,9 +3081,11 @@ void IRGenerator::visit(CastExpression& node) {
     llvm::Value* val = lastValue_;
     if (!val) return;
 
-    llvm::Type* targetTy = mapType(node.targetType->resolvedType);
-    const Type* fromType = node.operand->resolvedType.get();
-    const Type* toType = node.targetType->resolvedType.get();
+    llvm::Type* targetTy = mapType(node.targetType ? node.targetType->resolvedType : nullptr);
+    TypeSymbol* fromType = node.operand->resolvedType ?
+        node.operand->resolvedType->as<TypeSymbol>() : nullptr;
+    TypeSymbol* toType = node.targetType && node.targetType->resolvedType ?
+        node.targetType->resolvedType->as<TypeSymbol>() : nullptr;
 
     if (isIntegerKind(fromType) && isFloatingKind(toType)) {
         lastValue_ = builder_.CreateSIToFP(val, targetTy, "sitofp");
@@ -3684,96 +3100,74 @@ void IRGenerator::visit(CastExpression& node) {
     } else if (isIntegerKind(fromType) && isIntegerKind(toType)) {
         unsigned fromBits = val->getType()->getIntegerBitWidth();
         unsigned toBits = targetTy->getIntegerBitWidth();
-        if (fromBits < toBits) {
-            lastValue_ = builder_.CreateSExt(val, targetTy, "sext");
-        } else if (fromBits > toBits) {
-            lastValue_ = builder_.CreateTrunc(val, targetTy, "trunc");
-        }
+        if (fromBits < toBits) lastValue_ = builder_.CreateSExt(val, targetTy, "sext");
+        else if (fromBits > toBits) lastValue_ = builder_.CreateTrunc(val, targetTy, "trunc");
     } else if (isPointerKind(fromType) && isIntegerKind(toType)) {
         lastValue_ = builder_.CreatePtrToInt(val, targetTy, "ptrtoint");
     } else if (isIntegerKind(fromType) && isPointerKind(toType)) {
         lastValue_ = builder_.CreateIntToPtr(val, targetTy, "inttoptr");
     }
-    // Pointer-to-pointer casts are no-ops with opaque pointers
 }
 
 void IRGenerator::visit(SizeOfExpression& node) {
-    llvm::Type* ty = mapType(node.targetType->resolvedType);
+    llvm::Type* ty = mapType(node.targetType ? node.targetType->resolvedType : nullptr);
     auto& dl = module_->getDataLayout();
     uint64_t size = dl.getTypeAllocSize(ty);
     lastValue_ = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), size);
 }
 
-void IRGenerator::visit(AlignOfExpression& node) {
-    llvm::Type* ty = mapType(node.targetType->resolvedType);
-    auto& dl = module_->getDataLayout();
-    uint64_t align = dl.getABITypeAlign(ty).value();
-    lastValue_ = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), align);
-}
-
 void IRGenerator::visit(PipeExpression& node) {
-    // Emit input
     node.input->accept(*this);
     llvm::Value* currentVal = lastValue_;
     if (!currentVal) { lastValue_ = nullptr; return; }
 
-    // For each pipe stage: prepend current value to args, call function
     for (auto& stage : node.stages) {
-        // Resolve the function
-        llvm::Function* calleeFn = nullptr;
-        llvm::Value* calleeVal = nullptr;
+        llvm::Function* stageFn = nullptr;
+        llvm::Value* stageVal = nullptr;
 
         if (stage.function && stage.function->resolvedSymbol) {
-            auto* sym = stage.function->resolvedSymbol;
-            if (auto* funcSym = sym->as<FunctionSymbol>()) {
+            if (auto* funcSym = stage.function->resolvedSymbol->as<FunctionSymbol>()) {
                 auto it = functionCache_.find(funcSym);
-                if (it != functionCache_.end()) {
-                    calleeFn = it->second;
-                }
+                if (it != functionCache_.end()) stageFn = it->second;
             }
-            // Could also be a variable holding a function pointer
-            if (!calleeFn) {
-                auto it = namedValues_.find(sym);
+            if (!stageFn) {
+                auto it = namedValues_.find(stage.function->resolvedSymbol.get());
                 if (it != namedValues_.end()) {
                     llvm::Type* loadTy = mapType(stage.function->resolvedType);
-                    calleeVal = builder_.CreateLoad(loadTy, it->second, "pipe.fn");
+                    stageVal = builder_.CreateLoad(loadTy, it->second, "pipe.fn");
                 }
             }
         }
 
-        // Build args: [currentVal] + extraArguments
-        std::vector<llvm::Value*> args;
-        args.push_back(currentVal);
+        std::vector<llvm::Value*> pipeArgs;
+        pipeArgs.push_back(currentVal);
         for (auto& extra : stage.extraArguments) {
             extra->accept(*this);
-            if (lastValue_) args.push_back(lastValue_);
+            if (lastValue_) pipeArgs.push_back(lastValue_);
         }
 
-        if (calleeFn) {
-            currentVal = builder_.CreateCall(calleeFn, args, "pipe.result");
-        } else if (calleeVal) {
-            // Indirect call through function-typed value
-            if (stage.function && stage.function->resolvedType) {
-                if (auto* fnType = stage.function->resolvedType->as<FunctionType>()) {
-                    llvm::Type* retTy = mapType(fnType->returnType);
-                    std::vector<llvm::Type*> paramTypes;
-                    for (auto& pt : fnType->parameterTypes) {
-                        paramTypes.push_back(mapType(pt));
-                    }
+        if (stageFn) {
+            currentVal = builder_.CreateCall(stageFn, pipeArgs, "pipe.result");
+        } else if (stageVal) {
+            TypeSymbol* stageType = stage.function && stage.function->resolvedType ?
+                stage.function->resolvedType->as<TypeSymbol>() : nullptr;
+            if (auto* fnType = stageType ? stageType->as<FunctionTypeSymbol>() : nullptr) {
+                llvm::Type* retTy = mapType(fnType->returnType);
+                std::vector<llvm::Type*> paramTypes;
+                for (auto& pi : fnType->parameters) {
+                    paramTypes.push_back(mapParamType(pi.type.get(), pi.isReference));
+                }
 
-                    if (calleeVal->getType()->isStructTy()) {
-                        // Fat pointer { fnPtr, envPtr }
-                        llvm::Value* fnPtr = builder_.CreateExtractValue(calleeVal, {0}, "pipe.fn.ptr");
-                        llvm::Value* envPtr = builder_.CreateExtractValue(calleeVal, {1}, "pipe.env.ptr");
-                        paramTypes.push_back(llvm::PointerType::getUnqual(context_));
-                        auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
-                        args.push_back(envPtr);
-                        currentVal = builder_.CreateCall(fnTy, fnPtr, args, "pipe.result");
-                    } else {
-                        // Bare function pointer fallback
-                        auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
-                        currentVal = builder_.CreateCall(fnTy, calleeVal, args, "pipe.result");
-                    }
+                if (stageVal->getType()->isStructTy()) {
+                    llvm::Value* fnPtr = builder_.CreateExtractValue(stageVal, {0}, "pipe.fn.ptr");
+                    llvm::Value* envPtr = builder_.CreateExtractValue(stageVal, {1}, "pipe.env.ptr");
+                    paramTypes.push_back(llvm::PointerType::getUnqual(context_));
+                    auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
+                    pipeArgs.push_back(envPtr);
+                    currentVal = builder_.CreateCall(fnTy, fnPtr, pipeArgs, "pipe.result");
+                } else {
+                    auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
+                    currentVal = builder_.CreateCall(fnTy, stageVal, pipeArgs, "pipe.result");
                 }
             }
         }
@@ -3783,241 +3177,100 @@ void IRGenerator::visit(PipeExpression& node) {
 }
 
 void IRGenerator::visit(MatchExpression& node) {
-    // Emit subject
     node.subject->accept(*this);
     llvm::Value* subjectVal = lastValue_;
     if (!subjectVal) { lastValue_ = nullptr; return; }
 
-    const Type* subjectType = node.subject->resolvedType.get();
-
-    // Check if we can use a switch instruction (all literal/enum patterns, no guards)
-    bool canUseSwitch = !node.arms.empty() && (isIntegerKind(subjectType) || isBoolKind(subjectType));
-    bool hasWildcard = false;
-    if (canUseSwitch) {
-        for (auto& arm : node.arms) {
-            if (arm.pattern->is<LiteralPattern>() ||
-                (arm.pattern->is<WildcardPattern>() && !hasWildcard)) {
-                if (arm.pattern->is<WildcardPattern>()) hasWildcard = true;
-            } else if (arm.pattern->is<GuardedPattern>() ||
-                       arm.pattern->is<BindingPattern>() ||
-                       arm.pattern->is<RangePattern>()) {
-                canUseSwitch = false;
-                break;
-            }
-        }
-    }
+    TypeSymbol* subjectType = node.subject->resolvedType ?
+        node.subject->resolvedType->as<TypeSymbol>() : nullptr;
 
     auto* mergeBB = llvm::BasicBlock::Create(context_, "match.merge", currentFunction_);
     llvm::Type* resultTy = mapType(node.resolvedType);
     bool hasResult = resultTy && !resultTy->isVoidTy();
 
-    // Collect (value, block) pairs for phi
     std::vector<std::pair<llvm::Value*, llvm::BasicBlock*>> phiIncoming;
 
-    if (canUseSwitch && isIntegerKind(subjectType)) {
-        // Optimized switch-based match
-        auto* defaultBB = llvm::BasicBlock::Create(context_, "match.default", currentFunction_);
-        auto* switchInst = builder_.CreateSwitch(subjectVal, defaultBB, (unsigned)node.arms.size());
+    // Chain of conditional branches
+    for (size_t i = 0; i < node.arms.size(); i++) {
+        auto& arm = node.arms[i];
+        auto* armBodyBB = llvm::BasicBlock::Create(context_, "arm.body", currentFunction_);
+        auto* nextTestBB = (i + 1 < node.arms.size())
+            ? llvm::BasicBlock::Create(context_, "arm.test", currentFunction_)
+            : mergeBB;
 
-        for (auto& arm : node.arms) {
-            enterNextChildScope();
-            if (auto* wildcard = arm.pattern->as<WildcardPattern>()) {
-                // Wildcard becomes the default case
-                builder_.SetInsertPoint(defaultBB);
-                arm.body->accept(*this);
-                llvm::Value* bodyVal = lastValue_;
-                auto* bodyEndBB = builder_.GetInsertBlock();
-                if (!bodyEndBB->getTerminator()) builder_.CreateBr(mergeBB);
-                if (hasResult && bodyVal) phiIncoming.push_back({bodyVal, bodyEndBB});
-                defaultBB = nullptr;  // Already handled
-            } else if (auto* litPat = arm.pattern->as<LiteralPattern>()) {
-                auto* armBB = llvm::BasicBlock::Create(context_, "match.arm", currentFunction_);
-                litPat->value->accept(*this);
-                if (auto* constInt = llvm::dyn_cast<llvm::ConstantInt>(lastValue_)) {
-                    switchInst->addCase(constInt, armBB);
-                }
-                builder_.SetInsertPoint(armBB);
-                arm.body->accept(*this);
-                llvm::Value* bodyVal = lastValue_;
-                auto* bodyEndBB = builder_.GetInsertBlock();
-                if (!bodyEndBB->getTerminator()) builder_.CreateBr(mergeBB);
-                if (hasResult && bodyVal) phiIncoming.push_back({bodyVal, bodyEndBB});
+        auto* pattern = arm.pattern.get();
+
+        if (auto* litPat = pattern->as<LiteralPattern>()) {
+            litPat->value->accept(*this);
+            llvm::Value* patVal = lastValue_;
+            if (!patVal) {
+                builder_.CreateBr(nextTestBB);
+                if (nextTestBB != mergeBB) builder_.SetInsertPoint(nextTestBB);
+                continue;
             }
-            leaveChildScope();
-        }
-
-        // If no wildcard was provided, default just jumps to merge
-        if (defaultBB) {
-            builder_.SetInsertPoint(defaultBB);
-            builder_.CreateBr(mergeBB);
-            if (hasResult) {
-                phiIncoming.push_back({llvm::UndefValue::get(resultTy), defaultBB});
+            llvm::Value* cond;
+            if (isFloatingKind(subjectType)) {
+                cond = builder_.CreateFCmpOEQ(subjectVal, patVal, "match.cmp");
+            } else {
+                if (subjectVal->getType() != patVal->getType() &&
+                    subjectVal->getType()->isIntegerTy() && patVal->getType()->isIntegerTy()) {
+                    patVal = builder_.CreateSExtOrTrunc(patVal, subjectVal->getType());
+                }
+                cond = builder_.CreateICmpEQ(subjectVal, patVal, "match.cmp");
             }
-        }
-    } else {
-        // Chain of conditional branches
-        for (size_t i = 0; i < node.arms.size(); i++) {
-            auto& arm = node.arms[i];
-            enterNextChildScope();
-            auto* armBodyBB = llvm::BasicBlock::Create(context_, "arm.body", currentFunction_);
-            auto* nextTestBB = (i + 1 < node.arms.size())
-                ? llvm::BasicBlock::Create(context_, "arm.test", currentFunction_)
-                : mergeBB;
+            builder_.CreateCondBr(cond, armBodyBB, nextTestBB);
 
-            auto* pattern = arm.pattern.get();
+        } else if (pattern->is<WildcardPattern>()) {
+            builder_.CreateBr(armBodyBB);
 
-            // Pattern matching
-            if (auto* litPat = pattern->as<LiteralPattern>()) {
-                litPat->value->accept(*this);
-                llvm::Value* patVal = lastValue_;
-                llvm::Value* cond;
-                if (isFloatingKind(subjectType)) {
-                    cond = builder_.CreateFCmpOEQ(subjectVal, patVal, "match.cmp");
-                } else {
-                    // Ensure same type
-                    if (subjectVal->getType() != patVal->getType() &&
-                        subjectVal->getType()->isIntegerTy() && patVal->getType()->isIntegerTy()) {
-                        patVal = builder_.CreateSExtOrTrunc(patVal, subjectVal->getType());
-                    }
-                    cond = builder_.CreateICmpEQ(subjectVal, patVal, "match.cmp");
-                }
-                builder_.CreateCondBr(cond, armBodyBB, nextTestBB);
+        } else if (auto* identPat = pattern->as<IdentifierPattern>()) {
+            // Alloca for binding
+            llvm::Type* bindTy = subjectVal->getType();
+            auto* bindAlloca = createEntryBlockAlloca(currentFunction_, bindTy, identPat->name);
+            builder_.CreateStore(subjectVal, bindAlloca);
+            if (identPat->resolvedSymbol) {
+                namedValues_[identPat->resolvedSymbol.get()] = bindAlloca;
+            }
 
-            } else if (pattern->is<WildcardPattern>()) {
-                builder_.CreateBr(armBodyBB);
-
-            } else if (auto* bindPat = pattern->as<BindingPattern>()) {
-                // Alloca for binding, store subject
-                llvm::Type* bindTy = mapType(subjectType);
-                auto* bindAlloca = createEntryBlockAlloca(currentFunction_, bindTy, bindPat->name);
-                builder_.CreateStore(subjectVal, bindAlloca);
-
-                // Register under scope symbol
-                auto* bindSym = currentScope_->lookupLocal(bindPat->name);
-                if (bindSym) namedValues_[bindSym] = bindAlloca;
-
-                // Also scan arm body for identifier references to this binding
-                std::function<void(ASTNode*)> registerBinding = [&](ASTNode* n) {
-                    if (!n) return;
-                    if (auto* id = n->as<IdentifierExpression>()) {
-                        if (id->name == bindPat->name && id->resolvedSymbol)
-                            namedValues_[id->resolvedSymbol] = bindAlloca;
-                        return;
-                    }
-                    if (auto* bin = n->as<BinaryExpression>()) {
-                        registerBinding(bin->left.get()); registerBinding(bin->right.get());
-                    } else if (auto* un = n->as<UnaryExpression>()) {
-                        registerBinding(un->operand.get());
-                    } else if (auto* call = n->as<CallExpression>()) {
-                        registerBinding(call->callee.get());
-                        for (auto& a : call->arguments) registerBinding(a.get());
-                    } else if (auto* mem = n->as<MemberAccessExpression>()) {
-                        registerBinding(mem->object.get());
-                    } else if (auto* ret = n->as<ReturnStatement>()) {
-                        if (ret->hasValue()) registerBinding(ret->value.get());
-                    } else if (auto* blk = n->as<BlockStatement>()) {
-                        for (auto& s : blk->statements) registerBinding(s.get());
-                    } else if (auto* es = n->as<ExpressionStatement>()) {
-                        registerBinding(es->expression.get());
-                    }
-                };
-                registerBinding(arm.body.get());
-
-                builder_.CreateBr(armBodyBB);
-
-            } else if (auto* guardPat = pattern->as<GuardedPattern>()) {
-                // First handle inner pattern (usually BindingPattern)
-                if (auto* innerBind = guardPat->innerPattern->as<BindingPattern>()) {
-                    llvm::Type* bindTy = mapType(subjectType);
-                    auto* bindAlloca = createEntryBlockAlloca(currentFunction_, bindTy, innerBind->name);
-                    builder_.CreateStore(subjectVal, bindAlloca);
-
-                    // Register binding under scope symbol AND under any
-                    // resolvedSymbol found in the guard/body that references it
-                    auto* bindSym = currentScope_->lookupLocal(innerBind->name);
-                    if (bindSym) namedValues_[bindSym] = bindAlloca;
-
-                    // Scan guard + body for IdentifierExpressions matching the binding name
-                    std::function<void(ASTNode*)> registerBinding = [&](ASTNode* n) {
-                        if (!n) return;
-                        if (auto* id = n->as<IdentifierExpression>()) {
-                            if (id->name == innerBind->name && id->resolvedSymbol) {
-                                namedValues_[id->resolvedSymbol] = bindAlloca;
-                            }
-                            return;
-                        }
-                        if (auto* bin = n->as<BinaryExpression>()) {
-                            registerBinding(bin->left.get());
-                            registerBinding(bin->right.get());
-                        } else if (auto* un = n->as<UnaryExpression>()) {
-                            registerBinding(un->operand.get());
-                        } else if (auto* call = n->as<CallExpression>()) {
-                            registerBinding(call->callee.get());
-                            for (auto& a : call->arguments) registerBinding(a.get());
-                        } else if (auto* mem = n->as<MemberAccessExpression>()) {
-                            registerBinding(mem->object.get());
-                        } else if (auto* idx = n->as<IndexExpression>()) {
-                            registerBinding(idx->object.get());
-                            registerBinding(idx->index.get());
-                        } else if (auto* ret = n->as<ReturnStatement>()) {
-                            if (ret->hasValue()) registerBinding(ret->value.get());
-                        } else if (auto* blk = n->as<BlockStatement>()) {
-                            for (auto& s : blk->statements) registerBinding(s.get());
-                        } else if (auto* es = n->as<ExpressionStatement>()) {
-                            registerBinding(es->expression.get());
-                        } else if (auto* asgn = n->as<AssignmentExpression>()) {
-                            registerBinding(asgn->target.get());
-                            registerBinding(asgn->value.get());
-                        } else if (auto* tern = n->as<TernaryExpression>()) {
-                            registerBinding(tern->condition.get());
-                            registerBinding(tern->thenExpr.get());
-                            registerBinding(tern->elseExpr.get());
-                        }
-                    };
-                    registerBinding(guardPat->guard.get());
-                    registerBinding(arm.body.get());
-                }
-
-                // Evaluate guard
-                guardPat->guard->accept(*this);
+            if (identPat->guard) {
+                identPat->guard->accept(*this);
                 llvm::Value* guardVal = lastValue_;
-                if (!guardVal) {
-                    builder_.CreateBr(nextTestBB);
-                } else {
+                if (guardVal) {
                     if (!guardVal->getType()->isIntegerTy(1)) {
                         guardVal = builder_.CreateICmpNE(guardVal,
                             llvm::ConstantInt::get(guardVal->getType(), 0), "guard");
                     }
                     builder_.CreateCondBr(guardVal, armBodyBB, nextTestBB);
+                } else {
+                    builder_.CreateBr(nextTestBB);
                 }
-
-            } else if (auto* rangePat = pattern->as<RangePattern>()) {
-                llvm::Value* lowVal = llvm::ConstantInt::get(subjectVal->getType(), rangePat->low);
-                llvm::Value* highVal = llvm::ConstantInt::get(subjectVal->getType(), rangePat->high);
-                llvm::Value* ge = builder_.CreateICmpSGE(subjectVal, lowVal, "range.ge");
-                llvm::Value* le = builder_.CreateICmpSLE(subjectVal, highVal, "range.le");
-                llvm::Value* inRange = builder_.CreateAnd(ge, le, "range.in");
-                builder_.CreateCondBr(inRange, armBodyBB, nextTestBB);
-
             } else {
-                // Fallback: unconditional
                 builder_.CreateBr(armBodyBB);
             }
 
-            // Emit arm body
-            builder_.SetInsertPoint(armBodyBB);
-            arm.body->accept(*this);
-            llvm::Value* bodyVal = lastValue_;
-            auto* bodyEndBB = builder_.GetInsertBlock();
-            if (!bodyEndBB->getTerminator()) builder_.CreateBr(mergeBB);
-            if (hasResult && bodyVal) phiIncoming.push_back({bodyVal, bodyEndBB});
+        } else if (auto* rangePat = pattern->as<RangePattern>()) {
+            rangePat->low->accept(*this);
+            llvm::Value* lowVal = lastValue_;
+            rangePat->high->accept(*this);
+            llvm::Value* highVal = lastValue_;
+            llvm::Value* ge = builder_.CreateICmpSGE(subjectVal, lowVal, "range.ge");
+            llvm::Value* le = builder_.CreateICmpSLE(subjectVal, highVal, "range.le");
+            llvm::Value* inRange = builder_.CreateAnd(ge, le, "range.in");
+            builder_.CreateCondBr(inRange, armBodyBB, nextTestBB);
 
-            leaveChildScope();
+        } else {
+            builder_.CreateBr(armBodyBB);
+        }
 
-            // Move to next test block
-            if (nextTestBB != mergeBB) {
-                builder_.SetInsertPoint(nextTestBB);
-            }
+        builder_.SetInsertPoint(armBodyBB);
+        arm.body->accept(*this);
+        llvm::Value* bodyVal = lastValue_;
+        auto* bodyEndBB = builder_.GetInsertBlock();
+        if (!bodyEndBB->getTerminator()) builder_.CreateBr(mergeBB);
+        if (hasResult && bodyVal) phiIncoming.push_back({bodyVal, bodyEndBB});
+
+        if (nextTestBB != mergeBB) {
+            builder_.SetInsertPoint(nextTestBB);
         }
     }
 
@@ -4025,7 +3278,6 @@ void IRGenerator::visit(MatchExpression& node) {
     if (hasResult && !phiIncoming.empty()) {
         auto* phi = builder_.CreatePHI(resultTy, (unsigned)phiIncoming.size(), "match.result");
         for (auto& [val, bb] : phiIncoming) {
-            // Ensure type matches
             if (val->getType() == resultTy) {
                 phi->addIncoming(val, bb);
             } else {
@@ -4039,7 +3291,6 @@ void IRGenerator::visit(MatchExpression& node) {
 }
 
 void IRGenerator::visit(TupleExpression& node) {
-    // Build the tuple type from resolved type
     llvm::Type* tupleTy = mapType(node.resolvedType);
     llvm::Value* tupleVal = llvm::UndefValue::get(tupleTy);
 
@@ -4060,15 +3311,15 @@ void IRGenerator::visit(LambdaExpression& node) {
     llvm::Type* retTy = llvm::Type::getVoidTy(context_);
     std::vector<llvm::Type*> paramTypes;
 
-    if (auto* fnType = node.resolvedType->as<FunctionType>()) {
+    if (auto* fnType = node.resolvedType ? node.resolvedType->as<FunctionTypeSymbol>() : nullptr) {
         retTy = mapType(fnType->returnType);
-        for (auto& pt : fnType->parameterTypes) {
-            paramTypes.push_back(mapType(pt));
+        // V2: use FunctionTypeSymbol::ParameterInfo for correct param types
+        for (auto& pi : fnType->parameters) {
+            paramTypes.push_back(mapParamType(pi.type.get(), pi.isReference));
         }
     }
 
     // ALL lambdas get ptr %env as last parameter (fat pointer calling convention)
-    // Non-capturing lambdas ignore it; capturing lambdas use it to access captures
     paramTypes.push_back(llvm::PointerType::getUnqual(context_));
 
     auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
@@ -4076,7 +3327,7 @@ void IRGenerator::visit(LambdaExpression& node) {
     auto* lambdaFn = llvm::Function::Create(fnTy,
         llvm::Function::InternalLinkage, lambdaName, module_.get());
 
-    // Save current state
+    // CRITICAL: Save/restore state for lambda isolation
     auto* prevFunction = currentFunction_;
     auto* prevThisPtr = currentThisPtr_;
     auto savedNamedValues = namedValues_;
@@ -4085,9 +3336,6 @@ void IRGenerator::visit(LambdaExpression& node) {
     auto savedRAIIStack = std::move(raiiScopeStack_);
     raiiScopeStack_.clear();
 
-    // Enter the lambda's scope
-    enterNextChildScope();
-
     currentFunction_ = lambdaFn;
     currentThisPtr_ = nullptr;
     namedValues_.clear();
@@ -4095,156 +3343,90 @@ void IRGenerator::visit(LambdaExpression& node) {
     auto* entryBB = llvm::BasicBlock::Create(context_, "entry", lambdaFn);
     builder_.SetInsertPoint(entryBB);
 
-    // Set up parameters — we need to find the VariableSymbol* for each param
-    // by matching names against identifiers in the lambda body
+    // V2 IMPROVEMENT: use ParameterNode::resolvedSymbol directly (no scanForParamSymbols!)
     unsigned argIdx = 0;
-    std::unordered_map<std::string, llvm::Value*> paramAllocaByName;
     for (auto& param : node.parameters) {
         llvm::Value* argVal = lambdaFn->getArg(argIdx++);
         argVal->setName(param->name);
-        auto* alloca = createEntryBlockAlloca(lambdaFn, argVal->getType(), param->name);
-        builder_.CreateStore(argVal, alloca);
-        paramAllocaByName[param->name] = alloca;
-    }
 
-    // Pre-populate namedValues_ by scanning the body for identifier references
-    // that match parameter names — this resolves the param symbol mapping
-    std::function<void(ASTNode*)> scanForParamSymbols = [&](ASTNode* n) {
-        if (!n) return;
-        if (auto* ident = n->as<IdentifierExpression>()) {
-            auto pit = paramAllocaByName.find(ident->name);
-            if (pit != paramAllocaByName.end() && ident->resolvedSymbol) {
-                namedValues_[ident->resolvedSymbol] = pit->second;
-            }
+        auto* paramSym = param->resolvedSymbol.get();
+        if (paramSym && paramSym->isReference) {
+            namedValues_[paramSym] = argVal;
+        } else if (paramSym && isUserStructKind(paramSym->getType().get())) {
+            llvm::Type* structTy = mapType(paramSym->getType());
+            auto* alloca = createEntryBlockAlloca(lambdaFn, structTy, param->name);
+            auto* val = builder_.CreateLoad(structTy, argVal, param->name + ".val");
+            builder_.CreateStore(val, alloca);
+            namedValues_[paramSym] = alloca;
+        } else {
+            auto* alloca = createEntryBlockAlloca(lambdaFn, argVal->getType(), param->name);
+            builder_.CreateStore(argVal, alloca);
+            if (paramSym) namedValues_[paramSym] = alloca;
         }
-        // Recurse into child nodes (common expression types)
-        if (auto* bin = n->as<BinaryExpression>()) {
-            scanForParamSymbols(bin->left.get());
-            scanForParamSymbols(bin->right.get());
-        } else if (auto* unary = n->as<UnaryExpression>()) {
-            scanForParamSymbols(unary->operand.get());
-        } else if (auto* call = n->as<CallExpression>()) {
-            scanForParamSymbols(call->callee.get());
-            for (auto& arg : call->arguments) scanForParamSymbols(arg.get());
-        } else if (auto* ret = n->as<ReturnStatement>()) {
-            if (ret->hasValue()) scanForParamSymbols(ret->value.get());
-        } else if (auto* block = n->as<BlockStatement>()) {
-            for (auto& stmt : block->statements) scanForParamSymbols(stmt.get());
-        } else if (auto* exprStmt = n->as<ExpressionStatement>()) {
-            scanForParamSymbols(exprStmt->expression.get());
-        } else if (auto* assign = n->as<AssignmentExpression>()) {
-            scanForParamSymbols(assign->target.get());
-            scanForParamSymbols(assign->value.get());
-        } else if (auto* ternary = n->as<TernaryExpression>()) {
-            scanForParamSymbols(ternary->condition.get());
-            scanForParamSymbols(ternary->thenExpr.get());
-            scanForParamSymbols(ternary->elseExpr.get());
-        } else if (auto* mem = n->as<MemberAccessExpression>()) {
-            scanForParamSymbols(mem->object.get());
-        } else if (auto* idx = n->as<IndexExpression>()) {
-            scanForParamSymbols(idx->object.get());
-            scanForParamSymbols(idx->index.get());
-        } else if (auto* varDecl = n->as<VariableDeclaration>()) {
-            if (varDecl->initializer) scanForParamSymbols(varDecl->initializer.get());
-        } else if (auto* ifStmt = n->as<IfStatement>()) {
-            scanForParamSymbols(ifStmt->condition.get());
-            scanForParamSymbols(ifStmt->thenBody.get());
-            for (auto& elseIf : ifStmt->elseIfClauses) {
-                scanForParamSymbols(elseIf.condition.get());
-                scanForParamSymbols(elseIf.body.get());
-            }
-            if (ifStmt->elseBody) scanForParamSymbols(ifStmt->elseBody.get());
-        } else if (auto* forStmt = n->as<ForStatement>()) {
-            if (forStmt->initDeclaration) scanForParamSymbols(forStmt->initDeclaration.get());
-            for (auto& e : forStmt->initExpressions) scanForParamSymbols(e.get());
-            if (forStmt->condition) scanForParamSymbols(forStmt->condition.get());
-            for (auto& e : forStmt->iterators) scanForParamSymbols(e.get());
-            scanForParamSymbols(forStmt->body.get());
-        } else if (auto* whileStmt = n->as<WhileStatement>()) {
-            scanForParamSymbols(whileStmt->condition.get());
-            scanForParamSymbols(whileStmt->body.get());
-        } else if (auto* pipeExpr = n->as<PipeExpression>()) {
-            scanForParamSymbols(pipeExpr->input.get());
-            for (auto& stage : pipeExpr->stages) {
-                if (stage.function) scanForParamSymbols(stage.function.get());
-                for (auto& arg : stage.extraArguments) scanForParamSymbols(arg.get());
-            }
-        } else if (auto* matchExpr = n->as<MatchExpression>()) {
-            scanForParamSymbols(matchExpr->subject.get());
-            for (auto& arm : matchExpr->arms) {
-                scanForParamSymbols(arm.body.get());
-            }
-        }
-    };
-    scanForParamSymbols(node.body.get());
+    }
 
     // Extract captures from env pointer
     if (hasCaptures) {
         llvm::Value* envPtr = lambdaFn->getArg(lambdaFn->arg_size() - 1);
         envPtr->setName("env");
 
-        // Build closure struct type WITH RC header (must match allocation layout)
         auto* i64TyCap = llvm::Type::getInt64Ty(context_);
         auto* ptrTyCap = llvm::PointerType::getUnqual(context_);
 
         std::vector<llvm::Type*> closureFields;
-        closureFields.push_back(i64TyCap);   // refcount  (header field 0)
-        closureFields.push_back(ptrTyCap);   // cleanup_fn (header field 1)
+        closureFields.push_back(i64TyCap);
+        closureFields.push_back(ptrTyCap);
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             bool isByRef = (i < node.captureModesResolved.size() &&
                            node.captureModesResolved[i] == CaptureMode::ByReference);
             if (isByRef) {
-                // By-reference capture stores a pointer to the original alloca
                 closureFields.push_back(ptrTyCap);
             } else {
                 auto* varSym = node.capturedVariables[i]->as<VariableSymbol>();
-                closureFields.push_back(varSym ? mapType(varSym->type)
+                closureFields.push_back(varSym ? mapType(varSym->getType())
                                                : llvm::Type::getInt32Ty(context_));
             }
         }
         auto* closureTy = llvm::StructType::get(context_, closureFields);
 
-        // Extract each capture from env pointer (offset by 2 for RC header)
         const int headerOffset = 2;
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
-            auto* capSym = node.capturedVariables[i];
+            auto* capSym = node.capturedVariables[i].get();
             auto* varSym = capSym->as<VariableSymbol>();
             bool isByRef = (i < node.captureModesResolved.size() &&
                            node.captureModesResolved[i] == CaptureMode::ByReference);
 
             auto* capPtr = builder_.CreateStructGEP(closureTy, envPtr,
                                                      headerOffset + (unsigned)i,
-                                                     capSym->name + ".cap");
+                                                     capSym->getName() + ".cap");
 
             if (isByRef) {
-                // By-reference: env holds ptr to original alloca. Load the ptr and
-                // use it directly — reads/writes go through to the original variable.
-                auto* origPtr = builder_.CreateLoad(ptrTyCap, capPtr, capSym->name + ".ref");
+                auto* origPtr = builder_.CreateLoad(ptrTyCap, capPtr, capSym->getName() + ".ref");
                 namedValues_[capSym] = origPtr;
             } else {
-                // By-value: load value, copy into local alloca (existing behavior)
-                llvm::Type* capType = varSym ? mapType(varSym->type)
+                llvm::Type* capType = varSym ? mapType(varSym->getType())
                                              : llvm::Type::getInt32Ty(context_);
-                auto* capVal = builder_.CreateLoad(capType, capPtr, capSym->name);
-                auto* capAlloca = createEntryBlockAlloca(lambdaFn, capType, capSym->name);
+                auto* capVal = builder_.CreateLoad(capType, capPtr, capSym->getName());
+                auto* capAlloca = createEntryBlockAlloca(lambdaFn, capType, capSym->getName());
                 builder_.CreateStore(capVal, capAlloca);
                 namedValues_[capSym] = capAlloca;
             }
         }
     }
 
+    // Push RAII scope for lambda body
+    pushRAIIScope();
+
     // Emit body
     if (node.hasExpressionBody()) {
-        auto exprBody = node.getExpressionBody();
-        exprBody->accept(*this);
+        node.body->as<ExpressionBaseNode>()->accept(*this);
         if (lastValue_ && !retTy->isVoidTy()) {
             builder_.CreateRet(lastValue_);
         } else {
             builder_.CreateRetVoid();
         }
     } else if (node.hasBlockBody()) {
-        auto blockBody = node.getBlockBody();
-        blockBody->accept(*this);
+        node.body->as<BlockStatementNode>()->accept(*this);
         if (!builder_.GetInsertBlock()->getTerminator()) {
             if (retTy->isVoidTy()) {
                 builder_.CreateRetVoid();
@@ -4254,8 +3436,9 @@ void IRGenerator::visit(LambdaExpression& node) {
         }
     }
 
+    popRAIIScope();
+
     // Restore state
-    leaveChildScope();
     currentFunction_ = prevFunction;
     currentThisPtr_ = prevThisPtr;
     namedValues_ = savedNamedValues;
@@ -4263,21 +3446,20 @@ void IRGenerator::visit(LambdaExpression& node) {
     builder_.SetInsertPoint(savedInsertPoint, savedInsertPointIt);
 
     if (hasCaptures) {
-        // Build closure struct with RC header: { i64 refcount, ptr cleanup_fn, captures... }
         auto* i64TyA = llvm::Type::getInt64Ty(context_);
         auto* ptrTyA = llvm::PointerType::getUnqual(context_);
 
         std::vector<llvm::Type*> closureFields;
-        closureFields.push_back(i64TyA);   // refcount  (header field 0)
-        closureFields.push_back(ptrTyA);   // cleanup_fn (header field 1)
+        closureFields.push_back(i64TyA);
+        closureFields.push_back(ptrTyA);
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             bool isByRef = (i < node.captureModesResolved.size() &&
                            node.captureModesResolved[i] == CaptureMode::ByReference);
             if (isByRef) {
-                closureFields.push_back(ptrTyA);  // pointer to original alloca
+                closureFields.push_back(ptrTyA);
             } else {
                 auto* varSym = node.capturedVariables[i]->as<VariableSymbol>();
-                closureFields.push_back(varSym ? mapType(varSym->type)
+                closureFields.push_back(varSym ? mapType(varSym->getType())
                                                : llvm::Type::getInt32Ty(context_));
             }
         }
@@ -4295,21 +3477,20 @@ void IRGenerator::visit(LambdaExpression& node) {
         auto* rcSlot = builder_.CreateStructGEP(closureTy, closurePtr, 0, "rc.slot");
         builder_.CreateStore(llvm::ConstantInt::get(i64TyA, 1), rcSlot);
 
-        // Check if any by-value captured variable is a closure (needs cleanup function)
-        // By-reference captures don't own the value — skip them for cleanup
+        // Check if any by-value captured variable is a closure
         bool capturesClosures = false;
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             bool isByRef = (i < node.captureModesResolved.size() &&
                            node.captureModesResolved[i] == CaptureMode::ByReference);
-            if (isByRef) continue;  // ref captures don't own — no cleanup needed
+            if (isByRef) continue;
             auto* varSym = node.capturedVariables[i]->as<VariableSymbol>();
-            if (varSym && varSym->type && varSym->type->is<FunctionType>()) {
+            if (varSym && varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
                 capturesClosures = true;
                 break;
             }
         }
 
-        // Store cleanup function pointer (or null if no inner closures)
+        // Store cleanup function pointer
         auto* cleanupSlot = builder_.CreateStructGEP(closureTy, closurePtr, 1, "cleanup.slot");
         if (capturesClosures) {
             auto* cleanupFn = generateClosureCleanupFn(closureTy, node.capturedVariables,
@@ -4319,10 +3500,10 @@ void IRGenerator::visit(LambdaExpression& node) {
             builder_.CreateStore(llvm::ConstantPointerNull::get(ptrTyA), cleanupSlot);
         }
 
-        // Store captured values (offset by 2 for the RC header)
+        // Store captured values
         const int headerOffset = 2;
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
-            auto* capSym = node.capturedVariables[i];
+            auto* capSym = node.capturedVariables[i].get();
             auto* varSym = capSym->as<VariableSymbol>();
             bool isByRef = (i < node.captureModesResolved.size() &&
                            node.captureModesResolved[i] == CaptureMode::ByReference);
@@ -4331,22 +3512,19 @@ void IRGenerator::visit(LambdaExpression& node) {
             if (it != savedNamedValues.end()) {
                 auto* capSlot = builder_.CreateStructGEP(closureTy, closurePtr,
                                                           headerOffset + (unsigned)i,
-                                                          capSym->name + ".slot");
+                                                          capSym->getName() + ".slot");
 
                 if (isByRef) {
-                    // By-reference: store the alloca pointer itself (not the value)
                     builder_.CreateStore(it->second, capSlot);
                 } else {
-                    // By-value: load value from alloca and store into env
-                    llvm::Type* capTy = varSym ? mapType(varSym->type)
+                    llvm::Type* capTy = varSym ? mapType(varSym->getType())
                                                : llvm::Type::getInt32Ty(context_);
-                    llvm::Value* capVal = builder_.CreateLoad(capTy, it->second, capSym->name + ".val");
+                    llvm::Value* capVal = builder_.CreateLoad(capTy, it->second, capSym->getName() + ".val");
                     builder_.CreateStore(capVal, capSlot);
 
-                    // If capturing a closure by value, retain its envPtr
-                    if (varSym && varSym->type && varSym->type->is<FunctionType>()) {
+                    if (varSym && varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
                         auto* capturedEnv = builder_.CreateExtractValue(capVal, {1},
-                                                                        capSym->name + ".cap.env");
+                                                                        capSym->getName() + ".cap.env");
                         builder_.CreateCall(getOrCreateClosureRetainFn(), {capturedEnv});
                     }
                 }
@@ -4362,8 +3540,7 @@ void IRGenerator::visit(LambdaExpression& node) {
     } else {
         // No captures — fat pointer with null env
         auto* fatTy = getFatPtrType();
-        auto* nullPtr = llvm::ConstantPointerNull::get(
-            llvm::PointerType::getUnqual(context_));
+        auto* nullPtr = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_));
         llvm::Value* fat = llvm::UndefValue::get(fatTy);
         fat = builder_.CreateInsertValue(fat, lambdaFn, {0}, "fat.fn");
         fat = builder_.CreateInsertValue(fat, nullPtr, {1}, "fat.env");
@@ -4371,15 +3548,25 @@ void IRGenerator::visit(LambdaExpression& node) {
     }
 }
 
-//================================================================================
-// Pattern visitors (handled inline by MatchExpression)
-//================================================================================
-void IRGenerator::visit(LiteralPattern& /*node*/) {}
-void IRGenerator::visit(RangePattern& /*node*/) {}
-void IRGenerator::visit(WildcardPattern& /*node*/) {}
-void IRGenerator::visit(BindingPattern& /*node*/) {}
-void IRGenerator::visit(TuplePattern& /*node*/) {}
-void IRGenerator::visit(GuardedPattern& /*node*/) {}
+void IRGenerator::visit(VariableDeclarationExpression& node) {
+    auto* varSym = node.resolvedVariable.get();
+    if (!varSym) return;
+
+    llvm::Type* varTy = mapType(varSym->getType());
+    if (varTy->isVoidTy()) return;
+
+    auto* alloca = createEntryBlockAlloca(currentFunction_, varTy, node.name);
+    namedValues_[varSym] = alloca;
+
+    if (node.initializer) {
+        node.initializer->accept(*this);
+        if (lastValue_) {
+            builder_.CreateStore(lastValue_, alloca);
+        }
+    }
+
+    lastValue_ = alloca;
+}
 
 } // namespace codegen
 } // namespace mingus

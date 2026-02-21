@@ -1,22 +1,31 @@
-//================================================================================
-// MINGUS v1 - LLVM IR Generator
-// Walks the semantically-annotated AST and emits LLVM IR.
-// Relies on all 4 semantic passes having completed successfully.
-//================================================================================
-
 #pragma once
 
-#include "mingus/ast/ASTVisitor.h"
-#include "mingus/ast/ASTNode.h"
-#include "mingus/ast/Program.h"
-#include "mingus/ast/Declarations.h"
-#include "mingus/ast/Statements.h"
-#include "mingus/ast/Expressions.h"
-#include "mingus/ast/Patterns.h"
-#include "mingus/ast/TypeNode.h"
-#include "mingus/ast/Type.h"
-#include "mingus/sema/SymbolTable.h"
-#include "mingus/sema/TypeRegistry.h"
+//================================================================================
+// MINGUS V2 - LLVM IR Generator
+//
+// Walks the semantically-annotated AST and emits LLVM IR.
+// Requires all 4 semantic passes to have completed:
+//   Pass 1 (SymbolTableBuilder): scope tree, symbols, auto ctor/dtor, vtables
+//   Pass 2 (TypeResolver): TypeNode -> TypeSymbol resolution
+//   Pass 3 (TypeChecker): expression type inference, call resolution
+//   Pass 4 (SemanticValidator): capture analysis, RAII tracking
+//
+// Key V2 improvements over V1:
+//   - No scope navigation stack (childIndexStack_) — each AST node has astScopeNode
+//   - No scanForParamSymbols — ParameterNode::resolvedSymbol links directly
+//   - Unified mapType(TypeSymbol*) — single entry point for type mapping
+//   - mapParamType() handles struct/class/interface/ref params uniformly
+//   - ArgumentsNode::isReference[] for per-arg ref tracking
+//   - CallExpression::resolvedCallee for pre-resolved function dispatch
+//================================================================================
+
+#include "mingus/AstNode.h"
+#include "mingus/Expressions.h"
+#include "mingus/Statements.h"
+#include "mingus/Declarations.h"
+#include "mingus/Symbols.h"
+#include "mingus/SymbolTable.h"
+#include "mingus/sema/SemanticValidator.h"
 
 #pragma warning(push, 0)
 #include <llvm/IR/LLVMContext.h>
@@ -28,52 +37,39 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/IR/DIBuilder.h>
-#include <llvm/IR/DebugInfoMetadata.h>
 #pragma warning(pop)
 
-#include <unordered_map>
 #include <map>
 #include <set>
 #include <string>
 #include <memory>
+#include <unordered_map>
 
 namespace mingus {
 namespace codegen {
-
-using namespace mingus::ast;
 
 //================================================================================
 // IRGenerator — ASTVisitor that emits LLVM IR
 //================================================================================
 class IRGenerator : public ASTVisitor {
 public:
-    IRGenerator(sema::SymbolTable& symbolTable, sema::TypeRegistry& registry,
-                bool emitDebugInfo = false, const std::string& sourceFile = "");
+    IRGenerator(SymbolTable& symbolTable,
+                const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo);
 
     // Entry point — generates LLVM IR and returns the module
     std::unique_ptr<llvm::Module> generate(ProgramNode& program);
 
-    // Access the LLVMContext (needed by the IR tool for verification)
+    // Access the LLVMContext (needed for verification)
     llvm::LLVMContext& getContext() { return context_; }
 
     //==========================================================================
-    // ASTVisitor overrides (all 62)
+    // ASTVisitor overrides
     //==========================================================================
 
     // Program structure
     void visit(ProgramNode& node) override;
     void visit(ModuleNode& node) override;
-    void visit(ImportNode& node) override;
-
-    // Type nodes (no-op in codegen)
-    void visit(TypeNode& node) override;
-    void visit(PrimitiveTypeNode& node) override;
-    void visit(NamedTypeNode& node) override;
-    void visit(PointerTypeNode& node) override;
-    void visit(ArrayTypeNode& node) override;
-    void visit(TupleTypeNode& node) override;
-    void visit(FunctionTypeNode& node) override;
+    void visit(BlockStatementNode& node) override;
 
     // Declarations
     void visit(VariableDeclaration& node) override;
@@ -88,10 +84,9 @@ public:
     void visit(StructDeclaration& node) override;
     void visit(ClassDeclaration& node) override;
     void visit(InterfaceDeclaration& node) override;
-    void visit(ParameterNode& node) override;
+    void visit(ImportDeclaration& node) override;
 
     // Statements
-    void visit(BlockStatement& node) override;
     void visit(ExpressionStatement& node) override;
     void visit(ReturnStatement& node) override;
     void visit(IfStatement& node) override;
@@ -101,7 +96,6 @@ public:
     void visit(BreakStatement& node) override;
     void visit(ContinueStatement& node) override;
     void visit(DeleteStatement& node) override;
-    void visit(RawBlock& node) override;
 
     // Expressions
     void visit(IntegerLiteral& node) override;
@@ -109,7 +103,7 @@ public:
     void visit(BoolLiteral& node) override;
     void visit(CharLiteral& node) override;
     void visit(StringLiteral& node) override;
-    void visit(InterpolatedString& node) override;
+    void visit(InterpolatedStringExpression& node) override;
     void visit(NullLiteral& node) override;
     void visit(IdentifierExpression& node) override;
     void visit(QualifiedNameExpression& node) override;
@@ -124,19 +118,11 @@ public:
     void visit(IndexExpression& node) override;
     void visit(CastExpression& node) override;
     void visit(SizeOfExpression& node) override;
-    void visit(AlignOfExpression& node) override;
     void visit(PipeExpression& node) override;
     void visit(MatchExpression& node) override;
     void visit(TupleExpression& node) override;
     void visit(LambdaExpression& node) override;
-
-    // Patterns
-    void visit(LiteralPattern& node) override;
-    void visit(RangePattern& node) override;
-    void visit(WildcardPattern& node) override;
-    void visit(BindingPattern& node) override;
-    void visit(TuplePattern& node) override;
-    void visit(GuardedPattern& node) override;
+    void visit(VariableDeclarationExpression& node) override;
 
 private:
     //==========================================================================
@@ -147,72 +133,57 @@ private:
     llvm::IRBuilder<> builder_;
 
     //==========================================================================
-    // Semantic analysis data
+    // Semantic analysis data (read-only)
     //==========================================================================
-    sema::SymbolTable& symbolTable_;
-    sema::TypeRegistry& registry_;
+    SymbolTable& symbolTable_;
+    const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo_;
 
     //==========================================================================
     // Codegen state
     //==========================================================================
-    llvm::Function* currentFunction_;
-    llvm::Value* currentThisPtr_;
-    sema::TypeSymbol* currentType_;
-    llvm::Value* lastValue_;                // result of the last expression visit
+    llvm::Function* currentFunction_ = nullptr;
+    llvm::Value* currentThisPtr_ = nullptr;
+    llvm::Value* lastValue_ = nullptr;
+
+    // Current module name (for name mangling)
+    std::string currentModuleName_;
+
+    // Current class/struct being visited (for ctor/dtor/method/operator)
+    ClassSymbol* currentClassSym_ = nullptr;
+    StructSymbol* currentStructSym_ = nullptr;
 
     //==========================================================================
     // Caches
     //==========================================================================
-    std::unordered_map<sema::Symbol*, llvm::Value*> namedValues_;
-    std::unordered_map<const Type*, llvm::Type*> typeCache_;
-    std::unordered_map<sema::Symbol*, llvm::Function*> functionCache_;
+    std::unordered_map<Symbol*, llvm::Value*> namedValues_;
+    std::unordered_map<Symbol*, llvm::Function*> functionCache_;
     std::unordered_map<std::string, llvm::GlobalVariable*> stringConstants_;
 
-    // Maps user-type TypeInfo* → LLVM StructType* (for GEP with opaque pointers)
-    std::unordered_map<const Type*, llvm::StructType*> structTypeCache_;
+    // TypeSymbol* -> LLVM StructType* (for GEP with opaque pointers)
+    std::unordered_map<TypeSymbol*, llvm::StructType*> structTypeCache_;
 
-    // Maps ClassSymbol* → vtable global variable
-    std::unordered_map<sema::ClassSymbol*, llvm::GlobalVariable*> vtableCache_;
+    // ClassSymbol* -> vtable global variable
+    std::unordered_map<ClassSymbol*, llvm::GlobalVariable*> vtableCache_;
 
-    // Maps (ClassSymbol*, InterfaceSymbol*) → itable global variable
-    std::map<std::pair<sema::ClassSymbol*, sema::InterfaceSymbol*>, llvm::GlobalVariable*> itableCache_;
+    // (ClassSymbol*, InterfaceSymbol*) -> itable global variable
+    std::map<std::pair<ClassSymbol*, InterfaceSymbol*>, llvm::GlobalVariable*> itableCache_;
 
     // Struct cleanup functions for structs with closure-typed fields
     std::unordered_map<std::string, llvm::Function*> structCleanupCache_;
-    llvm::Function* getOrCreateStructCleanupFn(sema::StructSymbol* structSym);
 
     //==========================================================================
     // Loop context (for break/continue)
     //==========================================================================
-    llvm::BasicBlock* loopExitBlock_;
-    llvm::BasicBlock* loopIterBlock_;
-    size_t loopRAIIScopeDepth_ = 0;  // RAII stack depth at loop entry
-
-    //==========================================================================
-    // Debug information (DIBuilder)
-    //==========================================================================
-    bool emitDebugInfo_;
-    std::string sourceFile_;
-    std::unique_ptr<llvm::DIBuilder> diBuilder_;
-    llvm::DICompileUnit* diCompileUnit_ = nullptr;
-    llvm::DIFile* diFile_ = nullptr;
-    std::unordered_map<const Type*, llvm::DIType*> diTypeCache_;
-
-    // Create a DIType for a Mingus type
-    llvm::DIType* mapDIType(const Type* type);
-
-    // Emit a debug location for a source location
-    void emitDebugLocation(const SourceLocation& loc);
-
-    // Clear debug location (for compiler-generated code)
-    void clearDebugLocation();
+    llvm::BasicBlock* loopExitBlock_ = nullptr;
+    llvm::BasicBlock* loopIterBlock_ = nullptr;
+    size_t loopRAIIScopeDepth_ = 0;
 
     //==========================================================================
     // RAII scope stack
     //==========================================================================
     struct RAIIScope {
         std::vector<std::pair<llvm::Value*, llvm::Function*>> destructibles;
-        std::set<sema::Symbol*> returnedVars;
+        std::set<Symbol*> returnedVars;
     };
     std::vector<RAIIScope> raiiScopeStack_;
 
@@ -221,8 +192,6 @@ private:
     //==========================================================================
     llvm::Function* stringFreeFn_ = nullptr;
     llvm::Function* getOrCreateStringFreeFn();
-
-    // Emit string concatenation: malloc + strcpy + strcat, returns new ptr
     llvm::Value* emitStringConcat(llvm::Value* left, llvm::Value* right);
 
     //==========================================================================
@@ -232,63 +201,40 @@ private:
     llvm::Function* closureReleaseFn_ = nullptr;
     llvm::Function* closureReleaseWrapperFn_ = nullptr;
     int closureCleanupCounter_ = 0;
+    int lambdaCounter_ = 0;
 
-    // Increment refcount on a closure environment pointer (null-safe)
     llvm::Function* getOrCreateClosureRetainFn();
-
-    // Decrement refcount; free + call cleanup when it hits zero (null-safe)
     llvm::Function* getOrCreateClosureReleaseFn();
-
-    // RAII wrapper: loads fat pointer from alloca, extracts envPtr, calls release
     llvm::Function* getOrCreateClosureReleaseWrapper();
-
-    // Generate a per-closure cleanup function that releases captured closures
     llvm::Function* generateClosureCleanupFn(
         llvm::StructType* closureTy,
-        const std::vector<sema::Symbol*>& capturedVars,
+        const std::vector<SymbolPtr>& capturedVars,
         int headerOffset,
-        const std::vector<ast::CaptureMode>* captureModes = nullptr);
-
-    //==========================================================================
-    // Lambda counter
-    //==========================================================================
-    int lambdaCounter_;
-
-    //==========================================================================
-    // Current module name (for name mangling)
-    //==========================================================================
-    std::string currentModuleName_;
-
-    //==========================================================================
-    // Scope navigation (same pattern as sema passes)
-    //==========================================================================
-    sema::Scope* currentScope_;
-    std::vector<size_t> childIndexStack_;
-
-    void enterNamedScope(sema::Scope* scope);
-    void leaveNamedScope();
-    void enterNextChildScope();
-    void leaveChildScope();
+        const std::vector<CaptureMode>* captureModes = nullptr);
+    llvm::Function* getOrCreateStructCleanupFn(StructSymbol* structSym);
 
     //==========================================================================
     // Core helpers
     //==========================================================================
 
-    // Map a Mingus Type* to an LLVM Type*
-    llvm::Type* mapType(const Type* type);
-    llvm::Type* mapType(const TypePtr<Type>& type);
+    // Map a V2 TypeSymbol to an LLVM Type
+    llvm::Type* mapType(TypeSymbol* type);
+    llvm::Type* mapType(const TypeSymbolPtr& type);
 
-    // Get the canonical fat pointer type { ptr, ptr } for function-typed values
+    // Map a parameter type (handles struct-by-ptr, ref-by-ptr, interface-by-fatptr)
+    llvm::Type* mapParamType(TypeSymbol* type, bool isReference);
+
+    // Get the canonical fat pointer type { ptr, ptr }
     llvm::StructType* getFatPtrType();
 
-    // Get the LLVM struct type for a user type (for GEP operations)
-    llvm::StructType* getStructType(const Type* type);
+    // Get the LLVM struct type for a user type
+    llvm::StructType* getStructType(TypeSymbol* type);
 
     // Generate a mangled name for a symbol
-    std::string mangleName(sema::Symbol* sym);
+    std::string mangleName(Symbol* sym);
 
     // Map OverloadableOp to string suffix
-    static std::string opToString(sema::OverloadableOp op);
+    static std::string opToString(OverloadableOp op);
 
     // Create an alloca in the entry block of a function
     llvm::AllocaInst* createEntryBlockAlloca(llvm::Function* fn,
@@ -296,7 +242,7 @@ private:
                                               const std::string& name);
 
     // Emit an expression as an lvalue (returns pointer, not loaded value)
-    llvm::Value* emitLValue(ExpressionNode& expr);
+    llvm::Value* emitLValue(ExpressionBaseNode& expr);
 
     //==========================================================================
     // RAII helpers
@@ -311,30 +257,42 @@ private:
     //==========================================================================
     // Forward declaration phase (Phase A)
     //==========================================================================
-    void declareStructTypes();
-    void declareExternFunctions();
-    void declareFunctions();
-    void declareVtables();
+    void declareStructTypes(ProgramNode& program);
+    void declareExternFunctions(ProgramNode& program);
+    void declareFunctions(ProgramNode& program);
+    void declareVtables(ProgramNode& program);
+    void declareItables(ProgramNode& program);
 
     // Helpers for forward declarations
-    void declareStructTypeForSymbol(sema::StructSymbol* sym);
-    void declareClassTypeForSymbol(sema::ClassSymbol* sym);
-    void declareFunctionSymbol(sema::FunctionSymbol* sym);
-    void declareOperatorSymbol(sema::OperatorSymbol* sym);
-    void declareItables();
+    void declareStructTypeForSymbol(StructSymbol* sym);
+    void declareClassTypeForSymbol(ClassSymbol* sym);
+    void declareFunctionSymbol(FunctionSymbol* sym);
+    void declareOperatorSymbol(OperatorSymbol* sym);
+
+    // Build an LLVM function type for a function symbol
+    llvm::FunctionType* buildFunctionType(FunctionSymbol* sym);
+    llvm::FunctionType* buildOperatorType(OperatorSymbol* sym);
+
+    // Inheritance helpers
+    int getFieldGEPIndex(ClassSymbol* cls, VariableSymbol* field);
+    void storeVtablePtr(llvm::Value* objPtr, ClassSymbol* cls);
 
     // Wrap a class pointer into an interface fat pointer { objPtr, itablePtr }
     llvm::Value* emitWrapToInterfacePtr(llvm::Value* objPtr,
-                                         sema::ClassSymbol* cls,
-                                         sema::InterfaceSymbol* iface);
+                                         ClassSymbol* cls,
+                                         InterfaceSymbol* iface);
 
-    // Build an LLVM function type for a function symbol
-    llvm::FunctionType* buildFunctionType(sema::FunctionSymbol* sym);
-    llvm::FunctionType* buildOperatorType(sema::OperatorSymbol* sym);
-
-    // Inheritance helpers
-    int getFieldGEPIndex(sema::ClassSymbol* cls, sema::VariableSymbol* field);
-    void storeVtablePtr(llvm::Value* objPtr, sema::ClassSymbol* cls);
+    //==========================================================================
+    // V2 type query helpers (replacing V1's Type*-based helpers)
+    //==========================================================================
+    static bool isIntegerKind(TypeSymbol* t);
+    static bool isFloatingKind(TypeSymbol* t);
+    static bool isBoolKind(TypeSymbol* t);
+    static bool isStringKind(TypeSymbol* t);
+    static bool isPointerKind(TypeSymbol* t);
+    static bool isUserStructKind(TypeSymbol* t);
+    static bool isEnumKind(TypeSymbol* t);
+    static bool isFunctionKind(TypeSymbol* t);
 };
 
 } // namespace codegen

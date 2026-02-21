@@ -1,77 +1,71 @@
-//================================================================================
-// MINGUS v1 - Error Reporter
-// Collects diagnostics (errors and warnings) during semantic analysis
-//================================================================================
-
 #pragma once
 
-#include "mingus/ast/ASTNode.h"
+// ============================================================================
+// ErrorReporter.h — Diagnostic collection for sema passes
+// ============================================================================
 
+#include "mingus/DebugInfo.h"
+
+#include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace mingus {
-namespace sema {
 
-using namespace mingus::ast;
-
-//================================================================================
-// Severity — error or warning
-//================================================================================
-enum class Severity {
+enum class DiagnosticLevel {
     Error,
-    Warning
+    Warning,
+    Note
 };
 
-//================================================================================
-// Diagnostic — a single error or warning message
-//================================================================================
 struct Diagnostic {
-    Severity severity;
-    SourceLocation location;
+    DiagnosticLevel level;
     std::string message;
-
-    Diagnostic(Severity sev, const SourceLocation& loc, const std::string& msg)
-        : severity(sev), location(loc), message(msg) {}
-
-    std::string toString() const {
-        std::string prefix = (severity == Severity::Error) ? "error" : "warning";
-        return location.toString() + ": " + prefix + ": " + message;
-    }
+    std::shared_ptr<DebugInfo> location;
 };
 
-//================================================================================
-// ErrorReporter — collects and reports diagnostics
-//================================================================================
 class ErrorReporter {
 public:
-    void error(const SourceLocation& loc, const std::string& message) {
-        diagnostics_.emplace_back(Severity::Error, loc, message);
-        ++errorCount_;
+    void error(const std::string& message, const std::shared_ptr<DebugInfo>& loc = nullptr) {
+        diagnostics_.push_back({DiagnosticLevel::Error, message, loc});
+        errorCount_++;
     }
 
-    void warning(const SourceLocation& loc, const std::string& message) {
-        diagnostics_.emplace_back(Severity::Warning, loc, message);
-        ++warningCount_;
+    void warning(const std::string& message, const std::shared_ptr<DebugInfo>& loc = nullptr) {
+        diagnostics_.push_back({DiagnosticLevel::Warning, message, loc});
+    }
+
+    void note(const std::string& message, const std::shared_ptr<DebugInfo>& loc = nullptr) {
+        diagnostics_.push_back({DiagnosticLevel::Note, message, loc});
     }
 
     bool hasErrors() const { return errorCount_ > 0; }
-    int getErrorCount() const { return errorCount_; }
-    int getWarningCount() const { return warningCount_; }
+    int errorCount() const { return errorCount_; }
+    const std::vector<Diagnostic>& diagnostics() const { return diagnostics_; }
 
-    const std::vector<Diagnostic>& getDiagnostics() const { return diagnostics_; }
+    void dump(std::ostream& out = std::cerr) const {
+        for (const auto& d : diagnostics_) {
+            switch (d.level) {
+                case DiagnosticLevel::Error:   out << "error: "; break;
+                case DiagnosticLevel::Warning: out << "warning: "; break;
+                case DiagnosticLevel::Note:    out << "note: "; break;
+            }
+            if (d.location) {
+                out << d.location->toString() << ": ";
+            }
+            out << d.message << "\n";
+        }
+    }
 
     void clear() {
         diagnostics_.clear();
         errorCount_ = 0;
-        warningCount_ = 0;
     }
 
 private:
     std::vector<Diagnostic> diagnostics_;
     int errorCount_ = 0;
-    int warningCount_ = 0;
 };
 
-} // namespace sema
 } // namespace mingus

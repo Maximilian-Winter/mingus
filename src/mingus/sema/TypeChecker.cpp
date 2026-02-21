@@ -1,507 +1,259 @@
-//================================================================================
-// MINGUS v1 - Type Checker Implementation (Pass 3)
-// Walks every expression/statement. Sets resolvedType on all ExpressionNodes.
-// Checks type compatibility. Resolves identifiers. Handles operator overloads.
-//================================================================================
+// ============================================================================
+// TypeChecker.cpp — Pass 3: Expression type inference and compatibility
+//
+// Bottom-up walk: visit children first, then infer this node's type.
+// Every ExpressionBaseNode gets a resolvedType (ErrorType on failure).
+// ============================================================================
 
 #include "mingus/sema/TypeChecker.h"
 
-#include <algorithm>
-
 namespace mingus {
-namespace sema {
 
-//================================================================================
-// Constructor & Entry Point
-//================================================================================
-TypeChecker::TypeChecker(SymbolTable& table, TypeRegistry& registry, ErrorReporter& errors)
-    : symbolTable_(table)
-    , registry_(registry)
-    , errors_(errors)
-    , currentScope_(nullptr)
-    , currentFunction_(nullptr)
-    , currentReturnType_(nullptr)
-    , currentType_(nullptr)
-    , matchSubjectType_(nullptr)
-{
-}
+TypeChecker::TypeChecker(SymbolTable& symbolTable, ErrorReporter& errors)
+    : symbolTable_(symbolTable)
+    , errors_(errors) {}
+
+// ============================================================================
+// Entry point
+// ============================================================================
 
 void TypeChecker::check(ProgramNode& program) {
-    currentScope_ = symbolTable_.getGlobalScope();
     visit(program);
 }
 
-//================================================================================
-// Scope Navigation
-//================================================================================
-void TypeChecker::enterNamedScope(Scope* scope) {
-    currentScope_ = scope;
-    childIndexStack_.push_back(0);
-}
-
-void TypeChecker::leaveNamedScope() {
-    if (!childIndexStack_.empty()) {
-        childIndexStack_.pop_back();
-    }
-    if (currentScope_->parent) {
-        currentScope_ = currentScope_->parent;
-    }
-}
-
-void TypeChecker::enterNextChildScope() {
-    if (childIndexStack_.empty()) {
-        childIndexStack_.push_back(0);
-    }
-    size_t& idx = childIndexStack_.back();
-    if (idx < currentScope_->children.size()) {
-        currentScope_ = currentScope_->children[idx++].get();
-        childIndexStack_.push_back(0);
-    }
-}
-
-void TypeChecker::leaveChildScope() {
-    if (!childIndexStack_.empty()) {
-        childIndexStack_.pop_back();
-    }
-    if (currentScope_->parent) {
-        currentScope_ = currentScope_->parent;
-    }
-}
-
-//================================================================================
+// ============================================================================
 // Helpers
-//================================================================================
-void TypeChecker::visitStatements(NodeList<StatementNode>& stmts) {
+// ============================================================================
+
+void TypeChecker::visitStatements(
+    std::vector<std::shared_ptr<StatementBaseNode>>& stmts)
+{
     for (auto& stmt : stmts) {
         if (stmt) stmt->accept(*this);
     }
 }
 
-bool TypeChecker::isVoidType(const Type* t) const {
-    if (!t) return false;
-    auto* prim = t->as<PrimitiveType>();
-    return prim && prim->kind == PrimitiveType::PrimitiveKind::Void;
+void TypeChecker::visitFunctionBody(
+    const std::shared_ptr<FunctionSymbol>& funcSym,
+    BlockStatementNode& body)
+{
+    auto savedFunc = currentFunction_;
+    auto savedReturn = currentReturnType_;
+    currentFunction_ = funcSym;
+    currentReturnType_ = funcSym ? funcSym->returnType : nullptr;
+
+    visitStatements(body.statements);
+
+    currentFunction_ = savedFunc;
+    currentReturnType_ = savedReturn;
 }
 
-void TypeChecker::checkAssignability(const Type* from, const Type* to,
-                                      const SourceLocation& loc,
-                                      const std::string& context) {
-    if (!from || !to) return;
-    if (from->is<ErrorType>() || to->is<ErrorType>()) return;
-    if (!registry_.isCompatible(from, to)) {
-        std::string msg = "cannot convert '" + from->toString() +
-                          "' to '" + to->toString() + "'";
-        if (!context.empty()) {
-            msg = "in " + context + ": " + msg;
+TypeSymbolPtr TypeChecker::getSymbolType(const SymbolPtr& sym) {
+    if (!sym) return symbolTable_.getErrorType();
+
+    // Variable → its declared/inferred type
+    if (auto* var = sym->as<VariableSymbol>()) {
+        return var->getType() ? var->getType() : symbolTable_.getErrorType();
+    }
+
+    // Function → build FunctionTypeSymbol
+    if (auto* func = sym->as<FunctionSymbol>()) {
+        auto funcType = func->buildFunctionType();
+        if (funcType) return funcType;
+        return symbolTable_.getErrorType();
+    }
+
+    // TypeSymbol → the type itself (struct, class, enum, interface)
+    if (auto* type = sym->as<TypeSymbol>()) {
+        return std::dynamic_pointer_cast<TypeSymbol>(sym);
+    }
+
+    return symbolTable_.getErrorType();
+}
+
+bool TypeChecker::checkAssignability(
+    TypeSymbol* from, TypeSymbol* to,
+    const std::shared_ptr<DebugInfo>& loc,
+    const std::string& context)
+{
+    if (!from || !to) return true;  // null = not yet resolved, skip check
+    if (symbolTable_.isCompatible(from, to)) return true;
+
+    std::string msg = "type mismatch: cannot convert '"
+        + from->getTypeDescription() + "' to '"
+        + to->getTypeDescription() + "'";
+    if (!context.empty()) msg += " (" + context + ")";
+    errors_.error(msg, loc);
+    return false;
+}
+
+TypeSymbolPtr TypeChecker::getWiderType(TypeSymbol* a, TypeSymbol* b) {
+    if (!a || !b) return symbolTable_.getErrorType();
+
+    // Unwrap enum types to underlying type for arithmetic
+    if (auto* ea = a->as<EnumSymbol>()) {
+        a = ea->underlyingType ? ea->underlyingType.get()
+            : symbolTable_.getIntType().get();
+    }
+    if (auto* eb = b->as<EnumSymbol>()) {
+        b = eb->underlyingType ? eb->underlyingType.get()
+            : symbolTable_.getIntType().get();
+    }
+
+    if (a == b) return std::dynamic_pointer_cast<TypeSymbol>(
+        symbolTable_.resolveType(a->getName()));
+
+    auto* pa = a->as<PrimitiveTypeSymbol>();
+    auto* pb = b->as<PrimitiveTypeSymbol>();
+    if (!pa || !pb) return symbolTable_.getErrorType();
+
+    // Widening rules: double > float > int > char > byte
+    auto rank = [](PrimitiveKind k) -> int {
+        switch (k) {
+            case PrimitiveKind::Byte:   return 1;
+            case PrimitiveKind::Char:   return 2;
+            case PrimitiveKind::Int:    return 3;
+            case PrimitiveKind::Float:  return 4;
+            case PrimitiveKind::Double: return 5;
+            default: return 0;
         }
-        errors_.error(loc, msg);
+    };
+
+    int ra = rank(pa->primitiveKind);
+    int rb = rank(pb->primitiveKind);
+    if (ra == 0 || rb == 0) return symbolTable_.getErrorType();
+
+    if (ra >= rb) {
+        return symbolTable_.resolveType(a->getName());
+    } else {
+        return symbolTable_.resolveType(b->getName());
     }
 }
 
-bool TypeChecker::isLValue(ExpressionNode* expr) {
+std::shared_ptr<OperatorSymbol> TypeChecker::findOperatorOverload(
+    TypeSymbol* type, OverloadableOp op)
+{
+    if (!type) return nullptr;
+
+    // Check if the type is a SymbolWithScope (has operator definitions)
+    auto* scope = dynamic_cast<Scope*>(type);
+    if (!scope) return nullptr;
+
+    return scope->resolveOperator(op);
+}
+
+OverloadableOp TypeChecker::binaryOpToOverloadable(BinaryOp op) {
+    switch (op) {
+        case BinaryOp::Add:          return OverloadableOp::Add;
+        case BinaryOp::Sub:          return OverloadableOp::Sub;
+        case BinaryOp::Mul:          return OverloadableOp::Mul;
+        case BinaryOp::Div:          return OverloadableOp::Div;
+        case BinaryOp::Mod:          return OverloadableOp::Mod;
+        case BinaryOp::Equal:        return OverloadableOp::Equal;
+        case BinaryOp::NotEqual:     return OverloadableOp::NotEqual;
+        case BinaryOp::Less:         return OverloadableOp::Less;
+        case BinaryOp::Greater:      return OverloadableOp::Greater;
+        case BinaryOp::LessEqual:    return OverloadableOp::LessEq;
+        case BinaryOp::GreaterEqual: return OverloadableOp::GreaterEq;
+        default: return OverloadableOp::Add;  // fallback
+    }
+}
+
+bool TypeChecker::isLValue(ExpressionBaseNode* expr) {
     if (!expr) return false;
-    if (dynamic_cast<IdentifierExpression*>(expr)) return true;
-    if (dynamic_cast<MemberAccessExpression*>(expr)) return true;
-    if (dynamic_cast<IndexExpression*>(expr)) return true;
-    if (auto* unary = dynamic_cast<UnaryExpression*>(expr)) {
+    if (expr->is<IdentifierExpression>()) return true;
+    if (expr->is<MemberAccessExpression>()) return true;
+    if (expr->is<IndexExpression>()) return true;
+    // Dereference (*ptr) is an lvalue
+    if (auto* unary = expr->as<UnaryExpression>()) {
         return unary->op == UnaryOp::Dereference;
     }
     return false;
 }
 
-TypePtr<Type> TypeChecker::getSymbolType(Symbol* sym) {
-    if (!sym) return registry_.getErrorType();
+// ============================================================================
+// Program & Module
+// ============================================================================
 
-    if (auto* var = sym->as<VariableSymbol>()) {
-        return var->type ? var->type : registry_.getErrorType();
-    }
-
-    if (auto* fn = sym->as<FunctionSymbol>()) {
-        TypeList<Type> paramTypes;
-        for (auto* param : fn->parameters) {
-            paramTypes.push_back(param->type ? param->type : registry_.getErrorType());
-        }
-        auto retType = fn->returnType ? fn->returnType : registry_.getVoid();
-        return registry_.getFunctionType(std::move(paramTypes), retType);
-    }
-
-    if (auto* typeSym = sym->as<TypeSymbol>()) {
-        Type::Kind kind;
-        switch (typeSym->kind) {
-            case SymbolKind::Struct:     kind = Type::Kind::Struct;     break;
-            case SymbolKind::Class:      kind = Type::Kind::Class;      break;
-            case SymbolKind::Enum:       kind = Type::Kind::Enum;       break;
-            case SymbolKind::Interface:  kind = Type::Kind::Interface;  break;
-            default:                     kind = Type::Kind::Struct;     break;
-        }
-        return registry_.getUserType(typeSym->name, kind, typeSym);
-    }
-
-    return registry_.getErrorType();
-}
-
-std::optional<OverloadableOp> TypeChecker::binaryOpToOverloadableOp(BinaryOp op) {
-    switch (op) {
-        case BinaryOp::Add:          return OverloadableOp::Plus;
-        case BinaryOp::Sub:          return OverloadableOp::Minus;
-        case BinaryOp::Mul:          return OverloadableOp::Star;
-        case BinaryOp::Div:          return OverloadableOp::Slash;
-        case BinaryOp::Mod:          return OverloadableOp::Modulo;
-        case BinaryOp::Equal:        return OverloadableOp::Equals;
-        case BinaryOp::NotEqual:     return OverloadableOp::NotEquals;
-        case BinaryOp::Less:         return OverloadableOp::Less;
-        case BinaryOp::LessEqual:    return OverloadableOp::LessEqual;
-        case BinaryOp::Greater:      return OverloadableOp::Greater;
-        case BinaryOp::GreaterEqual: return OverloadableOp::GreaterEqual;
-        default: return std::nullopt;
-    }
-}
-
-//================================================================================
-// resolveTypeNode — same logic as TypeResolver
-//================================================================================
-TypePtr<Type> TypeChecker::resolveTypeNode(TypeNode* node) {
-    if (!node) return registry_.getErrorType();
-    if (node->resolvedType) return node->resolvedType;
-
-    if (auto* prim = dynamic_cast<PrimitiveTypeNode*>(node)) {
-        node->resolvedType = registry_.getPrimitive(prim->kind);
-        return node->resolvedType;
-    }
-
-    if (auto* named = dynamic_cast<NamedTypeNode*>(node)) {
-        Symbol* sym = nullptr;
-        if (named->qualifiedName.size() == 1) {
-            sym = currentScope_->lookup(named->qualifiedName[0]);
-        } else {
-            sym = currentScope_->lookup(named->qualifiedName[0]);
-            for (size_t i = 1; i < named->qualifiedName.size() && sym; ++i) {
-                Scope* innerScope = nullptr;
-                if (auto* mod = sym->as<ModuleSymbol>()) {
-                    innerScope = mod->moduleScope;
-                } else if (auto* ts = sym->as<TypeSymbol>()) {
-                    innerScope = ts->memberScope;
-                }
-                if (!innerScope) {
-                    node->resolvedType = registry_.getErrorType();
-                    return node->resolvedType;
-                }
-                sym = innerScope->lookupLocal(named->qualifiedName[i]);
-            }
-        }
-
-        if (!sym) {
-            errors_.error(node->location, "unknown type '" + named->getName() + "'");
-            node->resolvedType = registry_.getErrorType();
-            return node->resolvedType;
-        }
-
-        auto* typeSym = sym->as<TypeSymbol>();
-        if (!typeSym) {
-            errors_.error(node->location, "'" + sym->name + "' is not a type");
-            node->resolvedType = registry_.getErrorType();
-            return node->resolvedType;
-        }
-
-        Type::Kind typeKind;
-        switch (typeSym->kind) {
-            case SymbolKind::Struct:     typeKind = Type::Kind::Struct;     break;
-            case SymbolKind::Class:      typeKind = Type::Kind::Class;      break;
-            case SymbolKind::Enum:       typeKind = Type::Kind::Enum;       break;
-            case SymbolKind::Interface:  typeKind = Type::Kind::Interface;  break;
-            default:                     typeKind = Type::Kind::Struct;     break;
-        }
-        node->resolvedType = registry_.getUserType(typeSym->name, typeKind, typeSym);
-        return node->resolvedType;
-    }
-
-    if (auto* ptr = dynamic_cast<PointerTypeNode*>(node)) {
-        auto base = resolveTypeNode(ptr->baseType.get());
-        if (ptr->isReference) {
-            node->resolvedType = registry_.getReferenceTo(base);
-        } else {
-            node->resolvedType = registry_.getPointerTo(base);
-        }
-        return node->resolvedType;
-    }
-
-    if (auto* arr = dynamic_cast<ArrayTypeNode*>(node)) {
-        auto elem = resolveTypeNode(arr->elementType.get());
-        int size = -1;
-        if (arr->size) {
-            if (auto* intLit = dynamic_cast<IntegerLiteral*>(arr->size.get())) {
-                size = static_cast<int>(intLit->value);
-            }
-        }
-        node->resolvedType = registry_.getArrayOf(elem, size);
-        return node->resolvedType;
-    }
-
-    if (auto* tup = dynamic_cast<TupleTypeNode*>(node)) {
-        TypeList<Type> elemTypes;
-        for (auto& elemNode : tup->elementTypes) {
-            elemTypes.push_back(resolveTypeNode(elemNode.get()));
-        }
-        node->resolvedType = registry_.getTupleOf(std::move(elemTypes));
-        return node->resolvedType;
-    }
-
-    if (auto* fn = dynamic_cast<FunctionTypeNode*>(node)) {
-        TypeList<Type> paramTypes;
-        for (auto& paramNode : fn->parameterTypes) {
-            paramTypes.push_back(resolveTypeNode(paramNode.get()));
-        }
-        auto retType = fn->returnType
-            ? resolveTypeNode(fn->returnType.get())
-            : registry_.getVoid();
-        node->resolvedType = registry_.getFunctionType(std::move(paramTypes), retType);
-        return node->resolvedType;
-    }
-
-    node->resolvedType = registry_.getErrorType();
-    return node->resolvedType;
-}
-
-//================================================================================
-// Program Structure
-//================================================================================
 void TypeChecker::visit(ProgramNode& node) {
-    for (auto& mod : node.modules) {
-        if (mod) mod->accept(*this);
+    for (auto& module : node.modules) {
+        if (module) module->accept(*this);
     }
 }
 
 void TypeChecker::visit(ModuleNode& node) {
-    auto* sym = currentScope_->lookupLocal(node.name);
-    if (!sym || !sym->is<ModuleSymbol>()) return;
-    enterNamedScope(sym->as<ModuleSymbol>()->moduleScope);
-
     for (auto& decl : node.declarations) {
         if (decl) decl->accept(*this);
     }
-
-    leaveNamedScope();
 }
 
-void TypeChecker::visit(ImportNode& /*node*/) {}
-
-//================================================================================
-// Declarations — entering bodies for type checking
-//================================================================================
-void TypeChecker::visit(InterfaceDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal(node.name);
-    if (!sym || !sym->is<InterfaceSymbol>()) return;
-    auto* ifaceSym = sym->as<InterfaceSymbol>();
-    enterNamedScope(ifaceSym->memberScope);
-
-    for (auto& method : node.methods) {
-        if (method) method->accept(*this);
-    }
-
-    leaveNamedScope();
+void TypeChecker::visit(BlockStatementNode& node) {
+    visitStatements(node.statements);
 }
 
-void TypeChecker::visit(StructDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal(node.name);
-    if (!sym || !sym->is<StructSymbol>()) return;
-    auto* prevType = currentType_;
-    currentType_ = sym->as<TypeSymbol>();
-    enterNamedScope(currentType_->memberScope);
+// ============================================================================
+// Variable Declarations — type inference for var x = expr;
+// ============================================================================
 
-    for (auto& method : node.methods) {
-        if (method) method->accept(*this);
-    }
-    for (auto& op : node.operators) {
-        if (op) op->accept(*this);
-    }
-
-    leaveNamedScope();
-    currentType_ = prevType;
-}
-
-void TypeChecker::visit(ClassDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal(node.name);
-    if (!sym || !sym->is<ClassSymbol>()) return;
-    auto* prevType = currentType_;
-    currentType_ = sym->as<TypeSymbol>();
-    enterNamedScope(currentType_->memberScope);
-
-    if (node.constructor) node.constructor->accept(*this);
-    if (node.destructor) node.destructor->accept(*this);
-    for (auto& method : node.methods) {
-        if (method) method->accept(*this);
-    }
-    for (auto& op : node.operators) {
-        if (op) op->accept(*this);
-    }
-
-    leaveNamedScope();
-    currentType_ = prevType;
-}
-
-void TypeChecker::visit(FunctionDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal(node.name);
-    if (!sym || !sym->is<FunctionSymbol>()) return;
-    auto* fnSym = sym->as<FunctionSymbol>();
-
-    if (!node.body) return;
-
-    auto* prevFn = currentFunction_;
-    auto prevRetType = currentReturnType_;
-    currentFunction_ = fnSym;
-    currentReturnType_ = fnSym->returnType;
-
-    enterNamedScope(fnSym->bodyScope);
-    visitStatements(node.body->statements);
-    leaveNamedScope();
-
-    currentFunction_ = prevFn;
-    currentReturnType_ = prevRetType;
-}
-
-void TypeChecker::visit(ConstructorDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal("constructor");
-    if (!sym || !sym->is<ConstructorSymbol>()) return;
-    auto* ctorSym = sym->as<ConstructorSymbol>();
-
-    if (!node.body) return;
-
-    auto* prevFn = currentFunction_;
-    auto prevRetType = currentReturnType_;
-    currentFunction_ = ctorSym;
-    currentReturnType_ = registry_.getVoid(); // Constructors don't return explicitly
-
-    enterNamedScope(ctorSym->bodyScope);
-
-    // Type-check super constructor arguments
-    if (node.hasSuperCall) {
-        for (auto& arg : node.superArgs) {
-            if (arg) arg->accept(*this);
-        }
-        auto* classSym = currentType_ ? currentType_->as<ClassSymbol>() : nullptr;
-        if (classSym && classSym->baseClass && classSym->baseClass->constructor) {
-            auto* baseCtor = classSym->baseClass->constructor;
-            if (node.superArgs.size() != baseCtor->parameters.size()) {
-                errors_.error(node.location,
-                    "super() expects " + std::to_string(baseCtor->parameters.size()) +
-                    " arguments, got " + std::to_string(node.superArgs.size()));
-            }
-            size_t count = std::min(node.superArgs.size(), baseCtor->parameters.size());
-            for (size_t i = 0; i < count; ++i) {
-                if (node.superArgs[i] && node.superArgs[i]->resolvedType &&
-                    baseCtor->parameters[i]->type) {
-                    checkAssignability(
-                        node.superArgs[i]->resolvedType.get(),
-                        baseCtor->parameters[i]->type.get(),
-                        node.superArgs[i]->location,
-                        "super argument " + std::to_string(i + 1));
-                }
-            }
-        }
-    }
-
-    visitStatements(node.body->statements);
-    leaveNamedScope();
-
-    currentFunction_ = prevFn;
-    currentReturnType_ = prevRetType;
-}
-
-void TypeChecker::visit(DestructorDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal("destructor");
-    if (!sym || !sym->is<DestructorSymbol>()) return;
-    auto* dtorSym = sym->as<DestructorSymbol>();
-
-    if (!node.body) return;
-
-    auto* prevFn = currentFunction_;
-    auto prevRetType = currentReturnType_;
-    currentFunction_ = dtorSym;
-    currentReturnType_ = registry_.getVoid();
-
-    enterNamedScope(dtorSym->bodyScope);
-    visitStatements(node.body->statements);
-    leaveNamedScope();
-
-    currentFunction_ = prevFn;
-    currentReturnType_ = prevRetType;
-}
-
-void TypeChecker::visit(OperatorDeclaration& node) {
-    auto overloadOp = operatorKindToOverloadableOp(node.op);
-    auto* opSym = currentScope_->lookupOperator(overloadOp);
-    if (!opSym || !node.body) return;
-
-    auto* prevFn = currentFunction_;
-    auto prevRetType = currentReturnType_;
-    currentFunction_ = nullptr;
-    currentReturnType_ = opSym->returnType;
-
-    enterNamedScope(opSym->bodyScope);
-    visitStatements(node.body->statements);
-    leaveNamedScope();
-
-    currentFunction_ = prevFn;
-    currentReturnType_ = prevRetType;
-}
-
-void TypeChecker::visit(ExternFunctionDeclaration& /*node*/) {
-    // Types already resolved in Pass 2 — nothing to check
-}
-
-void TypeChecker::visit(EnumDeclaration& /*node*/) {}
-void TypeChecker::visit(EnumMemberNode& /*node*/) {}
-void TypeChecker::visit(ParameterNode& /*node*/) {}
-
-//================================================================================
-// Variable Declarations (local + inference)
-//================================================================================
 void TypeChecker::visit(VariableDeclaration& node) {
-    auto* sym = currentScope_->lookupLocal(node.name);
-    if (!sym || !sym->is<VariableSymbol>()) return;
-    auto* varSym = sym->as<VariableSymbol>();
+    if (node.initializer) {
+        node.initializer->accept(*this);
+    }
 
-    if (node.isInferred) {
-        // Type inference: resolve initializer, set variable type from it
-        if (node.initializer) {
-            node.initializer->accept(*this);
-            auto initType = node.initializer->resolvedType;
-            if (initType && !initType->is<ErrorType>()) {
-                if (initType->is<NullType>()) {
-                    errors_.error(node.location,
-                        "cannot infer type from 'null' literal");
-                    varSym->type = registry_.getErrorType();
-                } else if (isVoidType(initType.get())) {
-                    errors_.error(node.location,
-                        "cannot declare variable of type 'void'");
-                    varSym->type = registry_.getErrorType();
-                } else {
-                    varSym->type = initType;
-                }
+    auto& varSym = node.resolvedVariable;
+    if (!varSym) return;
+
+    if (node.isInferred && node.initializer) {
+        // Type inference: set variable type from initializer
+        auto initType = node.initializer->resolvedType;
+        if (initType && !initType->is<ErrorTypeSymbol>()) {
+            if (initType->is<NullTypeSymbol>()) {
+                errors_.error("cannot infer type from null", node.debugInfo);
+            } else if (initType->getName() == "void") {
+                errors_.error("cannot declare variable with void type", node.debugInfo);
             } else {
-                varSym->type = registry_.getErrorType();
+                varSym->setType(initType);
             }
-        } else {
-            errors_.error(node.location,
-                "type-inferred variable must have an initializer");
-            varSym->type = registry_.getErrorType();
         }
-    } else {
-        // Explicit type — resolve if not already done by Pass 2
-        if (!varSym->type && node.type) {
-            varSym->type = resolveTypeNode(node.type.get());
-        }
-        // Check initializer compatibility
-        if (node.initializer) {
-            node.initializer->accept(*this);
-            if (node.initializer->resolvedType && varSym->type) {
-                checkAssignability(node.initializer->resolvedType.get(),
-                                   varSym->type.get(),
-                                   node.location,
-                                   "initializer for '" + node.name + "'");
-            }
+    } else if (varSym->getType() && node.initializer) {
+        // Explicit type + initializer: check compatibility
+        auto initType = node.initializer->resolvedType;
+        if (initType) {
+            checkAssignability(initType.get(), varSym->getType().get(),
+                node.debugInfo, "initializer");
         }
     }
+}
+
+void TypeChecker::visit(VariableDeclarationExpression& node) {
+    if (node.initializer) {
+        node.initializer->accept(*this);
+    }
+
+    auto& varSym = node.resolvedVariable;
+    if (!varSym) return;
+
+    if (node.isInferred && node.initializer) {
+        auto initType = node.initializer->resolvedType;
+        if (initType && !initType->is<ErrorTypeSymbol>()) {
+            if (initType->is<NullTypeSymbol>()) {
+                errors_.error("cannot infer type from null", node.debugInfo);
+            } else if (initType->getName() == "void") {
+                errors_.error("cannot declare variable with void type", node.debugInfo);
+            } else {
+                varSym->setType(initType);
+            }
+        }
+    } else if (varSym->getType() && node.initializer) {
+        auto initType = node.initializer->resolvedType;
+        if (initType) {
+            checkAssignability(initType.get(), varSym->getType().get(),
+                node.debugInfo, "initializer");
+        }
+    }
+
+    // The expression's type is the variable's type
+    node.resolvedType = varSym->getType();
 }
 
 void TypeChecker::visit(TupleDestructuringDeclaration& node) {
@@ -509,49 +261,116 @@ void TypeChecker::visit(TupleDestructuringDeclaration& node) {
         node.initializer->accept(*this);
     }
 
-    auto initType = node.initializer ? node.initializer->resolvedType : nullptr;
-    auto* tupleType = initType ? initType->as<TupleType>() : nullptr;
-
-    if (!tupleType && initType && !initType->is<ErrorType>()) {
-        errors_.error(node.location,
-            "tuple destructuring requires a tuple expression, got '" +
-            initType->toString() + "'");
-    }
-
-    for (size_t i = 0; i < node.elements.size(); ++i) {
-        auto* sym = currentScope_->lookupLocal(node.elements[i].name);
-        if (!sym || !sym->is<VariableSymbol>()) continue;
-        auto* varSym = sym->as<VariableSymbol>();
-
-        if (tupleType && i < tupleType->elementTypes.size()) {
-            if (node.elements[i].isInferred) {
-                varSym->type = tupleType->elementTypes[i];
-            } else if (node.elements[i].type) {
-                varSym->type = resolveTypeNode(node.elements[i].type.get());
-                checkAssignability(tupleType->elementTypes[i].get(),
-                                   varSym->type.get(),
-                                   node.location);
+    // If initializer is a tuple, assign element types to variables
+    if (node.initializer && node.initializer->resolvedType) {
+        auto* tupType = node.initializer->resolvedType->as<TupleTypeSymbol>();
+        if (tupType && tupType->elementTypes.size() == node.resolvedVariables.size()) {
+            for (size_t i = 0; i < node.resolvedVariables.size(); i++) {
+                if (node.resolvedVariables[i]) {
+                    node.resolvedVariables[i]->setType(tupType->elementTypes[i]);
+                }
             }
-        } else if (tupleType) {
-            errors_.error(node.location, "too many variables in tuple destructuring");
-        } else {
-            varSym->type = registry_.getErrorType();
         }
     }
+}
 
-    if (tupleType && node.elements.size() < tupleType->elementTypes.size()) {
-        errors_.error(node.location, "too few variables in tuple destructuring");
+// ============================================================================
+// Function Declarations — type-check bodies
+// ============================================================================
+
+void TypeChecker::visit(FunctionDeclaration& node) {
+    if (node.body && node.resolvedFunction) {
+        auto savedClass = currentClass_;
+        // If this is a method, currentClass_ is already set
+        visitFunctionBody(node.resolvedFunction, *node.body);
+        currentClass_ = savedClass;
     }
 }
 
-//================================================================================
-// Statements
-//================================================================================
-void TypeChecker::visit(BlockStatement& node) {
-    enterNextChildScope();
-    visitStatements(node.statements);
-    leaveChildScope();
+void TypeChecker::visit(ConstructorDeclaration& node) {
+    if (node.body && node.resolvedConstructor) {
+        auto funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.resolvedConstructor);
+
+        // Type-check super constructor arguments (they reference ctor params)
+        for (auto& arg : node.superArgs) {
+            if (arg) arg->accept(*this);
+        }
+
+        visitFunctionBody(funcSym, *node.body);
+    }
 }
+
+void TypeChecker::visit(DestructorDeclaration& node) {
+    if (node.body && node.resolvedDestructor) {
+        auto funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.resolvedDestructor);
+        visitFunctionBody(funcSym, *node.body);
+    }
+}
+
+void TypeChecker::visit(ExternFunctionDeclaration& node) {
+    // No body to check
+}
+
+void TypeChecker::visit(OperatorDeclaration& node) {
+    if (node.body && node.resolvedOperator) {
+        auto funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.resolvedOperator);
+        visitFunctionBody(funcSym, *node.body);
+    }
+}
+
+// ============================================================================
+// Type Declarations — check member bodies
+// ============================================================================
+
+void TypeChecker::visit(EnumDeclaration& node) {
+    // Enum member values could be checked for constant evaluation here
+}
+
+void TypeChecker::visit(StructDeclaration& node) {
+    auto savedClass = currentClass_;
+    currentClass_ = node.resolvedStruct.get();
+
+    for (auto& method : node.methods) {
+        if (method) method->accept(*this);
+    }
+    for (auto& op : node.operators) {
+        if (op) op->accept(*this);
+    }
+
+    currentClass_ = savedClass;
+}
+
+void TypeChecker::visit(ClassDeclaration& node) {
+    auto savedClass = currentClass_;
+    currentClass_ = node.resolvedClass.get();
+
+    // Check field initializers (if any)
+    for (auto& field : node.fields) {
+        if (field) field->accept(*this);
+    }
+
+    if (node.constructor) node.constructor->accept(*this);
+    if (node.destructor) node.destructor->accept(*this);
+
+    for (auto& method : node.methods) {
+        if (method) method->accept(*this);
+    }
+    for (auto& op : node.operators) {
+        if (op) op->accept(*this);
+    }
+
+    currentClass_ = savedClass;
+}
+
+void TypeChecker::visit(InterfaceDeclaration& node) {
+    // Abstract methods only — no bodies to check
+}
+
+void TypeChecker::visit(ImportDeclaration& node) {}
+
+// ============================================================================
+// Statements
+// ============================================================================
 
 void TypeChecker::visit(ExpressionStatement& node) {
     if (node.expression) node.expression->accept(*this);
@@ -560,24 +379,24 @@ void TypeChecker::visit(ExpressionStatement& node) {
 void TypeChecker::visit(ReturnStatement& node) {
     if (node.value) {
         node.value->accept(*this);
-        if (!currentReturnType_ && node.value->resolvedType) {
-            // Lambda return type inference — set from first return statement
-            currentReturnType_ = node.value->resolvedType;
-        } else if (currentReturnType_ && node.value->resolvedType) {
-            if (isVoidType(currentReturnType_.get())) {
-                errors_.error(node.location,
-                    "void function should not return a value");
+    }
+
+    if (currentReturnType_) {
+        if (node.value && node.value->resolvedType) {
+            if (currentReturnType_->getName() == "void") {
+                errors_.error("returning a value from void function", node.debugInfo);
             } else {
                 checkAssignability(node.value->resolvedType.get(),
-                                   currentReturnType_.get(),
-                                   node.location,
-                                   "return value");
+                    currentReturnType_.get(), node.debugInfo, "return");
             }
+        } else if (!node.value && currentReturnType_->getName() != "void") {
+            errors_.error("non-void function must return a value", node.debugInfo);
         }
     } else {
-        if (currentReturnType_ && !isVoidType(currentReturnType_.get())) {
-            errors_.error(node.location,
-                "non-void function must return a value");
+        // Lambda return type inference: if currentReturnType_ is null,
+        // the first return statement sets it (block-body lambdas)
+        if (node.value && node.value->resolvedType) {
+            currentReturnType_ = node.value->resolvedType;
         }
     }
 }
@@ -586,397 +405,306 @@ void TypeChecker::visit(IfStatement& node) {
     if (node.condition) {
         node.condition->accept(*this);
         if (node.condition->resolvedType &&
-            !registry_.isCompatible(node.condition->resolvedType.get(),
-                                     registry_.getBool().get())) {
-            errors_.error(node.location,
-                "if condition must be 'bool', got '" +
-                node.condition->resolvedType->toString() + "'");
+            !symbolTable_.isCompatible(node.condition->resolvedType.get(),
+                                        symbolTable_.getBoolType().get())) {
+            errors_.error("if condition must be bool", node.debugInfo);
         }
     }
     if (node.thenBody) node.thenBody->accept(*this);
-
     for (auto& elseIf : node.elseIfClauses) {
         if (elseIf.condition) {
             elseIf.condition->accept(*this);
-            if (elseIf.condition->resolvedType &&
-                !registry_.isCompatible(elseIf.condition->resolvedType.get(),
-                                         registry_.getBool().get())) {
-                errors_.error(elseIf.condition->location,
-                    "else-if condition must be 'bool'");
-            }
         }
         if (elseIf.body) elseIf.body->accept(*this);
     }
-
     if (node.elseBody) node.elseBody->accept(*this);
 }
 
-void TypeChecker::visit(SwitchStatement& node) {
-    if (node.subject) node.subject->accept(*this);
-
-    for (auto& switchCase : node.cases) {
-        if (switchCase.value) {
-            switchCase.value->accept(*this);
-            if (node.subject && node.subject->resolvedType &&
-                switchCase.value->resolvedType) {
-                checkAssignability(switchCase.value->resolvedType.get(),
-                                   node.subject->resolvedType.get(),
-                                   switchCase.value->location,
-                                   "switch case");
-            }
-        }
-        visitStatements(switchCase.body);
-    }
-    visitStatements(node.defaultCase);
-}
-
 void TypeChecker::visit(ForStatement& node) {
-    enterNextChildScope();
-
     if (node.initDeclaration) node.initDeclaration->accept(*this);
-    for (auto& expr : node.initExpressions) {
-        if (expr) expr->accept(*this);
+    for (auto& initExpr : node.initExpressions) {
+        if (initExpr) initExpr->accept(*this);
     }
     if (node.condition) {
         node.condition->accept(*this);
-        if (node.condition->resolvedType &&
-            !registry_.isCompatible(node.condition->resolvedType.get(),
-                                     registry_.getBool().get())) {
-            errors_.error(node.location, "for condition must be 'bool'");
-        }
     }
     for (auto& iter : node.iterators) {
         if (iter) iter->accept(*this);
     }
     if (node.body) node.body->accept(*this);
-
-    leaveChildScope();
 }
 
 void TypeChecker::visit(WhileStatement& node) {
     if (node.condition) {
         node.condition->accept(*this);
         if (node.condition->resolvedType &&
-            !registry_.isCompatible(node.condition->resolvedType.get(),
-                                     registry_.getBool().get())) {
-            errors_.error(node.location, "while condition must be 'bool'");
+            !symbolTable_.isCompatible(node.condition->resolvedType.get(),
+                                        symbolTable_.getBoolType().get())) {
+            errors_.error("while condition must be bool", node.debugInfo);
         }
     }
     if (node.body) node.body->accept(*this);
 }
 
-void TypeChecker::visit(BreakStatement& /*node*/) {}
-void TypeChecker::visit(ContinueStatement& /*node*/) {}
+void TypeChecker::visit(BreakStatement& node) {}
+void TypeChecker::visit(ContinueStatement& node) {}
 
 void TypeChecker::visit(DeleteStatement& node) {
     if (node.target) {
         node.target->accept(*this);
+        // Target must be a pointer type
         if (node.target->resolvedType &&
-            !node.target->resolvedType->is<PointerType>() &&
-            !node.target->resolvedType->is<ErrorType>()) {
-            errors_.error(node.location,
-                "delete requires a pointer type, got '" +
-                node.target->resolvedType->toString() + "'");
+            !node.target->resolvedType->is<PointerTypeSymbol>() &&
+            !node.target->resolvedType->is<ClassSymbol>()) {
+            errors_.error("delete requires pointer or class type", node.debugInfo);
         }
     }
 }
 
-void TypeChecker::visit(RawBlock& node) {
-    enterNextChildScope();
-    if (node.body) {
-        visitStatements(node.body->statements);
+void TypeChecker::visit(SwitchStatement& node) {
+    if (node.subject) node.subject->accept(*this);
+    for (auto& c : node.cases) {
+        if (c.value) c.value->accept(*this);
+        for (auto& stmt : c.body) {
+            if (stmt) stmt->accept(*this);
+        }
     }
-    leaveChildScope();
+    for (auto& stmt : node.defaultCase) {
+        if (stmt) stmt->accept(*this);
+    }
 }
 
-//================================================================================
-// Expression Visitors — Literals
-//================================================================================
+// ============================================================================
+// Expressions — type inference (bottom-up)
+// ============================================================================
+
 void TypeChecker::visit(IntegerLiteral& node) {
-    node.resolvedType = registry_.getInt();
+    node.resolvedType = symbolTable_.getIntType();
 }
 
 void TypeChecker::visit(FloatLiteral& node) {
-    node.resolvedType = registry_.getDouble();
+    node.resolvedType = symbolTable_.getDoubleType();
 }
 
 void TypeChecker::visit(BoolLiteral& node) {
-    node.resolvedType = registry_.getBool();
+    node.resolvedType = symbolTable_.getBoolType();
 }
 
 void TypeChecker::visit(CharLiteral& node) {
-    node.resolvedType = registry_.getChar();
+    node.resolvedType = symbolTable_.getCharType();
 }
 
 void TypeChecker::visit(StringLiteral& node) {
-    node.resolvedType = registry_.getString();
+    node.resolvedType = symbolTable_.getStringType();
 }
 
-void TypeChecker::visit(InterpolatedString& node) {
+void TypeChecker::visit(NullLiteral& node) {
+    node.resolvedType = symbolTable_.getNullType();
+}
+
+void TypeChecker::visit(InterpolatedStringExpression& node) {
     for (auto& part : node.parts) {
         if (part.kind == InterpolatedPartKind::Expression && part.expression) {
             part.expression->accept(*this);
         }
     }
-    node.resolvedType = registry_.getString();
+    node.resolvedType = symbolTable_.getStringType();
 }
 
-void TypeChecker::visit(NullLiteral& node) {
-    node.resolvedType = registry_.getNullType();
+void TypeChecker::visit(ThisExpression& node) {
+    if (currentClass_) {
+        // 'this' resolves to the struct/class type in sema
+        // (codegen handles the LLVM-level pointer internally)
+        auto type = symbolTable_.resolveType(currentClass_->getName());
+        node.resolvedType = type ? type : symbolTable_.getErrorType();
+    } else {
+        errors_.error("'this' used outside of class context", node.debugInfo);
+        node.resolvedType = symbolTable_.getErrorType();
+    }
 }
 
-//================================================================================
-// Expression Visitors — Identifier Resolution
-//================================================================================
+// ============================================================================
+// Identifier Resolution
+// ============================================================================
+
 void TypeChecker::visit(IdentifierExpression& node) {
-    auto* sym = currentScope_->lookup(node.name);
-    if (!sym) {
-        errors_.error(node.location,
-            "undeclared identifier '" + node.name + "'");
-        node.resolvedType = registry_.getErrorType();
+    auto* scope = node.astScopeNode ? node.astScopeNode.get() : nullptr;
+    if (!scope) {
+        node.resolvedType = symbolTable_.getErrorType();
         return;
     }
+
+    auto sym = scope->resolve(node.name);
+    if (!sym) {
+        errors_.error("undefined identifier '" + node.name + "'", node.debugInfo);
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
+    }
+
     node.resolvedSymbol = sym;
     node.resolvedType = getSymbolType(sym);
 }
 
 void TypeChecker::visit(QualifiedNameExpression& node) {
-    Symbol* sym = nullptr;
+    if (node.parts.empty()) {
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
+    }
 
-    if (!node.qualifiedName.parts.empty()) {
-        sym = currentScope_->lookup(node.qualifiedName.parts[0]);
-        for (size_t i = 1; i < node.qualifiedName.parts.size() && sym; ++i) {
-            Scope* innerScope = nullptr;
-            if (auto* mod = sym->as<ModuleSymbol>()) {
-                innerScope = mod->moduleScope;
-            } else if (auto* ts = sym->as<TypeSymbol>()) {
-                // Handle enum member access (enums don't have a memberScope)
-                if (auto* enumSym = ts->as<EnumSymbol>()) {
-                    const auto& memberName = node.qualifiedName.parts[i];
-                    bool found = false;
-                    for (const auto& member : enumSym->members) {
-                        if (member.name == memberName) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (found) {
-                        node.resolvedSymbol = enumSym;
-                        node.resolvedType = registry_.getUserType(
-                            enumSym->name, Type::Kind::Enum, enumSym);
-                        return;
-                    } else {
-                        errors_.error(node.location,
-                            "'" + enumSym->name + "' has no member '" + memberName + "'");
-                        node.resolvedType = registry_.getErrorType();
-                        return;
+    auto* scope = node.astScopeNode ? node.astScopeNode.get() : nullptr;
+    if (!scope) {
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
+    }
+
+    // Resolve first part
+    auto sym = scope->resolve(node.parts[0]);
+    if (!sym) {
+        errors_.error("undefined '" + node.parts[0] + "'", node.debugInfo);
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
+    }
+
+    // Walk qualified parts: Module.Enum.Member etc.
+    for (size_t i = 1; i < node.parts.size(); i++) {
+        // Special case: enum member access (members stored in data vector, not scope)
+        if (auto* enumSym = sym->as<EnumSymbol>()) {
+            auto* member = enumSym->findMember(node.parts[i]);
+            if (member) {
+                // Store the EnumSymbol as resolved (codegen uses it + member name)
+                node.resolvedSymbol = std::dynamic_pointer_cast<Symbol>(
+                    symbolTable_.resolveType(enumSym->getName()));
+                node.isEnumAccess = true;
+
+                // Detect string-backed enum
+                bool isStringEnum = false;
+                if (enumSym->underlyingType) {
+                    if (auto* prim = enumSym->underlyingType->as<PrimitiveTypeSymbol>()) {
+                        isStringEnum = (prim->primitiveKind == PrimitiveKind::String);
                     }
                 }
-                innerScope = ts->memberScope;
-            }
-            if (!innerScope) {
-                errors_.error(node.location,
-                    "'" + sym->name + "' does not have members");
-                node.resolvedType = registry_.getErrorType();
+
+                if (isStringEnum) {
+                    node.isStringEnumAccess = true;
+                    node.resolvedEnumStringValue = member->stringValue;
+                    node.resolvedType = symbolTable_.getStringType();
+                } else {
+                    node.resolvedEnumValue = member->intValue;
+                    node.resolvedType = node.resolvedSymbol
+                        ? std::dynamic_pointer_cast<TypeSymbol>(node.resolvedSymbol)
+                        : symbolTable_.getIntType();
+                }
                 return;
             }
-            sym = innerScope->lookupLocal(node.qualifiedName.parts[i]);
+            errors_.error("'" + node.parts[i] + "' not found in enum '"
+                + enumSym->getName() + "'", node.debugInfo);
+            node.resolvedType = symbolTable_.getErrorType();
+            return;
+        }
+
+        auto* symScope = dynamic_cast<Scope*>(sym.get());
+        if (!symScope) {
+            errors_.error("'" + node.parts[i-1] + "' is not a scope", node.debugInfo);
+            node.resolvedType = symbolTable_.getErrorType();
+            return;
+        }
+        sym = symScope->resolve(node.parts[i]);
+        if (!sym) {
+            errors_.error("'" + node.parts[i] + "' not found in '"
+                + node.parts[i-1] + "'", node.debugInfo);
+            node.resolvedType = symbolTable_.getErrorType();
+            return;
         }
     }
 
-    if (!sym) {
-        errors_.error(node.location,
-            "undeclared name '" + node.getName() + "'");
-        node.resolvedType = registry_.getErrorType();
-        return;
-    }
     node.resolvedSymbol = sym;
     node.resolvedType = getSymbolType(sym);
 }
 
-void TypeChecker::visit(ThisExpression& node) {
-    if (!currentType_) {
-        errors_.error(node.location,
-            "'this' used outside of a struct or class");
-        node.resolvedType = registry_.getErrorType();
-        return;
-    }
-    Type::Kind kind = (currentType_->kind == SymbolKind::Class)
-        ? Type::Kind::Class : Type::Kind::Struct;
-    // 'this' resolves to the type itself (codegen treats it as a pointer under the hood)
-    node.resolvedType = registry_.getUserType(currentType_->name, kind, currentType_);
-}
+// ============================================================================
+// Member Access
+// ============================================================================
 
-//================================================================================
-// Expression Visitors — Member Access
-//================================================================================
 void TypeChecker::visit(MemberAccessExpression& node) {
     if (node.object) node.object->accept(*this);
+
     auto objType = node.object ? node.object->resolvedType : nullptr;
-    if (!objType || objType->is<ErrorType>()) {
-        node.resolvedType = registry_.getErrorType();
+    if (!objType) {
+        node.resolvedType = symbolTable_.getErrorType();
         return;
     }
 
-    // If arrow access, dereference the pointer first
-    const Type* baseType = objType.get();
-    if (node.isArrow) {
-        if (auto* ptr = baseType->as<PointerType>()) {
-            baseType = ptr->baseType.get();
-        } else {
-            errors_.error(node.location,
-                "'->' requires a pointer type, got '" + objType->toString() + "'");
-            node.resolvedType = registry_.getErrorType();
-            return;
-        }
+    // Auto-dereference pointer types for member access
+    // Arrow (->) always dereferences; dot (.) also dereferences for `this.x` pattern
+    if (auto* ptrType = objType->as<PointerTypeSymbol>()) {
+        objType = ptrType->baseType;
     }
 
-    // Auto-dereference pointers for dot access (e.g., this.x)
-    if (!node.isArrow) {
-        if (auto* ptr = baseType->as<PointerType>()) {
-            baseType = ptr->baseType.get();
-        }
-    }
+    // Enum member access: Color.Red
+    if (auto* enumSym = objType->as<EnumSymbol>()) {
+        auto* member = enumSym->findMember(node.memberName);
+        if (member) {
+            node.isEnumAccess = true;
+            node.resolvedEnumValue = member->intValue;
+            node.resolvedEnumStringValue = member->stringValue;
 
-    // String built-in methods: length(), charAt(i), substring(start, len)
-    if (auto* prim = baseType->as<PrimitiveType>()) {
-        if (prim->kind == PrimitiveType::PrimitiveKind::String) {
-            if (node.memberName == "length") {
-                node.isStringBuiltinMethod = true;
-                node.resolvedType = registry_.getPrimitive(PrimitiveType::PrimitiveKind::Int);
-                return;
-            } else if (node.memberName == "charAt") {
-                node.isStringBuiltinMethod = true;
-                node.resolvedType = registry_.getPrimitive(PrimitiveType::PrimitiveKind::Char);
-                return;
-            } else if (node.memberName == "substring") {
-                node.isStringBuiltinMethod = true;
-                node.resolvedType = registry_.getPrimitive(PrimitiveType::PrimitiveKind::String);
-                return;
-            } else {
-                errors_.error(node.location,
-                    "string has no method '" + node.memberName + "'");
-                node.resolvedType = registry_.getErrorType();
-                return;
-            }
-        }
-    }
-
-    auto* userType = baseType->as<UserType>();
-    if (!userType || !userType->symbol) {
-        errors_.error(node.location,
-            "'" + baseType->toString() + "' has no members");
-        node.resolvedType = registry_.getErrorType();
-        return;
-    }
-
-    auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-
-    // Check for enum member access (e.g., Color.Red)
-    if (auto* enumSym = typeSym->as<EnumSymbol>()) {
-        for (const auto& member : enumSym->members) {
-            if (member.name == node.memberName) {
-                node.isEnumAccess = true;
-                if (member.isString) {
-                    node.isStringEnumAccess = true;
-                    node.resolvedEnumStringValue = member.stringValue;
-                } else {
-                    node.resolvedEnumValue = member.value;
-                }
-                node.resolvedType = registry_.getUserType(
-                    enumSym->name, Type::Kind::Enum, enumSym);
-                return;
-            }
-        }
-        errors_.error(node.location,
-            "'" + enumSym->name + "' has no member '" + node.memberName + "'");
-        node.resolvedType = registry_.getErrorType();
-        return;
-    }
-
-    // Check if this is a static method access via type name (ClassName.method)
-    bool isTypeNameAccess = false;
-    if (auto* idExpr = dynamic_cast<IdentifierExpression*>(node.object.get())) {
-        if (idExpr->resolvedSymbol && idExpr->resolvedSymbol->is<TypeSymbol>()) {
-            isTypeNameAccess = true;
-        }
-    }
-    if (isTypeNameAccess) {
-        if (auto* method = typeSym->findMethod(node.memberName)) {
-            if (method->isStatic) {
-                node.isStaticAccess = true;
-                node.resolvedType = getSymbolType(method);
-                return;
-            } else {
-                errors_.error(node.location,
-                    "cannot call non-static method '" + node.memberName +
-                    "' on type '" + typeSym->name + "' without an instance");
-                node.resolvedType = registry_.getErrorType();
-                return;
-            }
-        }
-    }
-
-    // Helper: check access modifier enforcement
-    auto checkAccess = [&](Symbol* member) -> bool {
-        AccessModifier access = member->accessLevel;
-        if (access == AccessModifier::Public || access == AccessModifier::None) {
-            return true;  // Always accessible
-        }
-        // Determine the type that owns the member being accessed
-        TypeSymbol* ownerType = typeSym;
-        if (access == AccessModifier::Private) {
-            // Private: only accessible from within the same type
-            if (currentType_ && currentType_ == ownerType) return true;
-            errors_.error(node.location,
-                "'" + node.memberName + "' is private in '" + ownerType->name + "'");
-            return false;
-        }
-        if (access == AccessModifier::Protected) {
-            // Protected: accessible from same type or derived types
-            if (currentType_) {
-                // Walk up the class hierarchy from currentType_
-                auto* cls = currentType_->as<ClassSymbol>();
-                while (cls) {
-                    if (cls == ownerType) return true;
-                    cls = cls->baseClass;
+            // Detect string-backed enum
+            bool isStringEnum = false;
+            if (enumSym->underlyingType) {
+                if (auto* prim = enumSym->underlyingType->as<PrimitiveTypeSymbol>()) {
+                    isStringEnum = (prim->primitiveKind == PrimitiveKind::String);
                 }
             }
-            errors_.error(node.location,
-                "'" + node.memberName + "' is protected in '" + ownerType->name + "'");
-            return false;
-        }
-        return true;
-    };
-
-    // Check for field
-    if (auto* field = typeSym->findField(node.memberName)) {
-        if (!checkAccess(field)) {
-            node.resolvedType = registry_.getErrorType();
+            if (isStringEnum) {
+                node.isStringEnumAccess = true;
+                node.resolvedType = symbolTable_.getStringType();
+            } else {
+                node.resolvedType = std::dynamic_pointer_cast<TypeSymbol>(
+                    symbolTable_.resolveType(enumSym->getName()));
+            }
             return;
         }
-        node.resolvedType = field->type ? field->type : registry_.getErrorType();
-        return;
     }
 
-    // Check for method
-    if (auto* method = typeSym->findMethod(node.memberName)) {
-        if (!checkAccess(method)) {
-            node.resolvedType = registry_.getErrorType();
+    // String builtin methods
+    if (objType.get() == symbolTable_.getStringType().get()) {
+        if (node.memberName == "length" || node.memberName == "charAt" ||
+            node.memberName == "substring" || node.memberName == "indexOf" ||
+            node.memberName == "toInt" || node.memberName == "toDouble") {
+            node.isStringBuiltinMethod = true;
+            // Return type will be resolved when the CallExpression visits this
+            node.resolvedType = symbolTable_.getIntType();  // placeholder
             return;
         }
-        node.resolvedType = getSymbolType(method);
-        return;
     }
 
-    errors_.error(node.location,
-        "'" + typeSym->name + "' has no member '" + node.memberName + "'");
-    node.resolvedType = registry_.getErrorType();
+    // Struct/Class field or method
+    auto* typeScope = dynamic_cast<Scope*>(objType.get());
+    if (typeScope) {
+        auto memberSym = typeScope->resolve(node.memberName);
+        if (memberSym) {
+            node.resolvedSymbol = memberSym;
+            node.resolvedType = getSymbolType(memberSym);
+
+            // Check static vs instance access
+            if (auto* func = memberSym->as<FunctionSymbol>()) {
+                if (func->isStatic) {
+                    node.isStaticAccess = true;
+                }
+            }
+            return;
+        }
+    }
+
+    errors_.error("no member '" + node.memberName + "' in type '"
+        + objType->getTypeDescription() + "'", node.debugInfo);
+    node.resolvedType = symbolTable_.getErrorType();
 }
 
-//================================================================================
-// Expression Visitors — Binary, Unary, Assignment
-//================================================================================
+// ============================================================================
+// Binary Expression
+// ============================================================================
+
 void TypeChecker::visit(BinaryExpression& node) {
     if (node.left) node.left->accept(*this);
     if (node.right) node.right->accept(*this);
@@ -984,691 +712,534 @@ void TypeChecker::visit(BinaryExpression& node) {
     auto leftType = node.left ? node.left->resolvedType : nullptr;
     auto rightType = node.right ? node.right->resolvedType : nullptr;
 
-    if (!leftType || !rightType ||
-        leftType->is<ErrorType>() || rightType->is<ErrorType>()) {
-        node.resolvedType = registry_.getErrorType();
+    if (!leftType || !rightType) {
+        node.resolvedType = symbolTable_.getErrorType();
         return;
     }
 
-    // Check for operator overload on user types
-    if (leftType->is<UserType>()) {
-        auto overloadOp = binaryOpToOverloadableOp(node.op);
-        if (overloadOp.has_value()) {
-            auto* ut = leftType->as<UserType>();
-            auto* typeSym = static_cast<TypeSymbol*>(ut->symbol);
-            if (auto* opSym = typeSym->findOperator(overloadOp.value())) {
-                node.isOperatorOverload = true;
-                node.resolvedOperatorFunction = opSym;
-                node.resolvedType = opSym->returnType
-                    ? opSym->returnType : registry_.getErrorType();
+    // Check for operator overload on left type
+    auto overloadOp = binaryOpToOverloadable(node.op);
+    auto opSym = findOperatorOverload(leftType.get(), overloadOp);
+    if (opSym) {
+        node.isOperatorOverload = true;
+        node.resolvedOperatorFunction = opSym;
+        node.resolvedType = opSym->returnType ? opSym->returnType : symbolTable_.getErrorType();
+        return;
+    }
+
+    switch (node.op) {
+        // Arithmetic
+        case BinaryOp::Add: {
+            // String concatenation
+            if (leftType.get() == symbolTable_.getStringType().get() ||
+                rightType.get() == symbolTable_.getStringType().get()) {
+                node.resolvedType = symbolTable_.getStringType();
                 return;
             }
-        }
-    }
-
-    // Arithmetic operators
-    if (binaryOpIsArithmetic(node.op)) {
-        bool leftIsPointer = leftType->is<PointerType>();
-        bool rightIsPointer = rightType->is<PointerType>();
-        bool leftIsInteger = registry_.isIntegerType(leftType.get());
-        bool rightIsInteger = registry_.isIntegerType(rightType.get());
-
-        // String concatenation: string + string → string
-        auto isStringType = [](const Type* t) {
-            auto* p = t->as<PrimitiveType>();
-            return p && p->kind == PrimitiveType::PrimitiveKind::String;
-        };
-        if (isStringType(leftType.get()) && isStringType(rightType.get()) &&
-            node.op == BinaryOp::Add) {
-            node.resolvedType = leftType;
+            // Pointer arithmetic: ptr + int → ptr, int + ptr → ptr
+            if (leftType->is<PointerTypeSymbol>()) {
+                node.resolvedType = leftType;
+                return;
+            }
+            if (rightType->is<PointerTypeSymbol>()) {
+                node.resolvedType = rightType;
+                return;
+            }
+            node.resolvedType = getWiderType(leftType.get(), rightType.get());
             return;
         }
-
-        // Pointer arithmetic: ptr + int, ptr - int → ptr
-        if (leftIsPointer && rightIsInteger &&
-            (node.op == BinaryOp::Add || node.op == BinaryOp::Sub)) {
-            node.resolvedType = leftType;
+        case BinaryOp::Sub: {
+            // Pointer arithmetic: ptr - int → ptr
+            if (leftType->is<PointerTypeSymbol>()) {
+                node.resolvedType = leftType;
+                return;
+            }
+            node.resolvedType = getWiderType(leftType.get(), rightType.get());
             return;
         }
-        // int + ptr → ptr
-        if (rightIsPointer && leftIsInteger && node.op == BinaryOp::Add) {
-            node.resolvedType = rightType;
+        case BinaryOp::Mul:
+        case BinaryOp::Div:
+        case BinaryOp::Mod:
+            node.resolvedType = getWiderType(leftType.get(), rightType.get());
             return;
-        }
-        // ptr - ptr → int (pointer difference)
-        if (leftIsPointer && rightIsPointer && node.op == BinaryOp::Sub) {
-            node.resolvedType = registry_.getInt();
+
+        // Bitwise
+        case BinaryOp::BitwiseAnd:
+        case BinaryOp::BitwiseOr:
+        case BinaryOp::BitwiseXor:
+        case BinaryOp::ShiftLeft:
+        case BinaryOp::ShiftRight:
+            node.resolvedType = getWiderType(leftType.get(), rightType.get());
             return;
-        }
 
-        if (!registry_.isNumericType(leftType.get()) ||
-            !registry_.isNumericType(rightType.get())) {
-            errors_.error(node.location,
-                "arithmetic operator requires numeric types, got '" +
-                leftType->toString() + "' and '" + rightType->toString() + "'");
-            node.resolvedType = registry_.getErrorType();
-        } else {
-            auto wider = registry_.getWiderType(leftType.get(), rightType.get());
-            node.resolvedType = wider ? wider : leftType;
-        }
-        return;
+        // Comparison → bool
+        case BinaryOp::Equal:
+        case BinaryOp::NotEqual:
+        case BinaryOp::Less:
+        case BinaryOp::Greater:
+        case BinaryOp::LessEqual:
+        case BinaryOp::GreaterEqual:
+            node.resolvedType = symbolTable_.getBoolType();
+            return;
+
+        // Logical → bool
+        case BinaryOp::LogicalAnd:
+        case BinaryOp::LogicalOr:
+            node.resolvedType = symbolTable_.getBoolType();
+            return;
+
+        default:
+            node.resolvedType = symbolTable_.getErrorType();
+            return;
     }
-
-    // Comparison operators
-    if (binaryOpIsComparison(node.op)) {
-        if (!registry_.isCompatible(leftType.get(), rightType.get()) &&
-            !registry_.isCompatible(rightType.get(), leftType.get())) {
-            errors_.error(node.location,
-                "cannot compare '" + leftType->toString() +
-                "' and '" + rightType->toString() + "'");
-        }
-        node.resolvedType = registry_.getBool();
-        return;
-    }
-
-    // Logical operators (&&, ||)
-    if (binaryOpIsLogical(node.op)) {
-        if (!registry_.isCompatible(leftType.get(), registry_.getBool().get())) {
-            errors_.error(node.location,
-                "logical operator requires 'bool' operands");
-        }
-        if (!registry_.isCompatible(rightType.get(), registry_.getBool().get())) {
-            errors_.error(node.location,
-                "logical operator requires 'bool' operands");
-        }
-        node.resolvedType = registry_.getBool();
-        return;
-    }
-
-    // Bitwise operators
-    if (binaryOpIsBitwise(node.op)) {
-        if (!registry_.isIntegerType(leftType.get()) ||
-            !registry_.isIntegerType(rightType.get())) {
-            errors_.error(node.location,
-                "bitwise operator requires integer types");
-        }
-        auto wider = registry_.getWiderType(leftType.get(), rightType.get());
-        node.resolvedType = wider ? wider : leftType;
-        return;
-    }
-
-    node.resolvedType = registry_.getErrorType();
 }
+
+// ============================================================================
+// Unary Expression
+// ============================================================================
 
 void TypeChecker::visit(UnaryExpression& node) {
     if (node.operand) node.operand->accept(*this);
-    auto operandType = node.operand ? node.operand->resolvedType : nullptr;
-    if (!operandType || operandType->is<ErrorType>()) {
-        node.resolvedType = registry_.getErrorType();
+
+    auto opType = node.operand ? node.operand->resolvedType : nullptr;
+    if (!opType) {
+        node.resolvedType = symbolTable_.getErrorType();
         return;
     }
 
     switch (node.op) {
         case UnaryOp::Negate:
-            if (!registry_.isNumericType(operandType.get())) {
-                errors_.error(node.location,
-                    "unary '-' requires a numeric type");
-                node.resolvedType = registry_.getErrorType();
-            } else {
-                node.resolvedType = operandType;
-            }
-            break;
-
+            node.resolvedType = opType;  // same numeric type
+            return;
         case UnaryOp::LogicalNot:
-            if (!registry_.isCompatible(operandType.get(), registry_.getBool().get())) {
-                errors_.error(node.location, "'!' requires a 'bool' operand");
-            }
-            node.resolvedType = registry_.getBool();
-            break;
-
+            node.resolvedType = symbolTable_.getBoolType();
+            return;
         case UnaryOp::BitwiseNot:
-            if (!registry_.isIntegerType(operandType.get())) {
-                errors_.error(node.location, "'~' requires an integer type");
-            }
-            node.resolvedType = operandType;
-            break;
-
-        case UnaryOp::AddressOf:
-            node.resolvedType = registry_.getPointerTo(operandType);
-            break;
-
+            node.resolvedType = opType;
+            return;
         case UnaryOp::Dereference:
-            if (auto* ptr = operandType->as<PointerType>()) {
+            if (auto* ptr = opType->as<PointerTypeSymbol>()) {
                 node.resolvedType = ptr->baseType;
             } else {
-                errors_.error(node.location,
-                    "dereference requires a pointer type, got '" +
-                    operandType->toString() + "'");
-                node.resolvedType = registry_.getErrorType();
+                errors_.error("dereference of non-pointer type", node.debugInfo);
+                node.resolvedType = symbolTable_.getErrorType();
             }
-            break;
-
-        case UnaryOp::PreIncrement:
-        case UnaryOp::PreDecrement:
-        case UnaryOp::PostIncrement:
-        case UnaryOp::PostDecrement:
-            if (!registry_.isNumericType(operandType.get())) {
-                errors_.error(node.location,
-                    "increment/decrement requires a numeric type");
-                node.resolvedType = registry_.getErrorType();
-            } else {
-                node.resolvedType = operandType;
-            }
-            break;
+            return;
+        case UnaryOp::AddressOf:
+            node.resolvedType = symbolTable_.getPointerType(opType);
+            return;
+        default:
+            node.resolvedType = opType;
+            return;
     }
 }
+
+// ============================================================================
+// Assignment Expression
+// ============================================================================
 
 void TypeChecker::visit(AssignmentExpression& node) {
     if (node.target) node.target->accept(*this);
     if (node.value) node.value->accept(*this);
 
-    if (!isLValue(node.target.get())) {
-        errors_.error(node.location,
-            "left side of assignment is not an lvalue");
-    }
-
     auto targetType = node.target ? node.target->resolvedType : nullptr;
     auto valueType = node.value ? node.value->resolvedType : nullptr;
 
-    if (targetType && valueType &&
-        !targetType->is<ErrorType>() && !valueType->is<ErrorType>()) {
-        if (assignOpIsCompound(node.op)) {
-            auto binaryOp = assignOpToBinaryOp(node.op);
-            if (binaryOpIsArithmetic(binaryOp)) {
-                // Allow string += string
-                auto isStringType = [](const Type* t) {
-                    auto* p = t->as<PrimitiveType>();
-                    return p && p->kind == PrimitiveType::PrimitiveKind::String;
-                };
-                bool isStringConcat = (node.op == AssignOp::AddAssign) &&
-                    isStringType(targetType.get()) && isStringType(valueType.get());
-                if (!isStringConcat &&
-                    (!registry_.isNumericType(targetType.get()) ||
-                     !registry_.isNumericType(valueType.get()))) {
-                    errors_.error(node.location,
-                        "compound assignment requires numeric types");
-                }
-            }
-        } else {
-            checkAssignability(valueType.get(), targetType.get(),
-                               node.location, "assignment");
-        }
+    if (!targetType || !valueType) {
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
     }
 
-    node.resolvedType = targetType ? targetType : registry_.getErrorType();
+    // Validate lvalue
+    if (!isLValue(node.target.get())) {
+        errors_.error("assignment to non-lvalue", node.debugInfo);
+    }
+
+    // Check compatibility
+    if (node.op == AssignOp::Assign) {
+        checkAssignability(valueType.get(), targetType.get(),
+            node.debugInfo, "assignment");
+    }
+    // Compound assignments (+=, -=, etc.) — the result type matches target
+    node.resolvedType = targetType;
 }
 
-//================================================================================
-// Expression Visitors — Ternary, Call, New, Index, Cast, SizeOf
-//================================================================================
+// ============================================================================
+// Ternary Expression
+// ============================================================================
+
 void TypeChecker::visit(TernaryExpression& node) {
     if (node.condition) node.condition->accept(*this);
     if (node.thenExpr) node.thenExpr->accept(*this);
     if (node.elseExpr) node.elseExpr->accept(*this);
 
-    if (node.condition && node.condition->resolvedType) {
-        if (!registry_.isCompatible(node.condition->resolvedType.get(),
-                                     registry_.getBool().get())) {
-            errors_.error(node.location, "ternary condition must be 'bool'");
-        }
-    }
-
+    // Result type is the wider of the two branches
     auto thenType = node.thenExpr ? node.thenExpr->resolvedType : nullptr;
     auto elseType = node.elseExpr ? node.elseExpr->resolvedType : nullptr;
 
     if (thenType && elseType) {
-        auto wider = registry_.getWiderType(thenType.get(), elseType.get());
-        if (wider) {
-            node.resolvedType = wider;
-        } else if (registry_.isCompatible(thenType.get(), elseType.get())) {
+        if (symbolTable_.isCompatible(thenType.get(), elseType.get())) {
             node.resolvedType = elseType;
-        } else if (registry_.isCompatible(elseType.get(), thenType.get())) {
+        } else if (symbolTable_.isCompatible(elseType.get(), thenType.get())) {
             node.resolvedType = thenType;
         } else {
-            errors_.error(node.location,
-                "ternary branches have incompatible types: '" +
-                thenType->toString() + "' and '" + elseType->toString() + "'");
-            node.resolvedType = registry_.getErrorType();
+            node.resolvedType = thenType;  // use then-branch, report mismatch
+            errors_.error("ternary branches have incompatible types", node.debugInfo);
         }
     } else {
-        node.resolvedType = thenType ? thenType : (elseType ? elseType : registry_.getErrorType());
+        node.resolvedType = thenType ? thenType : elseType;
     }
 }
 
-void TypeChecker::visit(CallExpression& node) {
-    if (node.callee) node.callee->accept(*this);
-    for (auto& arg : node.arguments) {
-        if (arg) arg->accept(*this);
-    }
-
-    // String built-in method calls: s.length(), s.charAt(i), s.substring(start, len)
-    if (auto* memAccess = node.callee->as<MemberAccessExpression>()) {
-        if (memAccess->isStringBuiltinMethod) {
-            // The resolvedType was already set correctly on the MemberAccessExpression
-            node.resolvedType = memAccess->resolvedType;
-            return;
-        }
-    }
-
-    auto calleeType = node.callee ? node.callee->resolvedType : nullptr;
-    if (!calleeType || calleeType->is<ErrorType>()) {
-        node.resolvedType = registry_.getErrorType();
-        return;
-    }
-
-    // Handle constructor calls via type name (e.g., File(path, "r"))
-    if (auto* userType = calleeType->as<UserType>()) {
-        auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-        if (auto* classSym = typeSym->as<ClassSymbol>()) {
-            if (classSym->isAbstract) {
-                errors_.error(node.location,
-                    "cannot instantiate abstract class '" + classSym->name + "'");
-                node.resolvedType = registry_.getErrorType();
-                return;
-            }
-            if (classSym->constructor) {
-                auto* ctor = classSym->constructor;
-                if (node.arguments.size() != ctor->parameters.size()) {
-                    errors_.error(node.location,
-                        "constructor expects " +
-                        std::to_string(ctor->parameters.size()) +
-                        " arguments, got " +
-                        std::to_string(node.arguments.size()));
-                }
-                size_t count = std::min(node.arguments.size(),
-                                        ctor->parameters.size());
-                for (size_t i = 0; i < count; ++i) {
-                    if (node.arguments[i] && node.arguments[i]->resolvedType &&
-                        ctor->parameters[i]->type) {
-                        checkAssignability(
-                            node.arguments[i]->resolvedType.get(),
-                            ctor->parameters[i]->type.get(),
-                            node.arguments[i]->location,
-                            "constructor argument " + std::to_string(i + 1));
-                    }
-                }
-            }
-            node.resolvedType = calleeType;
-            return;
-        }
-        // Struct aggregate initialization
-        if (typeSym->is<StructSymbol>()) {
-            node.resolvedType = calleeType;
-            return;
-        }
-    }
-
-    auto* fnType = calleeType->as<FunctionType>();
-    if (!fnType) {
-        errors_.error(node.location,
-            "expression is not callable (type: '" +
-            calleeType->toString() + "')");
-        node.resolvedType = registry_.getErrorType();
-        return;
-    }
-
-    if (node.arguments.size() != fnType->parameterTypes.size()) {
-        errors_.error(node.location,
-            "expected " + std::to_string(fnType->parameterTypes.size()) +
-            " arguments, got " + std::to_string(node.arguments.size()));
-    }
-
-    size_t count = std::min(node.arguments.size(), fnType->parameterTypes.size());
-    for (size_t i = 0; i < count; ++i) {
-        if (node.arguments[i] && node.arguments[i]->resolvedType) {
-            checkAssignability(node.arguments[i]->resolvedType.get(),
-                               fnType->parameterTypes[i].get(),
-                               node.arguments[i]->location,
-                               "argument " + std::to_string(i + 1));
-        }
-    }
-
-    node.resolvedType = fnType->returnType;
-}
-
-void TypeChecker::visit(NewExpression& node) {
-    auto allocType = resolveTypeNode(node.type.get());
-    if (!allocType || allocType->is<ErrorType>()) {
-        node.resolvedType = registry_.getErrorType();
-        return;
-    }
-
-    if (node.isArray) {
-        if (node.arraySize) {
-            node.arraySize->accept(*this);
-            if (node.arraySize->resolvedType &&
-                !registry_.isIntegerType(node.arraySize->resolvedType.get())) {
-                errors_.error(node.location, "array size must be an integer");
-            }
-        }
-        node.resolvedType = registry_.getPointerTo(allocType);
-    } else {
-        for (auto& arg : node.arguments) {
-            if (arg) arg->accept(*this);
-        }
-
-        // Look up the type's constructor if it's a class
-        if (auto* userType = allocType->as<UserType>()) {
-            auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-            if (auto* classSym = typeSym->as<ClassSymbol>()) {
-                if (classSym->isAbstract) {
-                    errors_.error(node.location,
-                        "cannot instantiate abstract class '" + classSym->name + "' with 'new'");
-                    node.resolvedType = registry_.getErrorType();
-                    return;
-                }
-                if (classSym->constructor) {
-                    auto* ctor = classSym->constructor;
-                    if (node.arguments.size() != ctor->parameters.size()) {
-                        errors_.error(node.location,
-                            "constructor expects " +
-                            std::to_string(ctor->parameters.size()) +
-                            " arguments, got " +
-                            std::to_string(node.arguments.size()));
-                    }
-                    size_t count = std::min(node.arguments.size(),
-                                            ctor->parameters.size());
-                    for (size_t i = 0; i < count; ++i) {
-                        if (node.arguments[i] && node.arguments[i]->resolvedType &&
-                            ctor->parameters[i]->type) {
-                            checkAssignability(
-                                node.arguments[i]->resolvedType.get(),
-                                ctor->parameters[i]->type.get(),
-                                node.arguments[i]->location,
-                                "constructor argument " + std::to_string(i + 1));
-                        }
-                    }
-                }
-            }
-        }
-        node.resolvedType = registry_.getPointerTo(allocType);
-    }
-}
+// ============================================================================
+// Index Expression — arr[i]
+// ============================================================================
 
 void TypeChecker::visit(IndexExpression& node) {
     if (node.object) node.object->accept(*this);
     if (node.index) node.index->accept(*this);
 
     auto objType = node.object ? node.object->resolvedType : nullptr;
-    if (!objType || objType->is<ErrorType>()) {
-        node.resolvedType = registry_.getErrorType();
+    if (!objType) {
+        node.resolvedType = symbolTable_.getErrorType();
         return;
     }
-
-    auto idxType = node.index ? node.index->resolvedType : nullptr;
 
     // Array indexing
-    if (auto* arr = objType->as<ArrayType>()) {
-        if (idxType && !registry_.isIntegerType(idxType.get())) {
-            errors_.error(node.location, "array index must be an integer");
-        }
-        node.resolvedType = arr->elementType;
+    if (auto* arrType = objType->as<ArrayTypeSymbol>()) {
+        node.resolvedType = arrType->elementType;
         return;
     }
 
-    // Pointer indexing
-    if (auto* ptr = objType->as<PointerType>()) {
-        if (idxType && !registry_.isIntegerType(idxType.get())) {
-            errors_.error(node.location, "pointer index must be an integer");
-        }
-        node.resolvedType = ptr->baseType;
+    // Pointer indexing (ptr[i] = *(ptr + i))
+    if (auto* ptrType = objType->as<PointerTypeSymbol>()) {
+        node.resolvedType = ptrType->baseType;
         return;
     }
 
-    // String indexing: s[i] returns char
-    if (auto* prim = objType->as<PrimitiveType>()) {
-        if (prim->kind == PrimitiveType::PrimitiveKind::String) {
-            if (idxType && !registry_.isIntegerType(idxType.get())) {
-                errors_.error(node.location, "string index must be an integer");
-            }
-            node.resolvedType = registry_.getPrimitive(PrimitiveType::PrimitiveKind::Char);
-            return;
-        }
+    // Operator[] overload
+    auto opSym = findOperatorOverload(objType.get(), OverloadableOp::Index);
+    if (opSym) {
+        node.isOperatorOverload = true;
+        node.resolvedOperatorFunction = opSym;
+        node.resolvedType = opSym->returnType ? opSym->returnType : symbolTable_.getErrorType();
+        return;
     }
 
-    // Operator overload for user types
-    if (auto* userType = objType->as<UserType>()) {
-        auto* typeSym = static_cast<TypeSymbol*>(userType->symbol);
-        if (auto* opSym = typeSym->findOperator(OverloadableOp::Index)) {
-            node.isOperatorOverload = true;
-            node.resolvedOperatorFunction = opSym;
-            node.resolvedType = opSym->returnType
-                ? opSym->returnType : registry_.getErrorType();
-            return;
-        }
-    }
-
-    errors_.error(node.location,
-        "type '" + objType->toString() + "' does not support indexing");
-    node.resolvedType = registry_.getErrorType();
+    errors_.error("subscript on non-indexable type '" + objType->getTypeDescription() + "'",
+        node.debugInfo);
+    node.resolvedType = symbolTable_.getErrorType();
 }
+
+// ============================================================================
+// Call Expression — the most critical resolution
+// ============================================================================
+
+void TypeChecker::visit(CallExpression& node) {
+    if (node.callee) node.callee->accept(*this);
+    if (node.arguments) {
+        for (auto& arg : node.arguments->expressions) {
+            if (arg) arg->accept(*this);
+        }
+    }
+
+    auto calleeType = node.callee ? node.callee->resolvedType : nullptr;
+    if (!calleeType) {
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
+    }
+
+    // Get FunctionTypeSymbol from callee
+    FunctionTypeSymbol* funcType = nullptr;
+    std::shared_ptr<FunctionSymbol> funcSym;
+    // Keep the built FunctionTypeSymbol alive for the duration of this function
+    std::shared_ptr<FunctionTypeSymbol> funcTypeHolder;
+
+    // Direct function call (identifier resolved to FunctionSymbol)
+    if (node.callee->resolvedSymbol) {
+        auto* fSym = node.callee->resolvedSymbol->as<FunctionSymbol>();
+        if (fSym) {
+            funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.callee->resolvedSymbol);
+            funcTypeHolder = fSym->buildFunctionType();
+            if (funcTypeHolder) funcType = funcTypeHolder.get();
+        }
+    }
+
+    // Method call via member access
+    if (!funcSym && node.callee->is<MemberAccessExpression>()) {
+        auto* memberAccess = node.callee->as<MemberAccessExpression>();
+        if (memberAccess->resolvedSymbol) {
+            auto* fSym = memberAccess->resolvedSymbol->as<FunctionSymbol>();
+            if (fSym) {
+                funcSym = std::dynamic_pointer_cast<FunctionSymbol>(
+                    memberAccess->resolvedSymbol);
+                funcTypeHolder = fSym->buildFunctionType();
+                if (funcTypeHolder) funcType = funcTypeHolder.get();
+            }
+        }
+    }
+
+    // String builtin method call
+    if (!funcType && node.callee->is<MemberAccessExpression>()) {
+        auto* memberAccess = node.callee->as<MemberAccessExpression>();
+        if (memberAccess->isStringBuiltinMethod) {
+            // Resolve return type based on method name
+            if (memberAccess->memberName == "length" ||
+                memberAccess->memberName == "charAt" ||
+                memberAccess->memberName == "indexOf" ||
+                memberAccess->memberName == "toInt") {
+                node.resolvedType = symbolTable_.getIntType();
+            } else if (memberAccess->memberName == "toDouble") {
+                node.resolvedType = symbolTable_.getDoubleType();
+            } else if (memberAccess->memberName == "substring") {
+                node.resolvedType = symbolTable_.getStringType();
+            } else {
+                node.resolvedType = symbolTable_.getIntType();
+            }
+            return;
+        }
+    }
+
+    // Closure/function variable call (callee type is FunctionTypeSymbol)
+    if (!funcType) {
+        funcType = calleeType->as<FunctionTypeSymbol>();
+    }
+
+    // Struct construction: StructName() → zero-initialized struct value
+    if (!funcType && calleeType->is<StructSymbol>()) {
+        node.resolvedType = std::dynamic_pointer_cast<TypeSymbol>(
+            symbolTable_.resolveType(calleeType->getName()));
+        return;
+    }
+
+    // Constructor call: callee is a type name
+    if (!funcType && calleeType->is<ClassSymbol>()) {
+        auto* classSym = calleeType->as<ClassSymbol>();
+        if (classSym && classSym->constructor) {
+            funcSym = classSym->constructor;
+            funcTypeHolder = classSym->constructor->buildFunctionType();
+            if (funcTypeHolder) funcType = funcTypeHolder.get();
+        }
+        // Result of constructor call is the class type (stack-allocated value)
+        // Only 'new' expressions produce pointer types
+        node.resolvedType = std::dynamic_pointer_cast<TypeSymbol>(
+            symbolTable_.resolveType(classSym->getName()));
+        node.resolvedCallee = funcSym;
+
+        // Set isReference on arguments
+        if (funcType && node.arguments) {
+            node.arguments->isReference.clear();
+            for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
+                bool isRef = (i < funcType->parameters.size())
+                    ? funcType->parameters[i].isReference : false;
+                node.arguments->isReference.push_back(isRef);
+            }
+        }
+        return;
+    }
+
+    if (!funcType) {
+        errors_.error("call to non-callable type '" + calleeType->getTypeDescription() + "'",
+            node.debugInfo);
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
+    }
+
+    // Set resolved callee for codegen
+    node.resolvedCallee = funcSym;
+
+    // Return type
+    node.resolvedType = funcType->returnType ? funcType->returnType : symbolTable_.getVoidType();
+
+    // Check argument count
+    size_t argCount = node.arguments ? node.arguments->expressions.size() : 0;
+    size_t paramCount = funcType->parameters.size();
+    if (argCount != paramCount && !funcType->isVariadic) {
+        errors_.error("expected " + std::to_string(paramCount) + " arguments, got "
+            + std::to_string(argCount), node.debugInfo);
+    }
+
+    // Set isReference per argument + check types
+    if (node.arguments) {
+        node.arguments->isReference.clear();
+        for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
+            bool isRef = (i < funcType->parameters.size())
+                ? funcType->parameters[i].isReference : false;
+            node.arguments->isReference.push_back(isRef);
+
+            // Type check argument against parameter
+            if (i < funcType->parameters.size() && node.arguments->expressions[i]) {
+                auto argType = node.arguments->expressions[i]->resolvedType;
+                auto paramType = funcType->parameters[i].type;
+                if (argType && paramType) {
+                    checkAssignability(argType.get(), paramType.get(),
+                        node.arguments->expressions[i]->debugInfo, "argument");
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Cast, New, SizeOf
+// ============================================================================
 
 void TypeChecker::visit(CastExpression& node) {
     if (node.operand) node.operand->accept(*this);
-    auto targetType = resolveTypeNode(node.targetType.get());
-    node.resolvedType = targetType ? targetType : registry_.getErrorType();
 
-    auto srcType = node.operand ? node.operand->resolvedType : nullptr;
-    if (srcType && targetType &&
-        !srcType->is<ErrorType>() && !targetType->is<ErrorType>()) {
-        bool legal = false;
-        legal = legal || (registry_.isNumericType(srcType.get()) && registry_.isNumericType(targetType.get()));
-        legal = legal || (srcType->is<PointerType>() && targetType->is<PointerType>());
-        legal = legal || registry_.isCompatible(srcType.get(), targetType.get());
-        legal = legal || (registry_.isIntegerType(srcType.get()) && targetType->is<PointerType>());
-        legal = legal || (srcType->is<PointerType>() && registry_.isIntegerType(targetType.get()));
-        if (!legal) {
-            errors_.error(node.location,
-                "invalid cast from '" + srcType->toString() +
-                "' to '" + targetType->toString() + "'");
+    // Target type already resolved by Pass 2
+    if (node.targetType && node.targetType->resolvedType) {
+        node.resolvedType = node.targetType->resolvedType;
+    } else {
+        node.resolvedType = symbolTable_.getErrorType();
+    }
+}
+
+void TypeChecker::visit(NewExpression& node) {
+    if (node.arguments) {
+        for (auto& arg : node.arguments->expressions) {
+            if (arg) arg->accept(*this);
         }
+    }
+    if (node.arraySize) node.arraySize->accept(*this);
+
+    if (node.type && node.type->resolvedType) {
+        if (node.isArray) {
+            node.resolvedType = symbolTable_.getPointerType(node.type->resolvedType);
+        } else {
+            node.resolvedType = symbolTable_.getPointerType(node.type->resolvedType);
+        }
+    } else {
+        node.resolvedType = symbolTable_.getErrorType();
     }
 }
 
 void TypeChecker::visit(SizeOfExpression& node) {
-    resolveTypeNode(node.targetType.get());
-    node.resolvedType = registry_.getInt();
+    node.resolvedType = symbolTable_.getIntType();
 }
 
-void TypeChecker::visit(AlignOfExpression& node) {
-    resolveTypeNode(node.targetType.get());
-    node.resolvedType = registry_.getInt();
-}
-
-//================================================================================
-// Expression Visitors — Pipe, Match, Tuple, Lambda
-//================================================================================
-void TypeChecker::visit(PipeExpression& node) {
-    if (node.input) node.input->accept(*this);
-    auto currentType = node.input ? node.input->resolvedType : nullptr;
-
-    for (auto& stage : node.stages) {
-        if (stage.function) stage.function->accept(*this);
-
-        for (auto& arg : stage.extraArguments) {
-            if (arg) arg->accept(*this);
-        }
-
-        auto fnType = stage.function ? stage.function->resolvedType : nullptr;
-        if (fnType && fnType->is<FunctionType>()) {
-            auto* ft = fnType->as<FunctionType>();
-            size_t expectedParams = 1 + stage.extraArguments.size();
-            if (ft->parameterTypes.size() != expectedParams) {
-                errors_.error(stage.function->location,
-                    "pipe stage expects " +
-                    std::to_string(ft->parameterTypes.size()) +
-                    " parameters, got " + std::to_string(expectedParams) +
-                    " arguments");
-            }
-            // Check piped input type
-            if (!ft->parameterTypes.empty() && currentType) {
-                checkAssignability(currentType.get(),
-                                   ft->parameterTypes[0].get(),
-                                   stage.function->location,
-                                   "pipe input");
-            }
-            // Check extra args
-            for (size_t i = 0; i < stage.extraArguments.size(); ++i) {
-                size_t paramIdx = i + 1;
-                if (paramIdx < ft->parameterTypes.size() &&
-                    stage.extraArguments[i] &&
-                    stage.extraArguments[i]->resolvedType) {
-                    checkAssignability(
-                        stage.extraArguments[i]->resolvedType.get(),
-                        ft->parameterTypes[paramIdx].get(),
-                        stage.extraArguments[i]->location,
-                        "pipe argument " + std::to_string(i + 1));
-                }
-            }
-            currentType = ft->returnType;
-        } else {
-            if (fnType && !fnType->is<ErrorType>()) {
-                errors_.error(stage.function->location,
-                    "pipe stage is not a function");
-            }
-            currentType = registry_.getErrorType();
-        }
-    }
-
-    node.resolvedType = currentType ? currentType : registry_.getErrorType();
-}
-
-void TypeChecker::visit(MatchExpression& node) {
-    if (node.subject) node.subject->accept(*this);
-
-    auto prevMatchSubjectType = matchSubjectType_;
-    matchSubjectType_ = node.subject ? node.subject->resolvedType : nullptr;
-
-    TypePtr<Type> resultType = nullptr;
-
-    for (auto& arm : node.arms) {
-        enterNextChildScope();
-        if (arm.pattern) arm.pattern->accept(*this);
-        if (arm.body) arm.body->accept(*this);
-
-        // Get the body's type if it's an expression
-        TypePtr<Type> bodyType = nullptr;
-        if (auto* expr = dynamic_cast<ExpressionNode*>(arm.body.get())) {
-            bodyType = expr->resolvedType;
-        }
-
-        if (bodyType && !resultType) {
-            resultType = bodyType;
-        } else if (bodyType && resultType) {
-            auto wider = registry_.getWiderType(resultType.get(), bodyType.get());
-            if (wider) {
-                resultType = wider;
-            } else if (!registry_.isCompatible(bodyType.get(), resultType.get())) {
-                errors_.error(arm.body->location,
-                    "match arm type '" + bodyType->toString() +
-                    "' is incompatible with '" + resultType->toString() + "'");
-            }
-        }
-        leaveChildScope();
-    }
-
-    matchSubjectType_ = prevMatchSubjectType;
-    node.resolvedType = resultType ? resultType : registry_.getVoid();
-}
+// ============================================================================
+// Tuple
+// ============================================================================
 
 void TypeChecker::visit(TupleExpression& node) {
-    TypeList<Type> elemTypes;
+    std::vector<TypeSymbolPtr> elemTypes;
     for (auto& elem : node.elements) {
         if (elem) {
             elem->accept(*this);
             elemTypes.push_back(elem->resolvedType
-                ? elem->resolvedType : registry_.getErrorType());
+                ? elem->resolvedType : symbolTable_.getErrorType());
         }
     }
-    node.resolvedType = registry_.getTupleOf(std::move(elemTypes));
+    node.resolvedType = symbolTable_.getTupleType(std::move(elemTypes));
 }
+
+// ============================================================================
+// Match Expression
+// ============================================================================
+
+void TypeChecker::visit(MatchExpression& node) {
+    if (node.subject) node.subject->accept(*this);
+
+    TypeSymbolPtr resultType = nullptr;
+    for (auto& arm : node.arms) {
+        // Resolve pattern values and bindings
+        if (arm.pattern) {
+            // Literal patterns: type-check the value expression (e.g., Enum.Member)
+            if (auto* litPat = arm.pattern->as<LiteralPattern>()) {
+                if (litPat->value) litPat->value->accept(*this);
+            }
+
+            if (auto* idPat = arm.pattern->as<IdentifierPattern>()) {
+                if (idPat->resolvedSymbol && node.subject && node.subject->resolvedType) {
+                    idPat->resolvedSymbol->setType(node.subject->resolvedType);
+                }
+                if (idPat->guard) idPat->guard->accept(*this);
+            }
+        }
+
+        if (arm.body) {
+            arm.body->accept(*this);
+
+            // Infer result type from arm body
+            if (auto* exprBody = arm.body->as<ExpressionBaseNode>()) {
+                if (!resultType && exprBody->resolvedType) {
+                    resultType = exprBody->resolvedType;
+                }
+            }
+        }
+    }
+
+    node.resolvedType = resultType ? resultType : symbolTable_.getVoidType();
+}
+
+// ============================================================================
+// Pipe Expression — x |> f |> g
+// ============================================================================
+
+void TypeChecker::visit(PipeExpression& node) {
+    if (node.input) node.input->accept(*this);
+
+    TypeSymbolPtr currentType = node.input ? node.input->resolvedType : nullptr;
+
+    for (auto& stage : node.stages) {
+        if (stage.function) stage.function->accept(*this);
+        for (auto& arg : stage.extraArguments) {
+            if (arg) arg->accept(*this);
+        }
+
+        // The stage function's return type becomes the next input
+        auto funcType = stage.function ? stage.function->resolvedType : nullptr;
+        if (funcType) {
+            if (auto* ft = funcType->as<FunctionTypeSymbol>()) {
+                currentType = ft->returnType;
+            }
+        }
+    }
+
+    node.resolvedType = currentType ? currentType : symbolTable_.getErrorType();
+}
+
+// ============================================================================
+// Lambda Expression
+// ============================================================================
 
 void TypeChecker::visit(LambdaExpression& node) {
-    enterNextChildScope();
+    // Save context
+    auto savedFunc = currentFunction_;
+    auto savedReturn = currentReturnType_;
+    currentReturnType_ = nullptr;  // will be inferred
 
-    TypeList<Type> paramTypes;
+    // Visit body
+    if (node.body) {
+        if (auto* block = node.body->as<BlockStatementNode>()) {
+            visitStatements(block->statements);
+        } else if (auto* expr = node.body->as<ExpressionBaseNode>()) {
+            expr->accept(*this);
+            // Expression body: return type is the expression's type
+            currentReturnType_ = expr->resolvedType;
+        }
+    }
+
+    // Build function type for the lambda
+    std::vector<FunctionTypeSymbol::ParameterInfo> params;
     for (auto& param : node.parameters) {
-        if (param && param->type) {
-            auto pType = resolveTypeNode(param->type.get());
-            paramTypes.push_back(pType ? pType : registry_.getErrorType());
-            auto* paramSym = currentScope_->lookupLocal(param->name);
-            if (paramSym && paramSym->is<VariableSymbol>()) {
-                paramSym->as<VariableSymbol>()->type = pType;
-            }
-        } else {
-            paramTypes.push_back(registry_.getErrorType());
+        FunctionTypeSymbol::ParameterInfo pi;
+        if (param && param->resolvedSymbol) {
+            pi.type = param->resolvedSymbol->getType();
+            pi.name = param->name;
+            pi.isReference = param->resolvedSymbol->isReference;
         }
+        if (!pi.type) pi.type = symbolTable_.getErrorType();
+        params.push_back(pi);
     }
 
-    auto prevRetType = currentReturnType_;
-    currentReturnType_ = nullptr;
+    auto retType = currentReturnType_ ? currentReturnType_ : symbolTable_.getVoidType();
+    node.resolvedType = symbolTable_.getFunctionType(std::move(params), retType);
 
-    if (node.body) node.body->accept(*this);
-
-    // Infer return type from body
-    TypePtr<Type> returnType = registry_.getVoid();
-    if (auto* expr = dynamic_cast<ExpressionNode*>(node.body.get())) {
-        returnType = expr->resolvedType ? expr->resolvedType : registry_.getVoid();
-    } else if (currentReturnType_) {
-        // Block-bodied lambda — return type inferred from return statements
-        returnType = currentReturnType_;
-    }
-
-    currentReturnType_ = prevRetType;
-    leaveChildScope();
-
-    node.resolvedType = registry_.getFunctionType(std::move(paramTypes), returnType);
+    // Restore context
+    currentFunction_ = savedFunc;
+    currentReturnType_ = savedReturn;
 }
 
-//================================================================================
-// Type nodes (no-op — resolved via resolveTypeNode helper)
-//================================================================================
-void TypeChecker::visit(TypeNode& /*node*/) {}
-void TypeChecker::visit(PrimitiveTypeNode& /*node*/) {}
-void TypeChecker::visit(NamedTypeNode& /*node*/) {}
-void TypeChecker::visit(PointerTypeNode& /*node*/) {}
-void TypeChecker::visit(ArrayTypeNode& /*node*/) {}
-void TypeChecker::visit(TupleTypeNode& /*node*/) {}
-void TypeChecker::visit(FunctionTypeNode& /*node*/) {}
-
-//================================================================================
-// Pattern Visitors
-//================================================================================
-void TypeChecker::visit(LiteralPattern& node) {
-    if (node.value) node.value->accept(*this);
-}
-
-void TypeChecker::visit(RangePattern& /*node*/) {}
-void TypeChecker::visit(WildcardPattern& /*node*/) {}
-
-void TypeChecker::visit(BindingPattern& node) {
-    // Infer binding variable type from the match subject
-    if (matchSubjectType_) {
-        auto* sym = currentScope_->lookupLocal(node.name);
-        if (sym && sym->is<VariableSymbol>()) {
-            sym->as<VariableSymbol>()->type = matchSubjectType_;
-        }
-    }
-}
-
-void TypeChecker::visit(TuplePattern& node) {
-    for (auto& elem : node.elements) {
-        if (elem) elem->accept(*this);
-    }
-}
-
-void TypeChecker::visit(GuardedPattern& node) {
-    if (node.innerPattern) node.innerPattern->accept(*this);
-    if (node.guard) {
-        node.guard->accept(*this);
-        if (node.guard->resolvedType &&
-            !registry_.isCompatible(node.guard->resolvedType.get(),
-                                     registry_.getBool().get())) {
-            errors_.error(node.guard->location,
-                "guard condition must be 'bool'");
-        }
-    }
-}
-
-} // namespace sema
 } // namespace mingus

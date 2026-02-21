@@ -1,74 +1,101 @@
 //================================================================================
-// MINGUS v1 - AST Generator Implementation
+// MINGUS V2 - AST Generator Implementation
+//
+// Converts ANTLR4 parse trees into V2 AST nodes.
+// Reuses V1 grammar unchanged; produces V2 AST node hierarchy.
+//
+// V2 patterns (distinct from V1):
+//   - Default-constructed nodes with field assignment (no constructor args)
+//   - DebugInfo with full source ranges (not SourceLocation)
+//   - ArgumentsNode with per-arg isReference tracking
+//   - CaptureDefault/CaptureItem on lambdas
+//   - DeclarationBaseNode : StatementBaseNode (declarations ARE statements)
+//   - Typed std::any returns (ExpressionBaseNode, StatementBaseNode, etc.)
 //================================================================================
 
 #include "mingus/parser/ASTGenerator.h"
+#include "mingus/Expressions.h"
+#include "mingus/Statements.h"
+#include "mingus/Declarations.h"
+#include "mingus/DebugInfo.h"
 
 #include <algorithm>
 #include <cctype>
-#include <functional>
 #include <stdexcept>
 
 namespace mingus {
 namespace parser {
 
-using namespace ast;
+using namespace AntlrMingusParser;
 
 //================================================================================
 // Utility Functions
 //================================================================================
 
-// Parse an integer literal token that may use decimal, hex (0x/0X),
-// binary (0b/0B), or octal (0o/0O) notation.
-// std::stoll with base 0 handles 0x and leading-zero octal (C-style),
-// but not the 0b / 0o prefixes — those need explicit base selection.
 static int64_t parseIntegerLiteral(const std::string& text) {
     if (text.size() >= 2 && text[0] == '0') {
         char p = text[1];
         if (p == 'b' || p == 'B') return std::stoll(text.substr(2), nullptr, 2);
         if (p == 'o' || p == 'O') return std::stoll(text.substr(2), nullptr, 8);
     }
-    return std::stoll(text, nullptr, 0);   // decimal or 0x... hex
+    return std::stoll(text, nullptr, 0);
 }
 
-SourceLocation getSourceLocation(antlr4::ParserRuleContext* ctx) {
-    if (!ctx) return SourceLocation();
-    
-    auto* token = ctx->getStart();
-    if (!token) return SourceLocation();
-    
-    return SourceLocation(
-        "<input>",
-        token->getLine(),
-        token->getCharPositionInLine()
-    );
+//================================================================================
+// DebugInfo Helper
+//================================================================================
+
+std::shared_ptr<DebugInfo> ASTGenerator::makeDebugInfo(antlr4::ParserRuleContext* ctx) {
+    if (!ctx) return nullptr;
+    auto* start = ctx->getStart();
+    auto* stop = ctx->getStop();
+    if (!start) return nullptr;
+
+    int startLine = static_cast<int>(start->getLine());
+    int startCol  = static_cast<int>(start->getCharPositionInLine());
+    int endLine   = stop ? static_cast<int>(stop->getLine()) : startLine;
+    int endCol    = stop ? static_cast<int>(stop->getCharPositionInLine()
+                          + stop->getText().length()) : startCol;
+
+    return std::make_shared<DebugInfo>(startLine, startCol, endLine, endCol);
 }
 
-void ASTGenerator::reportError(antlr4::ParserRuleContext* ctx, const std::string& message) {
-    errors.push_back({getSourceLocation(ctx), message});
+//================================================================================
+// Error Reporting
+//================================================================================
+
+void ASTGenerator::reportError(antlr4::ParserRuleContext* ctx,
+                               const std::string& message) {
+    Error err;
+    if (ctx && ctx->getStart()) {
+        err.line   = static_cast<int>(ctx->getStart()->getLine());
+        err.column = static_cast<int>(ctx->getStart()->getCharPositionInLine());
+    }
+    err.message = message;
+    errors.push_back(err);
 }
 
 //================================================================================
 // Entry Point
 //================================================================================
-std::shared_ptr<ProgramNode> ASTGenerator::generate(MingusParser::ProgramContext* ctx) {
+
+std::shared_ptr<ProgramNode> ASTGenerator::generate(
+    MingusParser::ProgramContext* ctx)
+{
     errors.clear();
     if (!ctx) {
         reportError(nullptr, "Null program context");
         return nullptr;
     }
-    
     try {
-        // Use visitProgram directly instead of visit() to ensure we're calling the right method
         auto result = visitProgram(ctx);
         if (!result.has_value()) {
             reportError(ctx, "visitProgram returned empty result");
             return nullptr;
         }
-        
         auto node = anyToNode<ProgramNode>(result);
         if (!node) {
-            reportError(ctx, "anyToNode<ProgramNode> returned nullptr - type mismatch");
+            reportError(ctx, "Failed to extract ProgramNode from visitor result");
             return nullptr;
         }
         return node;
@@ -79,312 +106,323 @@ std::shared_ptr<ProgramNode> ASTGenerator::generate(MingusParser::ProgramContext
 }
 
 //================================================================================
+// Parse Helpers
+//================================================================================
+
+std::vector<std::string> ASTGenerator::parseQualifiedName(
+    MingusParser::QualifiedNameContext* ctx)
+{
+    if (!ctx) return {};
+    std::vector<std::string> parts;
+    for (auto* id : ctx->Identifier()) {
+        parts.push_back(id->getText());
+    }
+    return parts;
+}
+
+AccessModifier ASTGenerator::parseAccessModifier(
+    MingusParser::AccessModifierContext* ctx)
+{
+    if (!ctx) return AccessModifier::Public;
+    if (ctx->DeclarePublic())    return AccessModifier::Public;
+    if (ctx->DeclarePrivate())   return AccessModifier::Private;
+    if (ctx->DeclareProtected()) return AccessModifier::Protected;
+    return AccessModifier::Public;
+}
+
+AssignOp ASTGenerator::parseAssignmentOperator(
+    MingusParser::AssignmentOperatorContext* ctx)
+{
+    if (!ctx) return AssignOp::Assign;
+    if (ctx->AssignOperator())                  return AssignOp::Assign;
+    if (ctx->PlusAssignOperator())              return AssignOp::AddAssign;
+    if (ctx->MinusAssignOperator())             return AssignOp::SubAssign;
+    if (ctx->MultiplyAssignOperator())          return AssignOp::MulAssign;
+    if (ctx->DivideAssignOperator())            return AssignOp::DivAssign;
+    if (ctx->ModuloAssignOperator())            return AssignOp::ModAssign;
+    if (ctx->BitwiseAndAssignOperator())        return AssignOp::AndAssign;
+    if (ctx->BitwiseOrAssignOperator())         return AssignOp::OrAssign;
+    if (ctx->BitwiseXorAssignOperator())        return AssignOp::XorAssign;
+    if (ctx->BitwiseLeftShiftAssignOperator())  return AssignOp::ShiftLeftAssign;
+    if (ctx->BitwiseRightShiftAssignOperator()) return AssignOp::ShiftRightAssign;
+    return AssignOp::Assign;
+}
+
+BinaryOp ASTGenerator::parseBinaryOperator(const std::string& op) {
+    if (op == "+")  return BinaryOp::Add;
+    if (op == "-")  return BinaryOp::Sub;
+    if (op == "*")  return BinaryOp::Mul;
+    if (op == "/")  return BinaryOp::Div;
+    if (op == "%")  return BinaryOp::Mod;
+    if (op == "==") return BinaryOp::Equal;
+    if (op == "!=") return BinaryOp::NotEqual;
+    if (op == "<")  return BinaryOp::Less;
+    if (op == "<=") return BinaryOp::LessEqual;
+    if (op == ">")  return BinaryOp::Greater;
+    if (op == ">=") return BinaryOp::GreaterEqual;
+    if (op == "&&") return BinaryOp::LogicalAnd;
+    if (op == "||") return BinaryOp::LogicalOr;
+    if (op == "&")  return BinaryOp::BitwiseAnd;
+    if (op == "|")  return BinaryOp::BitwiseOr;
+    if (op == "^")  return BinaryOp::BitwiseXor;
+    if (op == "<<") return BinaryOp::ShiftLeft;
+    if (op == ">>") return BinaryOp::ShiftRight;
+    return BinaryOp::Add;
+}
+
+UnaryOp ASTGenerator::parseUnaryOperator(const std::string& op) {
+    if (op == "-")  return UnaryOp::Negate;
+    if (op == "!")  return UnaryOp::LogicalNot;
+    if (op == "~")  return UnaryOp::BitwiseNot;
+    if (op == "&")  return UnaryOp::AddressOf;
+    if (op == "*")  return UnaryOp::Dereference;
+    if (op == "++") return UnaryOp::PreIncrement;
+    if (op == "--") return UnaryOp::PreDecrement;
+    return UnaryOp::Negate;
+}
+
+OverloadableOp ASTGenerator::parseOperatorKind(
+    MingusParser::OverloadableOperatorContext* ctx)
+{
+    if (!ctx) return OverloadableOp::Add;
+    if (ctx->PlusOperator())         return OverloadableOp::Add;
+    if (ctx->MinusOperator())        return OverloadableOp::Sub;
+    if (ctx->StarOperator())         return OverloadableOp::Mul;
+    if (ctx->DivideOperator())       return OverloadableOp::Div;
+    if (ctx->ModuloOperator())       return OverloadableOp::Mod;
+    if (ctx->EqualOperator())        return OverloadableOp::Equal;
+    if (ctx->UnequalOperator())      return OverloadableOp::NotEqual;
+    if (ctx->SmallerOperator())      return OverloadableOp::Less;
+    if (ctx->SmallerEqualOperator()) return OverloadableOp::LessEq;
+    if (ctx->GreaterOperator())      return OverloadableOp::Greater;
+    if (ctx->GreaterEqualOperator()) return OverloadableOp::GreaterEq;
+    if (ctx->SquareBracketLeft() && ctx->SquareBracketRight())
+        return OverloadableOp::Index;
+    return OverloadableOp::Add;
+}
+
+//================================================================================
 // Program Structure
 //================================================================================
+
 std::any ASTGenerator::visitProgram(MingusParser::ProgramContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodeList<ModuleNode> modules;
+    auto program = std::make_shared<ProgramNode>();
+    program->debugInfo = makeDebugInfo(ctx);
+
     for (auto* moduleCtx : ctx->module()) {
-        auto moduleNode = anyToNode<ModuleNode>(visitModule(moduleCtx));
-        if (moduleNode) {
-            modules.push_back(moduleNode);
-        }
+        auto mod = anyToNode<ModuleNode>(visitModule(moduleCtx));
+        if (mod) program->modules.push_back(mod);
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ProgramNode>(modules, loc)
-    );
+
+    return std::any(program);
 }
 
 std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::string name = ctx->Identifier()->getText();
-    
-    NodeList<ImportNode> imports;
-    NodeList<DeclarationNode> declarations;
-    
+    auto mod = std::make_shared<ModuleNode>();
+    mod->debugInfo = makeDebugInfo(ctx);
+    mod->name = ctx->Identifier()->getText();
+
     if (ctx->moduleBlock()) {
         for (auto* declCtx : ctx->moduleBlock()->moduleDeclaration()) {
-            // Determine if it's an import or a declaration
             if (declCtx->importDefinition()) {
-                auto importNode = anyToNode<ImportNode>(
-                    visitImportDefinition(declCtx->importDefinition())
-                );
-                if (importNode) imports.push_back(importNode);
+                auto imp = anyToNode<ImportDeclaration>(
+                    visitImportDefinition(declCtx->importDefinition()));
+                if (imp) mod->declarations.push_back(imp);
+
             } else if (declCtx->classDeclaration()) {
-                auto node = anyToNode<ClassDeclaration>(
-                    visitClassDeclaration(declCtx->classDeclaration())
-                );
-                if (node) declarations.push_back(node);
+                auto cls = anyToNode<ClassDeclaration>(
+                    visitClassDeclaration(declCtx->classDeclaration()));
+                if (cls) mod->declarations.push_back(cls);
+
             } else if (declCtx->interfaceDeclaration()) {
-                auto node = anyToNode<InterfaceDeclaration>(
-                    visitInterfaceDeclaration(declCtx->interfaceDeclaration())
-                );
-                if (node) declarations.push_back(node);
+                auto iface = anyToNode<InterfaceDeclaration>(
+                    visitInterfaceDeclaration(declCtx->interfaceDeclaration()));
+                if (iface) mod->declarations.push_back(iface);
+
             } else if (declCtx->structDeclaration()) {
-                auto node = anyToNode<StructDeclaration>(
-                    visitStructDeclaration(declCtx->structDeclaration())
-                );
-                if (node) declarations.push_back(node);
+                auto strct = anyToNode<StructDeclaration>(
+                    visitStructDeclaration(declCtx->structDeclaration()));
+                if (strct) mod->declarations.push_back(strct);
+
             } else if (declCtx->enumDeclaration()) {
-                auto node = anyToNode<EnumDeclaration>(
-                    visitEnumDeclaration(declCtx->enumDeclaration())
-                );
-                if (node) declarations.push_back(node);
+                auto enm = anyToNode<EnumDeclaration>(
+                    visitEnumDeclaration(declCtx->enumDeclaration()));
+                if (enm) mod->declarations.push_back(enm);
+
             } else if (declCtx->functionDeclaration()) {
-                auto node = anyToNode<FunctionDeclaration>(
-                    visitFunctionDeclaration(declCtx->functionDeclaration())
-                );
-                if (node) declarations.push_back(node);
+                auto fn = anyToNode<FunctionDeclaration>(
+                    visitFunctionDeclaration(declCtx->functionDeclaration()));
+                if (fn) mod->declarations.push_back(fn);
+
             } else if (declCtx->externDeclaration()) {
-                // Handle extern declarations
                 auto* externCtx = declCtx->externDeclaration();
                 if (externCtx->externBody()) {
-                    auto* externBody = externCtx->externBody();
-                    // externBody can have multiple externFunctionDeclarations
-                    for (auto* funcCtx : externBody->externFunctionDeclaration()) {
-                        auto node = anyToNode<ExternFunctionDeclaration>(
-                            visitExternFunctionDeclaration(funcCtx)
-                        );
-                        if (node) declarations.push_back(node);
+                    for (auto* funcCtx :
+                         externCtx->externBody()->externFunctionDeclaration()) {
+                        auto ext = anyToNode<ExternFunctionDeclaration>(
+                            visitExternFunctionDeclaration(funcCtx));
+                        if (ext) mod->declarations.push_back(ext);
                     }
                 }
+
             } else if (declCtx->variableDeclaration()) {
-                auto node = anyToNode<VariableDeclaration>(
-                    visitVariableDeclaration(declCtx->variableDeclaration())
-                );
-                if (node) declarations.push_back(node);
+                auto var = anyToNode<VariableDeclaration>(
+                    visitVariableDeclaration(declCtx->variableDeclaration()));
+                if (var) mod->declarations.push_back(var);
             }
         }
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ModuleNode>(name, imports, declarations, loc)
-    );
-}
 
-std::any ASTGenerator::visitImportDefinition(MingusParser::ImportDefinitionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::vector<ImportTarget> targets;
-    for (auto* targetCtx : ctx->importTarget()) {
-        std::string name = targetCtx->Identifier(0)->getText();
-        std::optional<std::string> alias;
-        if (targetCtx->AsKeyword()) {
-            alias = targetCtx->Identifier(1)->getText();
-        }
-        targets.emplace_back(name, alias);
-    }
-    
-    QualifiedName source;
-    if (ctx->FromDirective() && ctx->qualifiedName()) {
-        source = parseQualifiedName(ctx->qualifiedName());
-    }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ImportNode>(source, targets, loc)
-    );
-}
-
-std::any ASTGenerator::visitImportTarget(MingusParser::ImportTargetContext* ctx) {
-    // Handled inline in visitImportDefinition
-    return visitChildren(ctx);
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(mod));
 }
 
 std::any ASTGenerator::visitModuleBlock(MingusParser::ModuleBlockContext* ctx) {
     return visitChildren(ctx);
 }
 
-//================================================================================
-// Helper Methods - Modifiers and Names
-//================================================================================
-ast::QualifiedName ASTGenerator::parseQualifiedName(MingusParser::QualifiedNameContext* ctx) {
-    if (!ctx) return QualifiedName();
-    
-    std::vector<std::string> parts;
-    for (auto* id : ctx->Identifier()) {
-        parts.push_back(id->getText());
+std::any ASTGenerator::visitImportDefinition(
+    MingusParser::ImportDefinitionContext* ctx)
+{
+    auto imp = std::make_shared<ImportDeclaration>();
+    imp->debugInfo = makeDebugInfo(ctx);
+
+    // Parse import targets: import name1, name2 from Module;
+    for (auto* targetCtx : ctx->importTarget()) {
+        ImportTarget target;
+        target.name = targetCtx->Identifier(0)->getText();
+        if (targetCtx->AsKeyword()) {
+            target.alias = targetCtx->Identifier(1)->getText();
+        }
+        imp->targets.push_back(target);
     }
-    return QualifiedName(parts);
+
+    // Source module path
+    if (ctx->FromDirective() && ctx->qualifiedName()) {
+        // import X from Module.Sub;
+        imp->sourcePath = parseQualifiedName(ctx->qualifiedName());
+    } else if (ctx->qualifiedName()) {
+        // import Module;
+        imp->sourcePath = parseQualifiedName(ctx->qualifiedName());
+        imp->isWholeModule = true;
+    }
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(imp));
 }
 
-ast::AccessModifier ASTGenerator::parseAccessModifier(MingusParser::AccessModifierContext* ctx) {
-    if (!ctx) return AccessModifier::None;
-    
-    if (ctx->DeclarePublic()) return AccessModifier::Public;
-    if (ctx->DeclarePrivate()) return AccessModifier::Private;
-    if (ctx->DeclareProtected()) return AccessModifier::Protected;
-    
-    return AccessModifier::None;
+std::any ASTGenerator::visitImportTarget(MingusParser::ImportTargetContext* ctx) {
+    return visitChildren(ctx);
 }
-
-ast::AssignOp ASTGenerator::parseAssignmentOperator(MingusParser::AssignmentOperatorContext* ctx) {
-    if (!ctx) return AssignOp::Assign;
-    
-    if (ctx->AssignOperator()) return AssignOp::Assign;
-    if (ctx->PlusAssignOperator()) return AssignOp::AddAssign;
-    if (ctx->MinusAssignOperator()) return AssignOp::SubAssign;
-    if (ctx->MultiplyAssignOperator()) return AssignOp::MulAssign;
-    if (ctx->DivideAssignOperator()) return AssignOp::DivAssign;
-    if (ctx->ModuloAssignOperator()) return AssignOp::ModAssign;
-    if (ctx->BitwiseAndAssignOperator()) return AssignOp::AndAssign;
-    if (ctx->BitwiseOrAssignOperator()) return AssignOp::OrAssign;
-    if (ctx->BitwiseXorAssignOperator()) return AssignOp::XorAssign;
-    if (ctx->BitwiseLeftShiftAssignOperator()) return AssignOp::ShiftLeftAssign;
-    if (ctx->BitwiseRightShiftAssignOperator()) return AssignOp::ShiftRightAssign;
-    
-    return AssignOp::Assign;
-}
-
-ast::BinaryOp ASTGenerator::parseBinaryOperator(const std::string& op) {
-    if (op == "+") return BinaryOp::Add;
-    if (op == "-") return BinaryOp::Sub;
-    if (op == "*") return BinaryOp::Mul;
-    if (op == "/") return BinaryOp::Div;
-    if (op == "%") return BinaryOp::Mod;
-    if (op == "==") return BinaryOp::Equal;
-    if (op == "!=") return BinaryOp::NotEqual;
-    if (op == "<") return BinaryOp::Less;
-    if (op == "<=") return BinaryOp::LessEqual;
-    if (op == ">") return BinaryOp::Greater;
-    if (op == ">=") return BinaryOp::GreaterEqual;
-    if (op == "&&") return BinaryOp::LogicalAnd;
-    if (op == "||") return BinaryOp::LogicalOr;
-    if (op == "&") return BinaryOp::BitwiseAnd;
-    if (op == "|") return BinaryOp::BitwiseOr;
-    if (op == "^") return BinaryOp::BitwiseXor;
-    if (op == "<<") return BinaryOp::ShiftLeft;
-    if (op == ">>") return BinaryOp::ShiftRight;
-    
-    return BinaryOp::Add;
-}
-
-ast::UnaryOp ASTGenerator::parseUnaryOperator(const std::string& op) {
-    if (op == "-") return UnaryOp::Negate;
-    if (op == "!") return UnaryOp::LogicalNot;
-    if (op == "~") return UnaryOp::BitwiseNot;
-    if (op == "&") return UnaryOp::AddressOf;
-    if (op == "*") return UnaryOp::Dereference;
-    if (op == "++") return UnaryOp::PreIncrement;
-    if (op == "--") return UnaryOp::PreDecrement;
-    
-    return UnaryOp::Negate;
-}
-
-ast::OperatorKind ASTGenerator::parseOperatorKind(MingusParser::OverloadableOperatorContext* ctx) {
-    if (!ctx) return OperatorKind::Plus;
-    
-    if (ctx->PlusOperator()) return OperatorKind::Plus;
-    if (ctx->MinusOperator()) return OperatorKind::Minus;
-    if (ctx->StarOperator()) return OperatorKind::Star;
-    if (ctx->DivideOperator()) return OperatorKind::Divide;
-    if (ctx->ModuloOperator()) return OperatorKind::Modulo;
-    if (ctx->EqualOperator()) return OperatorKind::Equal;
-    if (ctx->UnequalOperator()) return OperatorKind::NotEqual;
-    if (ctx->SmallerOperator()) return OperatorKind::Less;
-    if (ctx->SmallerEqualOperator()) return OperatorKind::LessEqual;
-    if (ctx->GreaterOperator()) return OperatorKind::Greater;
-    if (ctx->GreaterEqualOperator()) return OperatorKind::GreaterEqual;
-    if (ctx->SquareBracketLeft() && ctx->SquareBracketRight()) return OperatorKind::Index;
-    
-    return OperatorKind::Plus;
-}
-
 
 //================================================================================
-// Type Parsing
+// Type Visitors
 //================================================================================
-std::any ASTGenerator::visitTypeIdentifier(MingusParser::TypeIdentifierContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodePtr<TypeNode> baseType;
-    
+
+std::any ASTGenerator::visitTypeIdentifier(
+    MingusParser::TypeIdentifierContext* ctx)
+{
+    std::shared_ptr<TypeNode> baseType;
+
     if (ctx->primitiveType()) {
         baseType = anyToNode<TypeNode>(visitPrimitiveType(ctx->primitiveType()));
+
     } else if (ctx->qualifiedName()) {
-        auto qname = parseQualifiedName(ctx->qualifiedName());
-        baseType = std::make_shared<NamedTypeNode>(qname.parts, loc);
+        auto named = std::make_shared<NamedTypeNode>();
+        named->debugInfo = makeDebugInfo(ctx);
+        named->qualifiedName = parseQualifiedName(ctx->qualifiedName());
+        baseType = named;
+
     } else if (ctx->tupleType()) {
         baseType = anyToNode<TypeNode>(visitTupleType(ctx->tupleType()));
+
     } else if (ctx->functionType()) {
         baseType = anyToNode<TypeNode>(visitFunctionType(ctx->functionType()));
     }
-    
-    // Apply type modifiers (arrays and pointers)
+
+    if (!baseType) return std::any(std::shared_ptr<TypeNode>(nullptr));
+
+    // Apply type modifiers: arrays, pointers, references
     for (auto* modifier : ctx->typeModifier()) {
         if (modifier->arrayDimension()) {
-            auto* arrayCtx = modifier->arrayDimension();
-            NodePtr<ExpressionNode> size = nullptr;
-            if (arrayCtx->IntegerLiteral()) {
-                size = std::make_shared<IntegerLiteral>(
-                    parseIntegerLiteral(arrayCtx->IntegerLiteral()->getText()), loc
-                );
+            auto* arrCtx = modifier->arrayDimension();
+            auto arrType = std::make_shared<ArrayTypeNode>();
+            arrType->debugInfo = makeDebugInfo(arrCtx);
+            arrType->elementType = baseType;
+            if (arrCtx->IntegerLiteral()) {
+                auto sizeExpr = std::make_shared<IntegerLiteral>();
+                sizeExpr->debugInfo = makeDebugInfo(arrCtx);
+                sizeExpr->value = parseIntegerLiteral(
+                    arrCtx->IntegerLiteral()->getText());
+                arrType->sizeExpr = sizeExpr;
             }
-            baseType = std::make_shared<ArrayTypeNode>(baseType, size, loc);
+            baseType = arrType;
+
         } else if (modifier->pointerLevel()) {
-            baseType = std::make_shared<PointerTypeNode>(baseType, loc);
+            auto ptrType = std::make_shared<PointerTypeNode>();
+            ptrType->debugInfo = makeDebugInfo(modifier);
+            ptrType->baseType = baseType;
+            ptrType->isReference = false;
+            baseType = ptrType;
+
         } else if (modifier->referenceLevel()) {
-            baseType = std::make_shared<PointerTypeNode>(baseType, loc, /*isRef=*/true);
+            auto refType = std::make_shared<PointerTypeNode>();
+            refType->debugInfo = makeDebugInfo(modifier);
+            refType->baseType = baseType;
+            refType->isReference = true;
+            baseType = refType;
         }
     }
-    
-    return std::static_pointer_cast<ASTNode>(baseType);
+
+    return std::any(baseType);
 }
 
 std::any ASTGenerator::visitPrimitiveType(MingusParser::PrimitiveTypeContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    PrimitiveType::PrimitiveKind kind;
-    if (ctx->IntegerType()) kind = PrimitiveType::PrimitiveKind::Int;
-    else if (ctx->DoubleType()) kind = PrimitiveType::PrimitiveKind::Double;
-    else if (ctx->FloatType()) kind = PrimitiveType::PrimitiveKind::Float;
-    else if (ctx->ByteType()) kind = PrimitiveType::PrimitiveKind::Byte;
-    else if (ctx->StringType()) kind = PrimitiveType::PrimitiveKind::String;
-    else if (ctx->CharType()) kind = PrimitiveType::PrimitiveKind::Char;
-    else if (ctx->BoolType()) kind = PrimitiveType::PrimitiveKind::Bool;
-    else if (ctx->VoidType()) kind = PrimitiveType::PrimitiveKind::Void;
-    else kind = PrimitiveType::PrimitiveKind::Int;
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<PrimitiveTypeNode>(kind, loc)
-    );
+    auto prim = std::make_shared<PrimitiveTypeNode>();
+    prim->debugInfo = makeDebugInfo(ctx);
+
+    if      (ctx->IntegerType()) prim->kind = PrimitiveKind::Int;
+    else if (ctx->DoubleType())  prim->kind = PrimitiveKind::Double;
+    else if (ctx->FloatType())   prim->kind = PrimitiveKind::Float;
+    else if (ctx->ByteType())    prim->kind = PrimitiveKind::Byte;
+    else if (ctx->StringType())  prim->kind = PrimitiveKind::String;
+    else if (ctx->CharType())    prim->kind = PrimitiveKind::Char;
+    else if (ctx->BoolType())    prim->kind = PrimitiveKind::Bool;
+    else if (ctx->VoidType())    prim->kind = PrimitiveKind::Void;
+    else                         prim->kind = PrimitiveKind::Int;
+
+    return std::any(std::static_pointer_cast<TypeNode>(prim));
 }
 
 std::any ASTGenerator::visitTupleType(MingusParser::TupleTypeContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodeList<TypeNode> elementTypes;
+    auto tuple = std::make_shared<TupleTypeNode>();
+    tuple->debugInfo = makeDebugInfo(ctx);
+
     for (auto* typeId : ctx->typeIdentifier()) {
-        auto type = anyToNode<TypeNode>(visitTypeIdentifier(typeId));
-        if (type) elementTypes.push_back(type);
+        auto elem = anyToNode<TypeNode>(visitTypeIdentifier(typeId));
+        if (elem) tuple->elementTypes.push_back(elem);
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<TupleTypeNode>(elementTypes, loc)
-    );
+
+    return std::any(std::static_pointer_cast<TypeNode>(tuple));
 }
 
 std::any ASTGenerator::visitFunctionType(MingusParser::FunctionTypeContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodeList<TypeNode> paramTypes;
+    auto fnType = std::make_shared<FunctionTypeNode>();
+    fnType->debugInfo = makeDebugInfo(ctx);
+
     if (ctx->typeList()) {
         for (auto* typeId : ctx->typeList()->typeIdentifier()) {
-            auto type = anyToNode<TypeNode>(visitTypeIdentifier(typeId));
-            if (type) paramTypes.push_back(type);
+            auto param = anyToNode<TypeNode>(visitTypeIdentifier(typeId));
+            if (param) fnType->parameterTypes.push_back(param);
         }
     }
-    
-    auto returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<FunctionTypeNode>(paramTypes, returnType, loc)
-    );
+
+    fnType->returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
+
+    return std::any(std::static_pointer_cast<TypeNode>(fnType));
 }
 
-std::any ASTGenerator::visitArrayDimension(MingusParser::ArrayDimensionContext* ctx) {
+std::any ASTGenerator::visitArrayDimension(
+    MingusParser::ArrayDimensionContext* ctx)
+{
     return visitChildren(ctx);
 }
 
@@ -398,622 +436,662 @@ std::any ASTGenerator::visitReturnType(MingusParser::ReturnTypeContext* ctx) {
     } else if (ctx->tupleType()) {
         return visitTupleType(ctx->tupleType());
     }
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<PrimitiveTypeNode>(PrimitiveType::PrimitiveKind::Void, getSourceLocation(ctx))
-    );
+    // Default: void
+    auto voidType = std::make_shared<PrimitiveTypeNode>();
+    voidType->debugInfo = makeDebugInfo(ctx);
+    voidType->kind = PrimitiveKind::Void;
+    return std::any(std::static_pointer_cast<TypeNode>(voidType));
 }
 
 //================================================================================
 // Utility Visitors
 //================================================================================
-std::any ASTGenerator::visitQualifiedName(MingusParser::QualifiedNameContext* ctx) {
+
+std::any ASTGenerator::visitQualifiedName(
+    MingusParser::QualifiedNameContext* ctx)
+{
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitAccessModifier(MingusParser::AccessModifierContext* ctx) {
+std::any ASTGenerator::visitAccessModifier(
+    MingusParser::AccessModifierContext* ctx)
+{
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitStaticModifier(MingusParser::StaticModifierContext* ctx) {
+std::any ASTGenerator::visitStaticModifier(
+    MingusParser::StaticModifierContext* ctx)
+{
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitAbstractModifier(MingusParser::AbstractModifierContext* ctx) {
+std::any ASTGenerator::visitAbstractModifier(
+    MingusParser::AbstractModifierContext* ctx)
+{
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitOverloadableOperator(MingusParser::OverloadableOperatorContext* ctx) {
+std::any ASTGenerator::visitOverloadableOperator(
+    MingusParser::OverloadableOperatorContext* ctx)
+{
     return visitChildren(ctx);
 }
 
 std::any ASTGenerator::visitString(MingusParser::StringContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
     std::vector<InterpolatedPart> parts;
     std::string currentText;
-    
+
     for (auto* partCtx : ctx->stringPart()) {
         if (partCtx->TEXT()) {
             currentText += partCtx->TEXT()->getText();
+
         } else if (partCtx->ESCAPE_SEQUENCE()) {
             std::string esc = partCtx->ESCAPE_SEQUENCE()->getText();
-            if (esc == "\\n") currentText += '\n';
-            else if (esc == "\\t") currentText += '\t';
-            else if (esc == "\\r") currentText += '\r';
+            if      (esc == "\\n")  currentText += '\n';
+            else if (esc == "\\t")  currentText += '\t';
+            else if (esc == "\\r")  currentText += '\r';
+            else if (esc == "\\\\") currentText += '\\';
+            else if (esc == "\\\"") currentText += '"';
+            else if (esc == "\\'")  currentText += '\'';
+            else if (esc == "\\0")  currentText += '\0';
             else if (esc.length() >= 2) currentText += esc[1];
+
         } else if (partCtx->BACKSLASH_PAREN()) {
+            // String interpolation: "\(expression)"
             if (!currentText.empty()) {
-                parts.push_back(InterpolatedPart::makeText(currentText));
+                InterpolatedPart textPart;
+                textPart.kind = InterpolatedPartKind::Text;
+                textPart.text = currentText;
+                parts.push_back(textPart);
                 currentText.clear();
             }
-            auto expr = anyToNode<ExpressionNode>(visitExpression(partCtx->expression()));
+            auto expr = anyToNode<ExpressionBaseNode>(
+                visitExpression(partCtx->expression()));
             if (expr) {
-                parts.push_back(InterpolatedPart::makeExpression(expr));
+                InterpolatedPart exprPart;
+                exprPart.kind = InterpolatedPartKind::Expression;
+                exprPart.expression = expr;
+                parts.push_back(exprPart);
             }
         }
     }
-    
+
     if (!currentText.empty()) {
-        parts.push_back(InterpolatedPart::makeText(currentText));
+        InterpolatedPart textPart;
+        textPart.kind = InterpolatedPartKind::Text;
+        textPart.text = currentText;
+        parts.push_back(textPart);
     }
-    
+
+    // Plain string (no interpolation) -> StringLiteral
     if (parts.size() == 1 && parts[0].kind == InterpolatedPartKind::Text) {
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<StringLiteral>(parts[0].text, loc)
-        );
+        auto strLit = std::make_shared<StringLiteral>();
+        strLit->debugInfo = makeDebugInfo(ctx);
+        strLit->value = parts[0].text;
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(strLit));
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<InterpolatedString>(parts, loc)
-    );
+
+    // Interpolated string
+    auto interp = std::make_shared<InterpolatedStringExpression>();
+    interp->debugInfo = makeDebugInfo(ctx);
+    interp->parts = std::move(parts);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(interp));
 }
 
-
 //================================================================================
-// Declarations
+// Declaration Visitors
 //================================================================================
 
-std::any ASTGenerator::visitClassDeclaration(MingusParser::ClassDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::string name = ctx->Identifier()->getText();
-    auto access = parseAccessModifier(ctx->accessModifier());
-    bool isStatic = ctx->staticModifier() != nullptr;
-    bool isAbstract = ctx->abstractModifier() != nullptr;
-    
-    std::vector<QualifiedName> baseClasses;
+std::any ASTGenerator::visitClassDeclaration(
+    MingusParser::ClassDeclarationContext* ctx)
+{
+    auto cls = std::make_shared<ClassDeclaration>();
+    cls->debugInfo = makeDebugInfo(ctx);
+    cls->name = ctx->Identifier()->getText();
+    cls->accessModifier = parseAccessModifier(ctx->accessModifier());
+    cls->isStatic = ctx->staticModifier() != nullptr;
+    cls->isAbstract = ctx->abstractModifier() != nullptr;
+
+    // Base classes / interfaces
     if (ctx->inheritance()) {
         for (auto* qnameCtx : ctx->inheritance()->qualifiedName()) {
-            baseClasses.push_back(parseQualifiedName(qnameCtx));
+            auto parts = parseQualifiedName(qnameCtx);
+            // Store the simple name; sema resolves to ClassSymbol/InterfaceSymbol
+            if (!parts.empty()) cls->baseClasses.push_back(parts.back());
         }
     }
-    
-    NodePtr<ConstructorDeclaration> constructor;
-    NodePtr<DestructorDeclaration> destructor;
-    NodeList<OperatorDeclaration> operators;
-    NodeList<FunctionDeclaration> methods;
-    NodeList<VariableDeclaration> fields;
-    
+
+    // Class members
     if (ctx->classBlock()) {
         for (auto* memberCtx : ctx->classBlock()->classMember()) {
             if (memberCtx->constructorDeclaration()) {
-                constructor = anyToNode<ConstructorDeclaration>(
-                    visitConstructorDeclaration(memberCtx->constructorDeclaration())
-                );
+                cls->constructor = anyToNode<ConstructorDeclaration>(
+                    visitConstructorDeclaration(
+                        memberCtx->constructorDeclaration()));
+
             } else if (memberCtx->destructorDeclaration()) {
-                destructor = anyToNode<DestructorDeclaration>(
-                    visitDestructorDeclaration(memberCtx->destructorDeclaration())
-                );
+                cls->destructor = anyToNode<DestructorDeclaration>(
+                    visitDestructorDeclaration(
+                        memberCtx->destructorDeclaration()));
+
             } else if (memberCtx->operatorDeclaration()) {
                 auto op = anyToNode<OperatorDeclaration>(
-                    visitOperatorDeclaration(memberCtx->operatorDeclaration())
-                );
-                if (op) operators.push_back(op);
+                    visitOperatorDeclaration(memberCtx->operatorDeclaration()));
+                if (op) cls->operators.push_back(op);
+
             } else if (memberCtx->functionDeclaration()) {
                 auto method = anyToNode<FunctionDeclaration>(
-                    visitFunctionDeclaration(memberCtx->functionDeclaration())
-                );
-                if (method) methods.push_back(method);
+                    visitFunctionDeclaration(memberCtx->functionDeclaration()));
+                if (method) cls->methods.push_back(method);
+
             } else if (memberCtx->variableDeclaration()) {
                 auto field = anyToNode<VariableDeclaration>(
-                    visitVariableDeclaration(memberCtx->variableDeclaration())
-                );
-                if (field) fields.push_back(field);
+                    visitVariableDeclaration(memberCtx->variableDeclaration()));
+                if (field) cls->fields.push_back(field);
             }
         }
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ClassDeclaration>(
-            name, access, isStatic, isAbstract,
-            baseClasses, constructor, destructor,
-            operators, methods, fields, loc
-        )
-    );
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(cls));
 }
 
-std::any ASTGenerator::visitInterfaceDeclaration(MingusParser::InterfaceDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
+std::any ASTGenerator::visitInterfaceDeclaration(
+    MingusParser::InterfaceDeclarationContext* ctx)
+{
+    auto iface = std::make_shared<InterfaceDeclaration>();
+    iface->debugInfo = makeDebugInfo(ctx);
+    iface->name = ctx->Identifier()->getText();
+    iface->accessModifier = parseAccessModifier(ctx->accessModifier());
 
-    std::string name = ctx->Identifier()->getText();
-    auto access = parseAccessModifier(ctx->accessModifier());
-
-    NodeList<FunctionDeclaration> methods;
     if (ctx->interfaceBlock()) {
         for (auto* memberCtx : ctx->interfaceBlock()->interfaceMember()) {
             if (memberCtx->functionDeclaration()) {
                 auto method = anyToNode<FunctionDeclaration>(
-                    visitFunctionDeclaration(memberCtx->functionDeclaration())
-                );
-                if (method) methods.push_back(method);
+                    visitFunctionDeclaration(memberCtx->functionDeclaration()));
+                if (method) iface->methods.push_back(method);
             }
         }
     }
 
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<InterfaceDeclaration>(name, access, std::move(methods), loc)
-    );
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(iface));
 }
 
-std::any ASTGenerator::visitStructDeclaration(MingusParser::StructDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::string name = ctx->Identifier()->getText();
-    auto access = parseAccessModifier(ctx->accessModifier());
-    
-    NodeList<OperatorDeclaration> operators;
-    NodeList<FunctionDeclaration> methods;
-    NodeList<VariableDeclaration> fields;
-    
+std::any ASTGenerator::visitStructDeclaration(
+    MingusParser::StructDeclarationContext* ctx)
+{
+    auto strct = std::make_shared<StructDeclaration>();
+    strct->debugInfo = makeDebugInfo(ctx);
+    strct->name = ctx->Identifier()->getText();
+    strct->accessModifier = parseAccessModifier(ctx->accessModifier());
+
     if (ctx->structBlock()) {
         for (auto* memberCtx : ctx->structBlock()->structMember()) {
             if (memberCtx->operatorDeclaration()) {
                 auto op = anyToNode<OperatorDeclaration>(
-                    visitOperatorDeclaration(memberCtx->operatorDeclaration())
-                );
-                if (op) operators.push_back(op);
+                    visitOperatorDeclaration(memberCtx->operatorDeclaration()));
+                if (op) strct->operators.push_back(op);
+
             } else if (memberCtx->functionDeclaration()) {
                 auto method = anyToNode<FunctionDeclaration>(
-                    visitFunctionDeclaration(memberCtx->functionDeclaration())
-                );
-                if (method) methods.push_back(method);
+                    visitFunctionDeclaration(memberCtx->functionDeclaration()));
+                if (method) strct->methods.push_back(method);
+
             } else if (memberCtx->variableDeclaration()) {
                 auto field = anyToNode<VariableDeclaration>(
-                    visitVariableDeclaration(memberCtx->variableDeclaration())
-                );
-                if (field) fields.push_back(field);
+                    visitVariableDeclaration(memberCtx->variableDeclaration()));
+                if (field) strct->fields.push_back(field);
             }
         }
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<StructDeclaration>(
-            name, access, operators, methods, fields, loc
-        )
-    );
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(strct));
 }
 
-std::any ASTGenerator::visitEnumDeclaration(MingusParser::EnumDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::string name = ctx->Identifier()->getText();
-    auto access = parseAccessModifier(ctx->accessModifier());
-    
-    NodePtr<TypeNode> underlyingType;
+std::any ASTGenerator::visitEnumDeclaration(
+    MingusParser::EnumDeclarationContext* ctx)
+{
+    auto enm = std::make_shared<EnumDeclaration>();
+    enm->debugInfo = makeDebugInfo(ctx);
+    enm->name = ctx->Identifier()->getText();
+    enm->accessModifier = parseAccessModifier(ctx->accessModifier());
+
     if (ctx->typeIdentifier()) {
-        underlyingType = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
+        enm->underlyingType = anyToNode<TypeNode>(
+            visitTypeIdentifier(ctx->typeIdentifier()));
     }
-    
-    NodeList<EnumMemberNode> members;
+
     for (auto* memberCtx : ctx->enumMember()) {
         auto member = anyToNode<EnumMemberNode>(visitEnumMember(memberCtx));
-        if (member) members.push_back(member);
+        if (member) enm->members.push_back(member);
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<EnumDeclaration>(
-            name, access, underlyingType, members, loc
-        )
-    );
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(enm));
 }
 
 std::any ASTGenerator::visitEnumMember(MingusParser::EnumMemberContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::string name = ctx->Identifier()->getText();
-    NodePtr<ExpressionNode> value;
-    
+    auto member = std::make_shared<EnumMemberNode>();
+    member->debugInfo = makeDebugInfo(ctx);
+    member->name = ctx->Identifier()->getText();
+
     if (ctx->AssignOperator() && ctx->expression()) {
-        value = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
+        member->value = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<EnumMemberNode>(name, value, loc)
-    );
+
+    return std::any(member);
 }
 
-std::any ASTGenerator::visitFunctionDeclaration(MingusParser::FunctionDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::string name = ctx->Identifier()->getText();
-    auto access = parseAccessModifier(ctx->accessModifier());
-    bool isStatic = ctx->staticModifier() != nullptr;
-    bool isAbstract = ctx->abstractModifier() != nullptr;
-    
-    NodeList<ParameterNode> parameters;
-    if (ctx->definitionParameters() && ctx->definitionParameters()->parameterList()) {
-        for (auto* paramCtx : ctx->definitionParameters()->parameterList()->parameter()) {
+std::any ASTGenerator::visitFunctionDeclaration(
+    MingusParser::FunctionDeclarationContext* ctx)
+{
+    auto fn = std::make_shared<FunctionDeclaration>();
+    fn->debugInfo = makeDebugInfo(ctx);
+    fn->name = ctx->Identifier()->getText();
+    fn->accessModifier = parseAccessModifier(ctx->accessModifier());
+    fn->isStatic   = ctx->staticModifier()   != nullptr;
+    fn->isAbstract = ctx->abstractModifier() != nullptr;
+
+    // Parameters
+    if (ctx->definitionParameters() &&
+        ctx->definitionParameters()->parameterList()) {
+        for (auto* paramCtx :
+             ctx->definitionParameters()->parameterList()->parameter()) {
             auto param = anyToNode<ParameterNode>(visitParameter(paramCtx));
-            if (param) parameters.push_back(param);
+            if (param) fn->parameters.push_back(param);
         }
     }
-    
-    auto returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
-    
-    // Handle block body, expression body, or abstract/no body
-    NodePtr<BlockStatement> body;
+
+    // Return type
+    fn->returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
+
+    // Body: block, expression body, or abstract (no body)
     if (ctx->block()) {
-        body = anyToNode<BlockStatement>(visitBlock(ctx->block()));
+        fn->body = anyToNode<BlockStatementNode>(visitBlock(ctx->block()));
+
     } else if (ctx->expression()) {
-        // Expression-bodied function: wrap in a block with return statement
-        auto expr = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
+        // Expression-bodied function: wrap in block with return
+        auto expr = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
         if (expr) {
-            auto returnStmt = std::make_shared<ReturnStatement>(expr, expr->location);
-            NodeList<StatementNode> stmts;
-            stmts.push_back(returnStmt);
-            body = std::make_shared<BlockStatement>(stmts, expr->location);
+            auto retStmt = std::make_shared<ReturnStatement>();
+            retStmt->debugInfo = expr->debugInfo;
+            retStmt->value = expr;
+
+            fn->body = std::make_shared<BlockStatementNode>();
+            fn->body->debugInfo = expr->debugInfo;
+            fn->body->statements.push_back(retStmt);
         }
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<FunctionDeclaration>(
-            name, access, isStatic, isAbstract,
-            parameters, returnType, body, loc
-        )
-    );
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(fn));
 }
 
-std::any ASTGenerator::visitConstructorDeclaration(MingusParser::ConstructorDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
+std::any ASTGenerator::visitConstructorDeclaration(
+    MingusParser::ConstructorDeclarationContext* ctx)
+{
+    auto ctor = std::make_shared<ConstructorDeclaration>();
+    ctor->debugInfo = makeDebugInfo(ctx);
+    ctor->accessModifier = parseAccessModifier(ctx->accessModifier());
 
-    auto access = parseAccessModifier(ctx->accessModifier());
-
-    NodeList<ParameterNode> parameters;
-    if (ctx->definitionParameters() && ctx->definitionParameters()->parameterList()) {
-        for (auto* paramCtx : ctx->definitionParameters()->parameterList()->parameter()) {
+    // Parameters
+    if (ctx->definitionParameters() &&
+        ctx->definitionParameters()->parameterList()) {
+        for (auto* paramCtx :
+             ctx->definitionParameters()->parameterList()->parameter()) {
             auto param = anyToNode<ParameterNode>(visitParameter(paramCtx));
-            if (param) parameters.push_back(param);
+            if (param) ctor->parameters.push_back(param);
         }
     }
 
-    // Parse optional super() call: constructor(params) : super(args) { body }
-    NodeList<ExpressionNode> superArgs;
-    bool hasSuperCall = false;
+    // Super call: constructor(params) : super(args)
     if (ctx->SuperKeyword()) {
-        hasSuperCall = true;
+        ctor->hasSuperCall = true;
         if (ctx->callArguments() && ctx->callArguments()->argumentList()) {
-            for (auto* argCtx : ctx->callArguments()->argumentList()->expression()) {
-                auto arg = anyToNode<ExpressionNode>(visitExpression(argCtx));
-                if (arg) superArgs.push_back(arg);
+            for (auto* argCtx :
+                 ctx->callArguments()->argumentList()->expression()) {
+                auto arg = anyToNode<ExpressionBaseNode>(
+                    visitExpression(argCtx));
+                if (arg) ctor->superArgs.push_back(arg);
             }
         }
     }
 
-    auto body = anyToNode<BlockStatement>(visitBlock(ctx->block()));
+    ctor->body = anyToNode<BlockStatementNode>(visitBlock(ctx->block()));
 
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ConstructorDeclaration>(
-            access, parameters, body, superArgs, hasSuperCall, loc)
-    );
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(ctor));
 }
 
-std::any ASTGenerator::visitDestructorDeclaration(MingusParser::DestructorDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto body = anyToNode<BlockStatement>(visitBlock(ctx->block()));
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<DestructorDeclaration>(body, loc)
-    );
+std::any ASTGenerator::visitDestructorDeclaration(
+    MingusParser::DestructorDeclarationContext* ctx)
+{
+    auto dtor = std::make_shared<DestructorDeclaration>();
+    dtor->debugInfo = makeDebugInfo(ctx);
+    dtor->body = anyToNode<BlockStatementNode>(visitBlock(ctx->block()));
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(dtor));
 }
 
-std::any ASTGenerator::visitOperatorDeclaration(MingusParser::OperatorDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto opKind = parseOperatorKind(ctx->overloadableOperator());
-    
-    NodeList<ParameterNode> parameters;
-    if (ctx->definitionParameters() && ctx->definitionParameters()->parameterList()) {
-        for (auto* paramCtx : ctx->definitionParameters()->parameterList()->parameter()) {
+std::any ASTGenerator::visitOperatorDeclaration(
+    MingusParser::OperatorDeclarationContext* ctx)
+{
+    auto opDecl = std::make_shared<OperatorDeclaration>();
+    opDecl->debugInfo = makeDebugInfo(ctx);
+    opDecl->op = parseOperatorKind(ctx->overloadableOperator());
+
+    if (ctx->definitionParameters() &&
+        ctx->definitionParameters()->parameterList()) {
+        for (auto* paramCtx :
+             ctx->definitionParameters()->parameterList()->parameter()) {
             auto param = anyToNode<ParameterNode>(visitParameter(paramCtx));
-            if (param) parameters.push_back(param);
+            if (param) opDecl->parameters.push_back(param);
         }
     }
-    
-    auto returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
-    
-    // Handle both block body and expression body
-    NodePtr<BlockStatement> body;
+
+    opDecl->returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
+
     if (ctx->block()) {
-        body = anyToNode<BlockStatement>(visitBlock(ctx->block()));
+        opDecl->body = anyToNode<BlockStatementNode>(visitBlock(ctx->block()));
     } else if (ctx->expression()) {
-        // Expression-bodied operator: wrap in a block with return statement
-        auto expr = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
+        auto expr = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
         if (expr) {
-            auto returnStmt = std::make_shared<ReturnStatement>(expr, expr->location);
-            NodeList<StatementNode> stmts;
-            stmts.push_back(returnStmt);
-            body = std::make_shared<BlockStatement>(stmts, expr->location);
+            auto retStmt = std::make_shared<ReturnStatement>();
+            retStmt->debugInfo = expr->debugInfo;
+            retStmt->value = expr;
+
+            opDecl->body = std::make_shared<BlockStatementNode>();
+            opDecl->body->debugInfo = expr->debugInfo;
+            opDecl->body->statements.push_back(retStmt);
         }
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<OperatorDeclaration>(opKind, parameters, returnType, body, loc)
-    );
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(opDecl));
 }
 
-std::any ASTGenerator::visitExternFunctionDeclaration(MingusParser::ExternFunctionDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::string name = ctx->Identifier()->getText();
-    
-    NodeList<ParameterNode> parameters;
-    if (ctx->definitionParameters() && ctx->definitionParameters()->parameterList()) {
-        for (auto* paramCtx : ctx->definitionParameters()->parameterList()->parameter()) {
+std::any ASTGenerator::visitExternFunctionDeclaration(
+    MingusParser::ExternFunctionDeclarationContext* ctx)
+{
+    auto ext = std::make_shared<ExternFunctionDeclaration>();
+    ext->debugInfo = makeDebugInfo(ctx);
+    ext->name = ctx->Identifier()->getText();
+
+    if (ctx->definitionParameters() &&
+        ctx->definitionParameters()->parameterList()) {
+        for (auto* paramCtx :
+             ctx->definitionParameters()->parameterList()->parameter()) {
             auto param = anyToNode<ParameterNode>(visitParameter(paramCtx));
-            if (param) parameters.push_back(param);
+            if (param) ext->parameters.push_back(param);
         }
     }
-    
-    auto returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ExternFunctionDeclaration>(name, parameters, returnType, loc)
-    );
+
+    ext->returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(ext));
 }
 
 std::any ASTGenerator::visitParameter(MingusParser::ParameterContext* ctx) {
-    auto loc = getSourceLocation(ctx);
+    auto param = std::make_shared<ParameterNode>();
+    param->debugInfo = makeDebugInfo(ctx);
+    param->name = ctx->Identifier()->getText();
 
-    // Check for reference modifier (&) in the type modifiers
-    bool isRef = false;
+    // Detect reference modifier (&) in type modifiers
     for (auto* modifier : ctx->typeIdentifier()->typeModifier()) {
         if (modifier->referenceLevel()) {
-            isRef = true;
+            param->isReference = true;
             break;
         }
     }
 
-    auto type = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
-    std::string name = ctx->Identifier()->getText();
+    param->type = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
 
-    NodePtr<ExpressionNode> defaultValue;
+    // Default value
     if (ctx->AssignOperator() && ctx->expression()) {
-        defaultValue = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
+        param->defaultValue = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
     }
 
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ParameterNode>(name, type, defaultValue, isRef, loc)
-    );
+    return std::any(param);
 }
 
-std::any ASTGenerator::visitVariableDeclaration(MingusParser::VariableDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
+std::any ASTGenerator::visitVariableDeclaration(
+    MingusParser::VariableDeclarationContext* ctx)
+{
     if (ctx->typedVariableDeclaration()) {
         return visitTypedVariableDeclaration(ctx->typedVariableDeclaration());
     } else if (ctx->inferredVariableDeclaration()) {
-        return visitInferredVariableDeclaration(ctx->inferredVariableDeclaration());
+        return visitInferredVariableDeclaration(
+            ctx->inferredVariableDeclaration());
     } else if (ctx->tupleDestructuring()) {
         return visitTupleDestructuring(ctx->tupleDestructuring());
     }
-    
-    return std::shared_ptr<ASTNode>(nullptr);
+    return std::any();
 }
 
-std::any ASTGenerator::visitTypedVariableDeclaration(MingusParser::TypedVariableDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto type = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
-    std::string name = ctx->Identifier()->getText();
-    
-    auto* parent = dynamic_cast<MingusParser::VariableDeclarationContext*>(ctx->parent);
-    auto access = parseAccessModifier(parent ? parent->accessModifier() : nullptr);
-    bool isStatic = parent && parent->staticModifier() != nullptr;
-    
-    NodePtr<ExpressionNode> initializer;
+std::any ASTGenerator::visitTypedVariableDeclaration(
+    MingusParser::TypedVariableDeclarationContext* ctx)
+{
+    auto var = std::make_shared<VariableDeclaration>();
+    var->debugInfo = makeDebugInfo(ctx);
+    var->name = ctx->Identifier()->getText();
+    var->isInferred = false;
+    var->type = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
+
+    // Access and static from parent variableDeclaration context
+    auto* parent = dynamic_cast<MingusParser::VariableDeclarationContext*>(
+        ctx->parent);
+    var->accessModifier = parseAccessModifier(
+        parent ? parent->accessModifier() : nullptr);
+    var->isStatic = parent && parent->staticModifier() != nullptr;
+
+    // Initializer: = expression
     if (ctx->AssignOperator() && ctx->exprStatement()) {
-        auto exprStmt = anyToNode<ExpressionStatement>(visitExprStatement(ctx->exprStatement()));
-        if (exprStmt) initializer = exprStmt->expression;
+        if (ctx->exprStatement()->expression()) {
+            var->initializer = anyToNode<ExpressionBaseNode>(
+                visitExpression(ctx->exprStatement()->expression()));
+        }
     } else if (ctx->callArguments()) {
-        NodeList<ExpressionNode> args;
+        // Constructor-style init: Type name(args)
+        auto argsNode = std::make_shared<ArgumentsNode>();
+        argsNode->debugInfo = makeDebugInfo(ctx);
         if (ctx->callArguments()->argumentList()) {
-            for (auto* argCtx : ctx->callArguments()->argumentList()->expression()) {
-                auto arg = anyToNode<ExpressionNode>(visitExpression(argCtx));
-                if (arg) args.push_back(arg);
+            for (auto* argCtx :
+                 ctx->callArguments()->argumentList()->expression()) {
+                auto arg = anyToNode<ExpressionBaseNode>(
+                    visitExpression(argCtx));
+                if (arg) argsNode->expressions.push_back(arg);
             }
         }
-        auto typeExpr = std::make_shared<IdentifierExpression>(type->as<NamedTypeNode>() ? 
-            type->as<NamedTypeNode>()->getName() : "", loc);
-        initializer = std::make_shared<CallExpression>(typeExpr, args, loc);
-    }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<VariableDeclaration>(
-            name, access, isStatic, type, false, initializer, loc
-        )
-    );
-}
 
-std::any ASTGenerator::visitInferredVariableDeclaration(MingusParser::InferredVariableDeclarationContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::string name = ctx->Identifier()->getText();
-    
-    auto* parent = dynamic_cast<MingusParser::VariableDeclarationContext*>(ctx->parent);
-    auto access = parseAccessModifier(parent ? parent->accessModifier() : nullptr);
-    bool isStatic = parent && parent->staticModifier() != nullptr;
-    
-    NodePtr<ExpressionNode> initializer;
-    if (ctx->exprStatement()) {
-        auto exprStmt = anyToNode<ExpressionStatement>(visitExprStatement(ctx->exprStatement()));
-        if (exprStmt) initializer = exprStmt->expression;
-    }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<VariableDeclaration>(
-            name, access, isStatic, nullptr, true, initializer, loc
-        )
-    );
-}
-
-std::any ASTGenerator::visitTupleDestructuring(MingusParser::TupleDestructuringContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    std::vector<DestructureElement> elements;
-    for (auto* elemCtx : ctx->tupleDestructureElement()) {
-        std::string name = elemCtx->Identifier()->getText();
-        
-        if (elemCtx->DeclareVariable()) {
-            elements.emplace_back(name, nullptr, true);
-        } else {
-            auto type = anyToNode<TypeNode>(visitTypeIdentifier(elemCtx->typeIdentifier()));
-            elements.emplace_back(name, type, false);
+        auto typeExpr = std::make_shared<IdentifierExpression>();
+        typeExpr->debugInfo = makeDebugInfo(ctx);
+        if (auto named = std::dynamic_pointer_cast<NamedTypeNode>(var->type)) {
+            typeExpr->name = named->qualifiedName.empty()
+                ? "" : named->qualifiedName.back();
         }
+
+        auto callExpr = std::make_shared<CallExpression>();
+        callExpr->debugInfo = makeDebugInfo(ctx);
+        callExpr->callee = typeExpr;
+        callExpr->arguments = argsNode;
+        var->initializer = callExpr;
     }
-    
-    NodePtr<ExpressionNode> initializer;
-    if (ctx->exprStatement()) {
-        auto exprStmt = anyToNode<ExpressionStatement>(visitExprStatement(ctx->exprStatement()));
-        if (exprStmt) initializer = exprStmt->expression;
-    }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<TupleDestructuringDeclaration>(elements, initializer, loc)
-    );
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(var));
 }
 
-std::any ASTGenerator::visitTupleDestructureElement(MingusParser::TupleDestructureElementContext* ctx) {
+std::any ASTGenerator::visitInferredVariableDeclaration(
+    MingusParser::InferredVariableDeclarationContext* ctx)
+{
+    auto var = std::make_shared<VariableDeclaration>();
+    var->debugInfo = makeDebugInfo(ctx);
+    var->name = ctx->Identifier()->getText();
+    var->isInferred = true;
+
+    auto* parent = dynamic_cast<MingusParser::VariableDeclarationContext*>(
+        ctx->parent);
+    var->accessModifier = parseAccessModifier(
+        parent ? parent->accessModifier() : nullptr);
+    var->isStatic = parent && parent->staticModifier() != nullptr;
+
+    if (ctx->exprStatement() && ctx->exprStatement()->expression()) {
+        var->initializer = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->exprStatement()->expression()));
+    }
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(var));
+}
+
+std::any ASTGenerator::visitTupleDestructuring(
+    MingusParser::TupleDestructuringContext* ctx)
+{
+    auto decl = std::make_shared<TupleDestructuringDeclaration>();
+    decl->debugInfo = makeDebugInfo(ctx);
+
+    for (auto* elemCtx : ctx->tupleDestructureElement()) {
+        DestructureElement elem;
+        elem.name = elemCtx->Identifier()->getText();
+        if (elemCtx->DeclareVariable()) {
+            elem.isInferred = true;
+        } else {
+            elem.type = anyToNode<TypeNode>(
+                visitTypeIdentifier(elemCtx->typeIdentifier()));
+            elem.isInferred = false;
+        }
+        decl->elements.push_back(elem);
+    }
+
+    if (ctx->exprStatement() && ctx->exprStatement()->expression()) {
+        decl->initializer = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->exprStatement()->expression()));
+    }
+
+    return std::any(std::static_pointer_cast<StatementBaseNode>(decl));
+}
+
+std::any ASTGenerator::visitTupleDestructureElement(
+    MingusParser::TupleDestructureElementContext* ctx)
+{
     return visitChildren(ctx);
 }
 
-
 //================================================================================
-// Statements
+// Statement Visitors
 //================================================================================
 
 std::any ASTGenerator::visitBlock(MingusParser::BlockContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodeList<StatementNode> statements;
+    auto block = std::make_shared<BlockStatementNode>();
+    block->debugInfo = makeDebugInfo(ctx);
+
     for (auto* stmtCtx : ctx->statement()) {
-        auto stmt = anyToNode<StatementNode>(visitStatement(stmtCtx));
-        if (stmt) statements.push_back(stmt);
+        auto stmt = anyToNode<StatementBaseNode>(visitStatement(stmtCtx));
+        if (stmt) block->statements.push_back(stmt);
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<BlockStatement>(statements, loc)
-    );
+
+    return std::any(std::static_pointer_cast<StatementBaseNode>(block));
 }
 
 std::any ASTGenerator::visitStatement(MingusParser::StatementContext* ctx) {
     if (ctx->exprStatement()) {
         return visitExprStatement(ctx->exprStatement());
+
     } else if (ctx->variableDeclaration()) {
-        auto result = visitVariableDeclaration(ctx->variableDeclaration());
-        // Handle both VariableDeclaration and TupleDestructuringDeclaration
-        if (auto varDecl = anyToNode<VariableDeclaration>(result)) {
-            return std::static_pointer_cast<ASTNode>(
-                std::make_shared<ExpressionStatement>(
-                    std::static_pointer_cast<ExpressionNode>(std::static_pointer_cast<ASTNode>(varDecl)),
-                    getSourceLocation(ctx)
-                )
-            );
-        } else if (auto tupleDecl = anyToNode<TupleDestructuringDeclaration>(result)) {
-            // Tuple destructuring is a declaration statement
-            return std::static_pointer_cast<ASTNode>(tupleDecl);
-        }
-        return std::shared_ptr<ASTNode>(nullptr);
+        // V2: DeclarationBaseNode IS-A StatementBaseNode — no wrapping needed
+        return visitVariableDeclaration(ctx->variableDeclaration());
+
     } else if (ctx->forStatement()) {
         return visitForStatement(ctx->forStatement());
+
     } else if (ctx->whileStatement()) {
         return visitWhileStatement(ctx->whileStatement());
+
     } else if (ctx->ifStatement()) {
         return visitIfStatement(ctx->ifStatement());
+
     } else if (ctx->switchStatement()) {
         return visitSwitchStatement(ctx->switchStatement());
+
     } else if (ctx->matchStatement()) {
-        auto matchExpr = anyToNode<MatchExpression>(visitMatchExpression(ctx->matchStatement()->matchExpression()));
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<ExpressionStatement>(
-                std::static_pointer_cast<ExpressionNode>(std::static_pointer_cast<ASTNode>(matchExpr)),
-                getSourceLocation(ctx)
-            )
-        );
+        // Match used as statement: wrap in ExpressionStatement
+        auto matchExpr = anyToNode<ExpressionBaseNode>(
+            visitMatchExpression(ctx->matchStatement()->matchExpression()));
+        auto stmt = std::make_shared<ExpressionStatement>();
+        stmt->debugInfo = makeDebugInfo(ctx);
+        stmt->expression = matchExpr;
+        return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
+
     } else if (ctx->returnStatement()) {
         return visitReturnStatement(ctx->returnStatement());
+
     } else if (ctx->breakStatement()) {
         return visitBreakStatement(ctx->breakStatement());
+
     } else if (ctx->continueStatement()) {
         return visitContinueStatement(ctx->continueStatement());
+
     } else if (ctx->deleteStatement()) {
         return visitDeleteStatement(ctx->deleteStatement());
+
     } else if (ctx->rawBlock()) {
         return visitRawBlock(ctx->rawBlock());
+
     } else if (ctx->block()) {
         return visitBlock(ctx->block());
     }
-    
-    return std::shared_ptr<ASTNode>(nullptr);
+
+    return std::any();
 }
 
-std::any ASTGenerator::visitExprStatement(MingusParser::ExprStatementContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto expr = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ExpressionStatement>(expr, loc)
-    );
+std::any ASTGenerator::visitExprStatement(
+    MingusParser::ExprStatementContext* ctx)
+{
+    auto stmt = std::make_shared<ExpressionStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+    stmt->expression = anyToNode<ExpressionBaseNode>(
+        visitExpression(ctx->expression()));
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
-std::any ASTGenerator::visitReturnStatement(MingusParser::ReturnStatementContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodePtr<ExpressionNode> value;
+std::any ASTGenerator::visitReturnStatement(
+    MingusParser::ReturnStatementContext* ctx)
+{
+    auto stmt = std::make_shared<ReturnStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
     if (ctx->expression()) {
-        value = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
+        stmt->value = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ReturnStatement>(value, loc)
-    );
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
 std::any ASTGenerator::visitIfStatement(MingusParser::IfStatementContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto condition = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
-    auto thenBody = anyToNode<StatementNode>(visitStatement(ctx->trueBody));
-    
-    std::vector<ElseIfClause> elseIfClauses;
+    auto stmt = std::make_shared<IfStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+    stmt->condition = anyToNode<ExpressionBaseNode>(
+        visitExpression(ctx->expression()));
+    stmt->thenBody = anyToNode<StatementBaseNode>(
+        visitStatement(ctx->trueBody));
+
+    // Else-if clauses
     for (auto* elseIfCtx : ctx->elseIfClause()) {
-        auto elseIfCond = anyToNode<ExpressionNode>(visitExpression(elseIfCtx->expression()));
-        auto elseIfBody = anyToNode<StatementNode>(visitStatement(elseIfCtx->statement()));
-        elseIfClauses.emplace_back(elseIfCond, elseIfBody);
+        ElseIfClause clause;
+        clause.condition = anyToNode<ExpressionBaseNode>(
+            visitExpression(elseIfCtx->expression()));
+        clause.body = anyToNode<StatementBaseNode>(
+            visitStatement(elseIfCtx->statement()));
+        stmt->elseIfClauses.push_back(clause);
     }
-    
-    NodePtr<StatementNode> elseBody;
+
+    // Else clause
     if (ctx->elseClause()) {
-        elseBody = anyToNode<StatementNode>(visitElseClause(ctx->elseClause()));
+        stmt->elseBody = anyToNode<StatementBaseNode>(
+            visitElseClause(ctx->elseClause()));
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<IfStatement>(condition, thenBody, elseIfClauses, elseBody, loc)
-    );
+
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
-std::any ASTGenerator::visitElseIfClause(MingusParser::ElseIfClauseContext* ctx) {
+std::any ASTGenerator::visitElseIfClause(
+    MingusParser::ElseIfClauseContext* ctx)
+{
     return visitChildren(ctx);
 }
 
@@ -1021,166 +1099,156 @@ std::any ASTGenerator::visitElseClause(MingusParser::ElseClauseContext* ctx) {
     return visitStatement(ctx->statement());
 }
 
-std::any ASTGenerator::visitSwitchStatement(MingusParser::SwitchStatementContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto subject = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
-    
-    std::vector<SwitchCase> cases;
+std::any ASTGenerator::visitSwitchStatement(
+    MingusParser::SwitchStatementContext* ctx)
+{
+    auto stmt = std::make_shared<SwitchStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+    stmt->subject = anyToNode<ExpressionBaseNode>(
+        visitExpression(ctx->expression()));
+
     for (auto* caseCtx : ctx->switchCase()) {
-        auto value = anyToNode<ExpressionNode>(visitExpression(caseCtx->expression()));
-        
-        NodeList<StatementNode> caseBody;
-        for (auto* stmtCtx : caseCtx->statement()) {
-            auto stmt = anyToNode<StatementNode>(visitStatement(stmtCtx));
-            if (stmt) caseBody.push_back(stmt);
+        SwitchCase sc;
+        sc.value = anyToNode<ExpressionBaseNode>(
+            visitExpression(caseCtx->expression()));
+        for (auto* bodyStmt : caseCtx->statement()) {
+            auto s = anyToNode<StatementBaseNode>(visitStatement(bodyStmt));
+            if (s) sc.body.push_back(s);
         }
-        
-        cases.emplace_back(value, caseBody);
+        stmt->cases.push_back(sc);
     }
-    
-    NodeList<StatementNode> defaultCase;
+
     if (ctx->switchDefault()) {
-        for (auto* stmtCtx : ctx->switchDefault()->statement()) {
-            auto stmt = anyToNode<StatementNode>(visitStatement(stmtCtx));
-            if (stmt) defaultCase.push_back(stmt);
+        for (auto* bodyStmt : ctx->switchDefault()->statement()) {
+            auto s = anyToNode<StatementBaseNode>(visitStatement(bodyStmt));
+            if (s) stmt->defaultCase.push_back(s);
         }
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<SwitchStatement>(subject, cases, defaultCase, loc)
-    );
+
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
 std::any ASTGenerator::visitSwitchCase(MingusParser::SwitchCaseContext* ctx) {
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitSwitchDefault(MingusParser::SwitchDefaultContext* ctx) {
+std::any ASTGenerator::visitSwitchDefault(
+    MingusParser::SwitchDefaultContext* ctx)
+{
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitForStatement(MingusParser::ForStatementContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodePtr<DeclarationNode> initDeclaration;
-    NodeList<ExpressionNode> initExpressions;
-    
+std::any ASTGenerator::visitForStatement(
+    MingusParser::ForStatementContext* ctx)
+{
+    auto stmt = std::make_shared<ForStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+
+    // Initializer
     if (ctx->forInitializer()) {
         auto* initCtx = ctx->forInitializer();
         if (initCtx->localVarInitializer()) {
-            auto* localInit = initCtx->localVarInitializer();
-            for (auto* localVarCtx : localInit->localVarDeclaration()) {
-                std::string name = localVarCtx->Identifier()->getText();
-                NodePtr<TypeNode> type;
-                NodePtr<ExpressionNode> initExpr;
-                bool isInferred = false;
-                
+            for (auto* localVarCtx :
+                 initCtx->localVarInitializer()->localVarDeclaration()) {
+                auto varDecl = std::make_shared<VariableDeclaration>();
+                varDecl->debugInfo = makeDebugInfo(localVarCtx);
+                varDecl->name = localVarCtx->Identifier()->getText();
+
                 if (localVarCtx->DeclareVariable()) {
-                    isInferred = true;
-                    if (localVarCtx->expression()) {
-                        initExpr = anyToNode<ExpressionNode>(visitExpression(localVarCtx->expression()));
-                    }
+                    varDecl->isInferred = true;
                 } else {
-                    type = anyToNode<TypeNode>(visitTypeIdentifier(localVarCtx->typeIdentifier()));
-                    if (localVarCtx->expression()) {
-                        initExpr = anyToNode<ExpressionNode>(visitExpression(localVarCtx->expression()));
-                    }
+                    varDecl->type = anyToNode<TypeNode>(
+                        visitTypeIdentifier(localVarCtx->typeIdentifier()));
                 }
-                
-                auto varDecl = std::make_shared<VariableDeclaration>(
-                    name, AccessModifier::None, false, type, isInferred, initExpr, 
-                    getSourceLocation(localVarCtx)
-                );
-                initDeclaration = varDecl;
-                break;
+
+                if (localVarCtx->expression()) {
+                    varDecl->initializer = anyToNode<ExpressionBaseNode>(
+                        visitExpression(localVarCtx->expression()));
+                }
+
+                stmt->initDeclaration = varDecl;
+                break;  // Only first declaration
             }
         } else if (!initCtx->expression().empty()) {
             for (auto* exprCtx : initCtx->expression()) {
-                auto expr = anyToNode<ExpressionNode>(visitExpression(exprCtx));
-                if (expr) initExpressions.push_back(expr);
+                auto expr = anyToNode<ExpressionBaseNode>(
+                    visitExpression(exprCtx));
+                if (expr) stmt->initExpressions.push_back(expr);
             }
         }
     }
-    
-    NodePtr<ExpressionNode> condition;
+
+    // Condition
     if (ctx->expression()) {
-        condition = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
+        stmt->condition = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
     }
-    
-    NodeList<ExpressionNode> iterators;
+
+    // Iterators
     if (ctx->forIterator()) {
         for (auto* exprCtx : ctx->forIterator()->expression()) {
-            auto expr = anyToNode<ExpressionNode>(visitExpression(exprCtx));
-            if (expr) iterators.push_back(expr);
+            auto expr = anyToNode<ExpressionBaseNode>(visitExpression(exprCtx));
+            if (expr) stmt->iterators.push_back(expr);
         }
     }
-    
-    auto body = anyToNode<StatementNode>(visitStatement(ctx->statement()));
-    
-    if (initDeclaration) {
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<ForStatement>(initDeclaration, condition, iterators, body, loc)
-        );
-    } else {
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<ForStatement>(initExpressions, condition, iterators, body, loc)
-        );
-    }
+
+    // Body
+    stmt->body = anyToNode<StatementBaseNode>(visitStatement(ctx->statement()));
+
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
-std::any ASTGenerator::visitWhileStatement(MingusParser::WhileStatementContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto condition = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
-    
-    NodePtr<StatementNode> body;
+std::any ASTGenerator::visitWhileStatement(
+    MingusParser::WhileStatementContext* ctx)
+{
+    auto stmt = std::make_shared<WhileStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+    stmt->condition = anyToNode<ExpressionBaseNode>(
+        visitExpression(ctx->expression()));
+
     if (ctx->block()) {
-        body = anyToNode<StatementNode>(visitBlock(ctx->block()));
+        stmt->body = anyToNode<StatementBaseNode>(visitBlock(ctx->block()));
     } else if (ctx->statement()) {
-        body = anyToNode<StatementNode>(visitStatement(ctx->statement()));
+        stmt->body = anyToNode<StatementBaseNode>(
+            visitStatement(ctx->statement()));
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<WhileStatement>(condition, body, loc)
-    );
+
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
-std::any ASTGenerator::visitBreakStatement(MingusParser::BreakStatementContext* ctx) {
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<BreakStatement>(getSourceLocation(ctx))
-    );
+std::any ASTGenerator::visitBreakStatement(
+    MingusParser::BreakStatementContext* ctx)
+{
+    auto stmt = std::make_shared<BreakStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
-std::any ASTGenerator::visitContinueStatement(MingusParser::ContinueStatementContext* ctx) {
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<ContinueStatement>(getSourceLocation(ctx))
-    );
+std::any ASTGenerator::visitContinueStatement(
+    MingusParser::ContinueStatementContext* ctx)
+{
+    auto stmt = std::make_shared<ContinueStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
-std::any ASTGenerator::visitDeleteStatement(MingusParser::DeleteStatementContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto target = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<DeleteStatement>(target, loc)
-    );
+std::any ASTGenerator::visitDeleteStatement(
+    MingusParser::DeleteStatementContext* ctx)
+{
+    auto stmt = std::make_shared<DeleteStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+    stmt->target = anyToNode<ExpressionBaseNode>(
+        visitExpression(ctx->expression()));
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
 std::any ASTGenerator::visitRawBlock(MingusParser::RawBlockContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto body = anyToNode<BlockStatement>(visitBlock(ctx->block()));
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<RawBlock>(body, loc)
-    );
+    // V2 has no separate RawBlock node; treat as regular block
+    return visitBlock(ctx->block());
 }
 
-
 //================================================================================
-// Expressions
+// Expression Visitors
 //================================================================================
 
 std::any ASTGenerator::visitExpression(MingusParser::ExpressionContext* ctx) {
@@ -1189,678 +1257,782 @@ std::any ASTGenerator::visitExpression(MingusParser::ExpressionContext* ctx) {
     } else if (ctx->lambdaExpression()) {
         return visitLambdaExpression(ctx->lambdaExpression());
     }
-    return std::shared_ptr<ASTNode>(nullptr);
+    return std::any();
 }
 
 std::any ASTGenerator::visitAssignment(MingusParser::AssignmentContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
     if (ctx->unaryExpression() && ctx->assignmentOperator()) {
-        auto target = anyToNode<ExpressionNode>(visitUnaryExpression(ctx->unaryExpression()));
+        auto target = anyToNode<ExpressionBaseNode>(
+            visitUnaryExpression(ctx->unaryExpression()));
 
-        // RHS can be either a recursive assignment or a lambda expression
-        NodePtr<ExpressionNode> value;
+        // RHS: recursive assignment or lambda
+        std::shared_ptr<ExpressionBaseNode> value;
         if (ctx->lambdaExpression()) {
-            value = anyToNode<ExpressionNode>(visitLambdaExpression(ctx->lambdaExpression()));
+            value = anyToNode<ExpressionBaseNode>(
+                visitLambdaExpression(ctx->lambdaExpression()));
         } else if (ctx->assignment()) {
-            value = anyToNode<ExpressionNode>(visitAssignment(ctx->assignment()));
+            value = anyToNode<ExpressionBaseNode>(
+                visitAssignment(ctx->assignment()));
         }
 
-        // Determine the assignment operator
-        AssignOp op = parseAssignmentOperator(ctx->assignmentOperator());
+        auto assign = std::make_shared<AssignmentExpression>();
+        assign->debugInfo = makeDebugInfo(ctx);
+        assign->target = target;
+        assign->op = parseAssignmentOperator(ctx->assignmentOperator());
+        assign->value = value;
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(assign));
 
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<AssignmentExpression>(target, op, value, loc)
-        );
     } else if (ctx->pipe()) {
         return visitPipe(ctx->pipe());
     }
-    
-    return std::shared_ptr<ASTNode>(nullptr);
+
+    return std::any();
 }
 
-std::any ASTGenerator::visitLambdaExpression(MingusParser::LambdaExpressionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
+std::any ASTGenerator::visitLambdaExpression(
+    MingusParser::LambdaExpressionContext* ctx)
+{
+    auto lambda = std::make_shared<LambdaExpression>();
+    lambda->debugInfo = makeDebugInfo(ctx);
 
-    // ── Parse capture list ──────────────────────────────────────────
-    CaptureDefault capDefault = CaptureDefault::None;
-    std::vector<CaptureItem> capItems;
-
+    // ---- Capture list ----
     if (ctx->captureList()) {
         auto* capCtx = ctx->captureList();
 
-        // Check for default capture mode: [=] or [&]
         if (capCtx->captureDefault()) {
             auto* defCtx = capCtx->captureDefault();
             if (defCtx->AssignOperator()) {
-                capDefault = CaptureDefault::AllByValue;
+                lambda->captureDefault = CaptureDefault::ByCopy;
             } else if (defCtx->SingleAndOperator()) {
-                capDefault = CaptureDefault::AllByReference;
+                lambda->captureDefault = CaptureDefault::ByRef;
             }
         }
 
-        // Check for explicit capture items: [x, &y, z]
         for (auto* itemCtx : capCtx->captureItem()) {
-            std::string name = itemCtx->Identifier()->getText();
-            CaptureMode mode = itemCtx->SingleAndOperator()
+            CaptureItem item;
+            item.name = itemCtx->Identifier()->getText();
+            item.mode = itemCtx->SingleAndOperator()
                 ? CaptureMode::ByReference
                 : CaptureMode::ByValue;
-            capItems.emplace_back(name, mode);
+            lambda->captureItems.push_back(item);
         }
     }
 
-    // ── Parse parameters ────────────────────────────────────────────
-    NodeList<ParameterNode> parameters;
+    // ---- Parameters ----
     if (ctx->lambdaParameterList()) {
-        for (auto* paramCtx : ctx->lambdaParameterList()->lambdaParameter()) {
-            std::string name = paramCtx->Identifier()->getText();
-            NodePtr<TypeNode> type;
-
+        for (auto* paramCtx :
+             ctx->lambdaParameterList()->lambdaParameter()) {
+            auto param = std::make_shared<ParameterNode>();
+            param->debugInfo = makeDebugInfo(paramCtx);
+            param->name = paramCtx->Identifier()->getText();
             if (paramCtx->typeIdentifier()) {
-                type = anyToNode<TypeNode>(visitTypeIdentifier(paramCtx->typeIdentifier()));
+                param->type = anyToNode<TypeNode>(
+                    visitTypeIdentifier(paramCtx->typeIdentifier()));
             }
-
-            parameters.push_back(std::make_shared<ParameterNode>(name, type, nullptr, false, getSourceLocation(paramCtx)));
+            lambda->parameters.push_back(param);
         }
     }
 
-    // ── Parse body ──────────────────────────────────────────────────
-    NodePtr<ASTNode> body;
+    // ---- Body ----
     if (ctx->block()) {
-        body = anyToNode<BlockStatement>(visitBlock(ctx->block()));
+        lambda->body = anyToNode<BlockStatementNode>(visitBlock(ctx->block()));
     } else if (ctx->expression()) {
-        body = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
+        lambda->body = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
     }
 
-    // ── Build LambdaExpression node ─────────────────────────────────
-    auto lambda = std::make_shared<LambdaExpression>(parameters, body, loc);
-    lambda->captureDefault = capDefault;
-    lambda->captureItems = std::move(capItems);
-
-    return std::static_pointer_cast<ASTNode>(lambda);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(lambda));
 }
 
 std::any ASTGenerator::visitPipe(MingusParser::PipeContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto left = anyToNode<ExpressionNode>(visitTernary(ctx->ternary()));
-    
+    auto left = anyToNode<ExpressionBaseNode>(visitTernary(ctx->ternary()));
+
     if (ctx->pipeTarget().empty()) {
-        return std::static_pointer_cast<ASTNode>(left);
+        return std::any(left);
     }
-    
-    std::vector<PipeStage> stages;
+
+    auto pipe = std::make_shared<PipeExpression>();
+    pipe->debugInfo = makeDebugInfo(ctx);
+    pipe->input = left;
+
     for (auto* targetCtx : ctx->pipeTarget()) {
-        // Create QualifiedNameExpression from the qualified name
-        auto qname = parseQualifiedName(targetCtx->qualifiedName());
-        auto func = std::make_shared<QualifiedNameExpression>(qname, getSourceLocation(targetCtx->qualifiedName()));
-        
-        NodeList<ExpressionNode> extraArgs;
-        if (targetCtx->callArguments() && targetCtx->callArguments()->argumentList()) {
-            for (auto* argCtx : targetCtx->callArguments()->argumentList()->expression()) {
-                auto arg = anyToNode<ExpressionNode>(visitExpression(argCtx));
-                if (arg) extraArgs.push_back(arg);
+        PipeStage stage;
+
+        auto funcExpr = std::make_shared<QualifiedNameExpression>();
+        funcExpr->debugInfo = makeDebugInfo(targetCtx->qualifiedName());
+        funcExpr->parts = parseQualifiedName(targetCtx->qualifiedName());
+        stage.function = funcExpr;
+
+        if (targetCtx->callArguments() &&
+            targetCtx->callArguments()->argumentList()) {
+            for (auto* argCtx :
+                 targetCtx->callArguments()->argumentList()->expression()) {
+                auto arg = anyToNode<ExpressionBaseNode>(
+                    visitExpression(argCtx));
+                if (arg) stage.extraArguments.push_back(arg);
             }
         }
-        
-        stages.emplace_back(func, extraArgs);
+
+        pipe->stages.push_back(stage);
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<PipeExpression>(left, stages, loc)
-    );
+
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(pipe));
 }
 
 std::any ASTGenerator::visitTernary(MingusParser::TernaryContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto condition = anyToNode<ExpressionNode>(visitLogicOr(ctx->logicOr()));
-    
+    auto cond = anyToNode<ExpressionBaseNode>(visitLogicOr(ctx->logicOr()));
+
     if (ctx->QuestionMarkOperator()) {
-        auto thenExpr = anyToNode<ExpressionNode>(visitExpression(ctx->expression(0)));
-        auto elseExpr = anyToNode<ExpressionNode>(visitExpression(ctx->expression(1)));
-        
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<TernaryExpression>(condition, thenExpr, elseExpr, loc)
-        );
+        auto ternary = std::make_shared<TernaryExpression>();
+        ternary->debugInfo = makeDebugInfo(ctx);
+        ternary->condition = cond;
+        ternary->thenExpr = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression(0)));
+        ternary->elseExpr = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression(1)));
+        return std::any(
+            std::static_pointer_cast<ExpressionBaseNode>(ternary));
     }
-    
-    return std::static_pointer_cast<ASTNode>(condition);
+
+    return std::any(cond);
 }
 
-// Helper for building left-associative binary expressions from flattened lists
-template<typename Context, typename ChildContext>
-std::shared_ptr<ExpressionNode> buildLeftAssociativeBinary(
-    Context* ctx,
-    const std::vector<ChildContext*>& children,
-    const std::vector<antlr4::tree::TerminalNode*>& operators,
-    std::function<std::any(ASTGenerator*, ChildContext*)> visitChild,
-    std::function<BinaryOp(const std::string&)> getOp,
-    ASTGenerator* generator
-) {
-    if (children.empty()) return nullptr;
-    if (children.size() == 1) {
-        return generator->anyToNode<ExpressionNode>(visitChild(generator, children[0]));
-    }
-    
-    auto loc = getSourceLocation(ctx);
-    auto left = generator->anyToNode<ExpressionNode>(visitChild(generator, children[0]));
-    
-    for (size_t i = 1; i < children.size(); ++i) {
-        auto right = generator->anyToNode<ExpressionNode>(visitChild(generator, children[i]));
-        std::string opText = operators[i-1] ? operators[i-1]->getText() : "";
-        BinaryOp op = getOp(opText);
-        left = std::make_shared<BinaryExpression>(left, op, right, loc);
-    }
-    
-    return left;
-}
+//--------------------------------------------------------------------------------
+// Binary operators — left-associative chaining
+//--------------------------------------------------------------------------------
 
 std::any ASTGenerator::visitLogicOr(MingusParser::LogicOrContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->logicAnd();
-    auto operators = ctx->LogicalOrOperator();
-    
-    if (children.size() == 1) {
-        return visitLogicAnd(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitLogicAnd(children[0]));
+    if (children.size() == 1) return visitLogicAnd(children[0]);
+
+    auto left = anyToNode<ExpressionBaseNode>(visitLogicAnd(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitLogicAnd(children[i]));
-        left = std::make_shared<BinaryExpression>(left, BinaryOp::LogicalOr, right, loc);
+        auto right = anyToNode<ExpressionBaseNode>(visitLogicAnd(children[i]));
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = BinaryOp::LogicalOr;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
 std::any ASTGenerator::visitLogicAnd(MingusParser::LogicAndContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->bitwiseOr();
-    
-    if (children.size() == 1) {
-        return visitBitwiseOr(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitBitwiseOr(children[0]));
+    if (children.size() == 1) return visitBitwiseOr(children[0]);
+
+    auto left = anyToNode<ExpressionBaseNode>(visitBitwiseOr(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitBitwiseOr(children[i]));
-        left = std::make_shared<BinaryExpression>(left, BinaryOp::LogicalAnd, right, loc);
+        auto right = anyToNode<ExpressionBaseNode>(
+            visitBitwiseOr(children[i]));
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = BinaryOp::LogicalAnd;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
 std::any ASTGenerator::visitBitwiseOr(MingusParser::BitwiseOrContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->bitwiseXor();
-    
-    if (children.size() == 1) {
-        return visitBitwiseXor(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitBitwiseXor(children[0]));
+    if (children.size() == 1) return visitBitwiseXor(children[0]);
+
+    auto left = anyToNode<ExpressionBaseNode>(visitBitwiseXor(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitBitwiseXor(children[i]));
-        left = std::make_shared<BinaryExpression>(left, BinaryOp::BitwiseOr, right, loc);
+        auto right = anyToNode<ExpressionBaseNode>(
+            visitBitwiseXor(children[i]));
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = BinaryOp::BitwiseOr;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
 std::any ASTGenerator::visitBitwiseXor(MingusParser::BitwiseXorContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->bitwiseAnd();
-    
-    if (children.size() == 1) {
-        return visitBitwiseAnd(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitBitwiseAnd(children[0]));
+    if (children.size() == 1) return visitBitwiseAnd(children[0]);
+
+    auto left = anyToNode<ExpressionBaseNode>(visitBitwiseAnd(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitBitwiseAnd(children[i]));
-        left = std::make_shared<BinaryExpression>(left, BinaryOp::BitwiseXor, right, loc);
+        auto right = anyToNode<ExpressionBaseNode>(
+            visitBitwiseAnd(children[i]));
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = BinaryOp::BitwiseXor;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
 std::any ASTGenerator::visitBitwiseAnd(MingusParser::BitwiseAndContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->equality();
-    
-    if (children.size() == 1) {
-        return visitEquality(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitEquality(children[0]));
+    if (children.size() == 1) return visitEquality(children[0]);
+
+    auto left = anyToNode<ExpressionBaseNode>(visitEquality(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitEquality(children[i]));
-        left = std::make_shared<BinaryExpression>(left, BinaryOp::BitwiseAnd, right, loc);
+        auto right = anyToNode<ExpressionBaseNode>(visitEquality(children[i]));
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = BinaryOp::BitwiseAnd;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
 std::any ASTGenerator::visitEquality(MingusParser::EqualityContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->relational();
-    
-    if (children.size() == 1) {
-        return visitRelational(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitRelational(children[0]));
+    if (children.size() == 1) return visitRelational(children[0]);
 
+    auto left = anyToNode<ExpressionBaseNode>(visitRelational(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitRelational(children[i]));
-        // Use positional index into raw children to get the correct operator
-        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(ctx->children[2 * (i - 1) + 1]);
-        BinaryOp op = (opNode && opNode->getText() == "==") ? BinaryOp::Equal : BinaryOp::NotEqual;
-        left = std::make_shared<BinaryExpression>(left, op, right, loc);
+        auto right = anyToNode<ExpressionBaseNode>(
+            visitRelational(children[i]));
+        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(
+            ctx->children[2 * (i - 1) + 1]);
+        BinaryOp op = (opNode && opNode->getText() == "==")
+            ? BinaryOp::Equal : BinaryOp::NotEqual;
+
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = op;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
 std::any ASTGenerator::visitRelational(MingusParser::RelationalContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->shift();
-    
-    if (children.size() == 1) {
-        return visitShift(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitShift(children[0]));
+    if (children.size() == 1) return visitShift(children[0]);
 
+    auto left = anyToNode<ExpressionBaseNode>(visitShift(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitShift(children[i]));
-        // Use positional index into raw children to get the correct operator
-        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(ctx->children[2 * (i - 1) + 1]);
+        auto right = anyToNode<ExpressionBaseNode>(visitShift(children[i]));
+        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(
+            ctx->children[2 * (i - 1) + 1]);
         BinaryOp op = BinaryOp::Less;
         if (opNode) {
             std::string opText = opNode->getText();
-            if (opText == "<=") op = BinaryOp::LessEqual;
-            else if (opText == ">") op = BinaryOp::Greater;
+            if      (opText == "<=") op = BinaryOp::LessEqual;
+            else if (opText == ">")  op = BinaryOp::Greater;
             else if (opText == ">=") op = BinaryOp::GreaterEqual;
         }
-        left = std::make_shared<BinaryExpression>(left, op, right, loc);
+
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = op;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
 std::any ASTGenerator::visitShift(MingusParser::ShiftContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->additive();
-    
-    if (children.size() == 1) {
-        return visitAdditive(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitAdditive(children[0]));
+    if (children.size() == 1) return visitAdditive(children[0]);
 
+    auto left = anyToNode<ExpressionBaseNode>(visitAdditive(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitAdditive(children[i]));
-        // Use positional index into raw children to get the correct operator
-        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(ctx->children[2 * (i - 1) + 1]);
-        BinaryOp op = (opNode && opNode->getText() == "<<") ? BinaryOp::ShiftLeft : BinaryOp::ShiftRight;
-        left = std::make_shared<BinaryExpression>(left, op, right, loc);
+        auto right = anyToNode<ExpressionBaseNode>(visitAdditive(children[i]));
+        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(
+            ctx->children[2 * (i - 1) + 1]);
+        BinaryOp op = (opNode && opNode->getText() == "<<")
+            ? BinaryOp::ShiftLeft : BinaryOp::ShiftRight;
+
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = op;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
 std::any ASTGenerator::visitAdditive(MingusParser::AdditiveContext* ctx) {
-    auto loc = getSourceLocation(ctx);
     auto children = ctx->multiplicative();
-    
-    if (children.size() == 1) {
-        return visitMultiplicative(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitMultiplicative(children[0]));
+    if (children.size() == 1) return visitMultiplicative(children[0]);
 
+    auto left = anyToNode<ExpressionBaseNode>(
+        visitMultiplicative(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitMultiplicative(children[i]));
-        // Use positional index into raw children to get the correct operator
-        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(ctx->children[2 * (i - 1) + 1]);
-        BinaryOp op = (opNode && opNode->getText() == "+") ? BinaryOp::Add : BinaryOp::Sub;
-        left = std::make_shared<BinaryExpression>(left, op, right, loc);
+        auto right = anyToNode<ExpressionBaseNode>(
+            visitMultiplicative(children[i]));
+        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(
+            ctx->children[2 * (i - 1) + 1]);
+        BinaryOp op = (opNode && opNode->getText() == "+")
+            ? BinaryOp::Add : BinaryOp::Sub;
+
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = op;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
-std::any ASTGenerator::visitMultiplicative(MingusParser::MultiplicativeContext* ctx) {
-    auto loc = getSourceLocation(ctx);
+std::any ASTGenerator::visitMultiplicative(
+    MingusParser::MultiplicativeContext* ctx)
+{
     auto children = ctx->castExpression();
-    
-    if (children.size() == 1) {
-        return visitCastExpression(children[0]);
-    }
-    
-    auto left = anyToNode<ExpressionNode>(visitCastExpression(children[0]));
+    if (children.size() == 1) return visitCastExpression(children[0]);
 
+    auto left = anyToNode<ExpressionBaseNode>(
+        visitCastExpression(children[0]));
     for (size_t i = 1; i < children.size(); ++i) {
-        auto right = anyToNode<ExpressionNode>(visitCastExpression(children[i]));
-        // Use positional index into raw children to get the correct operator
-        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(ctx->children[2 * (i - 1) + 1]);
+        auto right = anyToNode<ExpressionBaseNode>(
+            visitCastExpression(children[i]));
+        auto* opNode = dynamic_cast<antlr4::tree::TerminalNode*>(
+            ctx->children[2 * (i - 1) + 1]);
         BinaryOp op = BinaryOp::Mul;
         if (opNode) {
             std::string opText = opNode->getText();
-            if (opText == "/") op = BinaryOp::Div;
+            if      (opText == "/") op = BinaryOp::Div;
             else if (opText == "%") op = BinaryOp::Mod;
         }
-        left = std::make_shared<BinaryExpression>(left, op, right, loc);
+
+        auto bin = std::make_shared<BinaryExpression>();
+        bin->debugInfo = makeDebugInfo(ctx);
+        bin->left  = left;
+        bin->op    = op;
+        bin->right = right;
+        left = bin;
     }
-    return std::static_pointer_cast<ASTNode>(left);
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(left));
 }
 
-std::any ASTGenerator::visitCastExpression(MingusParser::CastExpressionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
+//--------------------------------------------------------------------------------
+// Cast, Unary, Postfix, Primary
+//--------------------------------------------------------------------------------
+
+std::any ASTGenerator::visitCastExpression(
+    MingusParser::CastExpressionContext* ctx)
+{
     if (ctx->typeIdentifier()) {
-        auto targetType = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
-        auto operand = anyToNode<ExpressionNode>(visitCastExpression(ctx->castExpression()));
-        
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<CastExpression>(targetType, operand, loc)
-        );
+        auto cast = std::make_shared<CastExpression>();
+        cast->debugInfo = makeDebugInfo(ctx);
+        cast->targetType = anyToNode<TypeNode>(
+            visitTypeIdentifier(ctx->typeIdentifier()));
+        cast->operand = anyToNode<ExpressionBaseNode>(
+            visitCastExpression(ctx->castExpression()));
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(cast));
     }
-    
     return visitUnaryExpression(ctx->unaryExpression());
 }
 
-std::any ASTGenerator::visitUnaryExpression(MingusParser::UnaryExpressionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
+std::any ASTGenerator::visitUnaryExpression(
+    MingusParser::UnaryExpressionContext* ctx)
+{
     if (ctx->prefixOperator()) {
-        auto op = parseUnaryOperator(ctx->prefixOperator()->getText());
-        auto operand = anyToNode<ExpressionNode>(visitUnaryExpression(ctx->unaryExpression()));
-        
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<UnaryExpression>(op, operand, loc)
-        );
+        auto unary = std::make_shared<UnaryExpression>();
+        unary->debugInfo = makeDebugInfo(ctx);
+        unary->op = parseUnaryOperator(ctx->prefixOperator()->getText());
+        unary->operand = anyToNode<ExpressionBaseNode>(
+            visitUnaryExpression(ctx->unaryExpression()));
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(unary));
     }
-    
+
     if (ctx->incrementDecrementOperator()) {
-        auto text = ctx->incrementDecrementOperator()->getText();
-        UnaryOp op = (text == "++") ? UnaryOp::PreIncrement : UnaryOp::PreDecrement;
-        auto operand = anyToNode<ExpressionNode>(visitUnaryExpression(ctx->unaryExpression()));
-        
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<UnaryExpression>(op, operand, loc)
-        );
+        std::string text = ctx->incrementDecrementOperator()->getText();
+        auto unary = std::make_shared<UnaryExpression>();
+        unary->debugInfo = makeDebugInfo(ctx);
+        unary->op = (text == "++") ? UnaryOp::PreIncrement
+                                   : UnaryOp::PreDecrement;
+        unary->operand = anyToNode<ExpressionBaseNode>(
+            visitUnaryExpression(ctx->unaryExpression()));
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(unary));
     }
-    
+
     if (ctx->typeSizeOrAlign()) {
-        auto type = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
-        
-        if (ctx->typeSizeOrAlign()->SizeOfKeyword()) {
-            return std::static_pointer_cast<ASTNode>(
-                std::make_shared<SizeOfExpression>(type, loc)
-            );
-        } else {
-            return std::static_pointer_cast<ASTNode>(
-                std::make_shared<AlignOfExpression>(type, loc)
-            );
-        }
+        auto sizeOf = std::make_shared<SizeOfExpression>();
+        sizeOf->debugInfo = makeDebugInfo(ctx);
+        sizeOf->targetType = anyToNode<TypeNode>(
+            visitTypeIdentifier(ctx->typeIdentifier()));
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(sizeOf));
     }
-    
+
     return visitPostfixExpression(ctx->postfixExpression());
 }
 
-std::any ASTGenerator::visitPostfixExpression(MingusParser::PostfixExpressionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto result = anyToNode<ExpressionNode>(visitPrimaryExpression(ctx->primaryExpression()));
-    
+std::any ASTGenerator::visitPostfixExpression(
+    MingusParser::PostfixExpressionContext* ctx)
+{
+    auto result = anyToNode<ExpressionBaseNode>(
+        visitPrimaryExpression(ctx->primaryExpression()));
+
     for (auto* opCtx : ctx->postfixOperation()) {
         if (opCtx->callArguments()) {
-            NodeList<ExpressionNode> args;
+            // Function call: callee(args)
+            auto argsNode = std::make_shared<ArgumentsNode>();
+            argsNode->debugInfo = makeDebugInfo(opCtx);
             if (opCtx->callArguments()->argumentList()) {
-                for (auto* argExpr : opCtx->callArguments()->argumentList()->expression()) {
-                    auto arg = anyToNode<ExpressionNode>(visitExpression(argExpr));
-                    if (arg) args.push_back(arg);
+                for (auto* argExpr :
+                     opCtx->callArguments()->argumentList()->expression()) {
+                    auto arg = anyToNode<ExpressionBaseNode>(
+                        visitExpression(argExpr));
+                    if (arg) argsNode->expressions.push_back(arg);
                 }
             }
-            result = std::make_shared<CallExpression>(result, args, loc);
+
+            auto call = std::make_shared<CallExpression>();
+            call->debugInfo = makeDebugInfo(opCtx);
+            call->callee = result;
+            call->arguments = argsNode;
+            result = call;
+
         } else if (opCtx->elementAccess()) {
-            auto index = anyToNode<ExpressionNode>(visitExpression(opCtx->elementAccess()->expression()));
-            result = std::make_shared<IndexExpression>(result, index, loc);
+            // Index: expr[index]
+            auto idx = std::make_shared<IndexExpression>();
+            idx->debugInfo = makeDebugInfo(opCtx);
+            idx->object = result;
+            idx->index = anyToNode<ExpressionBaseNode>(
+                visitExpression(opCtx->elementAccess()->expression()));
+            result = idx;
+
         } else if (opCtx->memberAccess()) {
-            std::string memberName = opCtx->memberAccess()->Identifier()->getText();
-            bool isArrow = opCtx->memberAccess()->ReferenceAccessOperator() != nullptr;
-            result = std::make_shared<MemberAccessExpression>(result, memberName, isArrow, loc);
+            // Member: expr.member or expr->member
+            auto mem = std::make_shared<MemberAccessExpression>();
+            mem->debugInfo = makeDebugInfo(opCtx);
+            mem->object = result;
+            mem->memberName = opCtx->memberAccess()->Identifier()->getText();
+            mem->isArrow =
+                opCtx->memberAccess()->ReferenceAccessOperator() != nullptr;
+            result = mem;
+
         } else if (opCtx->incrementDecrementOperator()) {
-            auto text = opCtx->incrementDecrementOperator()->getText();
-            UnaryOp op = (text == "++") ? UnaryOp::PostIncrement : UnaryOp::PostDecrement;
-            result = std::make_shared<UnaryExpression>(op, result, loc);
+            // Postfix ++/--
+            std::string text = opCtx->incrementDecrementOperator()->getText();
+            auto unary = std::make_shared<UnaryExpression>();
+            unary->debugInfo = makeDebugInfo(opCtx);
+            unary->op = (text == "++") ? UnaryOp::PostIncrement
+                                       : UnaryOp::PostDecrement;
+            unary->operand = result;
+            result = unary;
         }
     }
-    
-    return std::static_pointer_cast<ASTNode>(result);
+
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(result));
 }
 
-std::any ASTGenerator::visitPrimaryExpression(MingusParser::PrimaryExpressionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
+std::any ASTGenerator::visitPrimaryExpression(
+    MingusParser::PrimaryExpressionContext* ctx)
+{
     if (ctx->IntegerLiteral()) {
-        int64_t value = parseIntegerLiteral(ctx->IntegerLiteral()->getText());
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<IntegerLiteral>(value, loc)
-        );
-    } else if (ctx->FloatingLiteral()) {
-        double value = std::stod(ctx->FloatingLiteral()->getText());
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<FloatLiteral>(value, loc)
-        );
-    } else if (ctx->BooleanLiteral()) {
-        bool value = (ctx->BooleanLiteral()->getText() == "true");
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<BoolLiteral>(value, loc)
-        );
-    } else if (ctx->CharLiteral()) {
+        auto lit = std::make_shared<IntegerLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
+        lit->value = parseIntegerLiteral(ctx->IntegerLiteral()->getText());
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(lit));
+    }
+
+    if (ctx->FloatingLiteral()) {
+        auto lit = std::make_shared<FloatLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
+        lit->value = std::stod(ctx->FloatingLiteral()->getText());
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(lit));
+    }
+
+    if (ctx->BooleanLiteral()) {
+        auto lit = std::make_shared<BoolLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
+        lit->value = (ctx->BooleanLiteral()->getText() == "true");
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(lit));
+    }
+
+    if (ctx->CharLiteral()) {
+        auto lit = std::make_shared<CharLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
         std::string text = ctx->CharLiteral()->getText();
-        char value = (text.length() >= 3) ? text[1] : '\0';
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<CharLiteral>(value, loc)
-        );
-    } else if (ctx->string()) {
+        lit->value = (text.length() >= 3) ? text[1] : '\0';
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(lit));
+    }
+
+    if (ctx->string()) {
         return visitString(ctx->string());
-    } else if (ctx->NullReference()) {
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<NullLiteral>(loc)
-        );
-    } else if (ctx->ThisReference()) {
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<ThisExpression>(loc)
-        );
-    } else if (ctx->Identifier()) {
-        std::string name = ctx->Identifier()->getText();
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<IdentifierExpression>(name, loc)
-        );
-    } else if (ctx->tupleExpression()) {
+    }
+
+    if (ctx->NullReference()) {
+        auto lit = std::make_shared<NullLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(lit));
+    }
+
+    if (ctx->ThisReference()) {
+        auto expr = std::make_shared<ThisExpression>();
+        expr->debugInfo = makeDebugInfo(ctx);
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(expr));
+    }
+
+    if (ctx->Identifier()) {
+        auto expr = std::make_shared<IdentifierExpression>();
+        expr->debugInfo = makeDebugInfo(ctx);
+        expr->name = ctx->Identifier()->getText();
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(expr));
+    }
+
+    if (ctx->tupleExpression()) {
         return visitTupleExpression(ctx->tupleExpression());
-    } else if (ctx->newExpression()) {
+    }
+
+    if (ctx->newExpression()) {
         return visitNewExpression(ctx->newExpression());
-    } else if (ctx->matchExpression()) {
+    }
+
+    if (ctx->matchExpression()) {
         return visitMatchExpression(ctx->matchExpression());
-    } else if (ctx->expression()) {
+    }
+
+    if (ctx->expression()) {
+        // Parenthesized expression: ( expr )
         return visitExpression(ctx->expression());
     }
-    
-    return std::shared_ptr<ASTNode>(nullptr);
+
+    return std::any(std::shared_ptr<ExpressionBaseNode>(nullptr));
 }
 
-std::any ASTGenerator::visitNewExpression(MingusParser::NewExpressionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto type = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
-    
+std::any ASTGenerator::visitNewExpression(
+    MingusParser::NewExpressionContext* ctx)
+{
+    auto newExpr = std::make_shared<NewExpression>();
+    newExpr->debugInfo = makeDebugInfo(ctx);
+    newExpr->type = anyToNode<TypeNode>(
+        visitTypeIdentifier(ctx->typeIdentifier()));
+
     if (ctx->SquareBracketLeft()) {
-        auto size = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<NewExpression>(type, size, loc)
-        );
+        // Array: new Type[size]
+        newExpr->isArray = true;
+        newExpr->arraySize = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
     } else {
-        NodeList<ExpressionNode> args;
+        // Object: new Type(args)
+        auto argsNode = std::make_shared<ArgumentsNode>();
+        argsNode->debugInfo = makeDebugInfo(ctx);
         if (ctx->callArguments() && ctx->callArguments()->argumentList()) {
-            for (auto* argCtx : ctx->callArguments()->argumentList()->expression()) {
-                auto arg = anyToNode<ExpressionNode>(visitExpression(argCtx));
-                if (arg) args.push_back(arg);
+            for (auto* argCtx :
+                 ctx->callArguments()->argumentList()->expression()) {
+                auto arg = anyToNode<ExpressionBaseNode>(
+                    visitExpression(argCtx));
+                if (arg) argsNode->expressions.push_back(arg);
             }
         }
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<NewExpression>(type, args, loc)
-        );
+        newExpr->arguments = argsNode;
     }
+
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(newExpr));
 }
 
-std::any ASTGenerator::visitTupleExpression(MingusParser::TupleExpressionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodeList<ExpressionNode> elements;
+std::any ASTGenerator::visitTupleExpression(
+    MingusParser::TupleExpressionContext* ctx)
+{
+    auto tuple = std::make_shared<TupleExpression>();
+    tuple->debugInfo = makeDebugInfo(ctx);
+
     for (auto* exprCtx : ctx->expression()) {
-        auto expr = anyToNode<ExpressionNode>(visitExpression(exprCtx));
-        if (expr) elements.push_back(expr);
+        auto elem = anyToNode<ExpressionBaseNode>(visitExpression(exprCtx));
+        if (elem) tuple->elements.push_back(elem);
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<TupleExpression>(elements, loc)
-    );
+
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(tuple));
 }
 
-std::any ASTGenerator::visitMatchExpression(MingusParser::MatchExpressionContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto subject = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
-    
-    std::vector<MatchArm> arms;
+std::any ASTGenerator::visitMatchExpression(
+    MingusParser::MatchExpressionContext* ctx)
+{
+    auto match = std::make_shared<MatchExpression>();
+    match->debugInfo = makeDebugInfo(ctx);
+    match->subject = anyToNode<ExpressionBaseNode>(
+        visitExpression(ctx->expression()));
+
     for (auto* armCtx : ctx->matchArm()) {
-        auto pattern = anyToNode<PatternNode>(visitPattern(armCtx->pattern()));
-        
-        NodePtr<ASTNode> body;
+        MatchArm arm;
+        arm.pattern = anyToNode<PatternNode>(
+            visitPattern(armCtx->pattern()));
+
         if (armCtx->matchBody()->expression()) {
-            body = anyToNode<ExpressionNode>(visitExpression(armCtx->matchBody()->expression()));
+            arm.body = anyToNode<ExpressionBaseNode>(
+                visitExpression(armCtx->matchBody()->expression()));
         } else if (armCtx->matchBody()->block()) {
-            body = anyToNode<BlockStatement>(visitBlock(armCtx->matchBody()->block()));
+            arm.body = anyToNode<BlockStatementNode>(
+                visitBlock(armCtx->matchBody()->block()));
         }
-        
-        arms.emplace_back(pattern, body);
+
+        match->arms.push_back(arm);
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<MatchExpression>(subject, arms, loc)
-    );
+
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(match));
 }
 
 std::any ASTGenerator::visitMatchArm(MingusParser::MatchArmContext* ctx) {
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitCallArguments(MingusParser::CallArgumentsContext* ctx) {
+std::any ASTGenerator::visitCallArguments(
+    MingusParser::CallArgumentsContext* ctx)
+{
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitElementAccess(MingusParser::ElementAccessContext* ctx) {
+std::any ASTGenerator::visitElementAccess(
+    MingusParser::ElementAccessContext* ctx)
+{
     return visitChildren(ctx);
 }
 
-std::any ASTGenerator::visitMemberAccess(MingusParser::MemberAccessContext* ctx) {
+std::any ASTGenerator::visitMemberAccess(
+    MingusParser::MemberAccessContext* ctx)
+{
     return visitChildren(ctx);
 }
-
 
 //================================================================================
-// Patterns
+// Pattern Visitors
 //================================================================================
 
 std::any ASTGenerator::visitPattern(MingusParser::PatternContext* ctx) {
     return visitGuardedPattern(ctx->guardedPattern());
 }
 
-std::any ASTGenerator::visitGuardedPattern(MingusParser::GuardedPatternContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    auto innerPattern = anyToNode<PatternNode>(visitBasePattern(ctx->basePattern()));
-    
-    if (ctx->ControlFlowIf() && ctx->expression()) {
-        auto guard = anyToNode<ExpressionNode>(visitExpression(ctx->expression()));
-        return std::static_pointer_cast<ASTNode>(
-            std::make_shared<GuardedPattern>(innerPattern, guard, loc)
-        );
+std::any ASTGenerator::visitGuardedPattern(
+    MingusParser::GuardedPatternContext* ctx)
+{
+    auto* baseCtx = ctx->basePattern();
+
+    // Dispatch to the specific pattern alternative
+    std::shared_ptr<PatternNode> pattern;
+    if (baseCtx->literalPattern()) {
+        pattern = anyToNode<PatternNode>(
+            visitLiteralPattern(baseCtx->literalPattern()));
+    } else if (baseCtx->rangePattern()) {
+        pattern = anyToNode<PatternNode>(
+            visitRangePattern(baseCtx->rangePattern()));
+    } else if (baseCtx->wildcardPattern()) {
+        pattern = anyToNode<PatternNode>(
+            visitWildcardPattern(baseCtx->wildcardPattern()));
+    } else if (baseCtx->bindingPattern()) {
+        pattern = anyToNode<PatternNode>(
+            visitBindingPattern(baseCtx->bindingPattern()));
+    } else if (baseCtx->tuplePattern()) {
+        pattern = anyToNode<PatternNode>(
+            visitTuplePattern(baseCtx->tuplePattern()));
     }
-    
-    return std::static_pointer_cast<ASTNode>(innerPattern);
+
+    // Guard: only IdentifierPattern supports guards in V2
+    if (pattern && ctx->ControlFlowIf() && ctx->expression()) {
+        auto guard = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
+        if (auto* idPat = dynamic_cast<IdentifierPattern*>(pattern.get())) {
+            idPat->guard = guard;
+        }
+    }
+
+    return std::any(pattern);
 }
 
-std::any ASTGenerator::visitLiteralPattern(MingusParser::LiteralPatternContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    NodePtr<ExpressionNode> value;
-    
+std::any ASTGenerator::visitLiteralPattern(
+    MingusParser::LiteralPatternContext* ctx)
+{
+    auto pat = std::make_shared<LiteralPattern>();
+    pat->debugInfo = makeDebugInfo(ctx);
+
     if (ctx->IntegerLiteral()) {
-        value = std::make_shared<IntegerLiteral>(
-            parseIntegerLiteral(ctx->IntegerLiteral()->getText()), loc
-        );
+        auto lit = std::make_shared<IntegerLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
+        lit->value = parseIntegerLiteral(ctx->IntegerLiteral()->getText());
+        pat->value = lit;
+
     } else if (ctx->FloatingLiteral()) {
-        value = std::make_shared<FloatLiteral>(
-            std::stod(ctx->FloatingLiteral()->getText()), loc
-        );
+        auto lit = std::make_shared<FloatLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
+        lit->value = std::stod(ctx->FloatingLiteral()->getText());
+        pat->value = lit;
+
     } else if (ctx->BooleanLiteral()) {
-        value = std::make_shared<BoolLiteral>(
-            ctx->BooleanLiteral()->getText() == "true", loc
-        );
+        auto lit = std::make_shared<BoolLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
+        lit->value = (ctx->BooleanLiteral()->getText() == "true");
+        pat->value = lit;
+
     } else if (ctx->CharLiteral()) {
+        auto lit = std::make_shared<CharLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
         std::string text = ctx->CharLiteral()->getText();
-        char charValue = (text.length() >= 3) ? text[1] : '\0';
-        value = std::make_shared<CharLiteral>(charValue, loc);
+        lit->value = (text.length() >= 3) ? text[1] : '\0';
+        pat->value = lit;
+
     } else if (ctx->string()) {
-        value = anyToNode<ExpressionNode>(visitString(ctx->string()));
+        pat->value = anyToNode<ExpressionBaseNode>(visitString(ctx->string()));
+
     } else if (ctx->NullReference()) {
-        value = std::make_shared<NullLiteral>(loc);
+        auto lit = std::make_shared<NullLiteral>();
+        lit->debugInfo = makeDebugInfo(ctx);
+        pat->value = lit;
+
     } else if (ctx->qualifiedName()) {
-        auto qname = parseQualifiedName(ctx->qualifiedName());
-        value = std::make_shared<QualifiedNameExpression>(qname, loc);
+        auto qname = std::make_shared<QualifiedNameExpression>();
+        qname->debugInfo = makeDebugInfo(ctx);
+        qname->parts = parseQualifiedName(ctx->qualifiedName());
+        pat->value = qname;
     }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<LiteralPattern>(value, loc)
-    );
+
+    return std::any(std::static_pointer_cast<PatternNode>(pat));
 }
 
-std::any ASTGenerator::visitRangePattern(MingusParser::RangePatternContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    int64_t low = parseIntegerLiteral(ctx->IntegerLiteral(0)->getText());
-    int64_t high = parseIntegerLiteral(ctx->IntegerLiteral(1)->getText());
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<RangePattern>(low, high, loc)
-    );
+std::any ASTGenerator::visitRangePattern(
+    MingusParser::RangePatternContext* ctx)
+{
+    auto pat = std::make_shared<RangePattern>();
+    pat->debugInfo = makeDebugInfo(ctx);
+
+    auto low = std::make_shared<IntegerLiteral>();
+    low->debugInfo = makeDebugInfo(ctx);
+    low->value = parseIntegerLiteral(ctx->IntegerLiteral(0)->getText());
+    pat->low = low;
+
+    auto high = std::make_shared<IntegerLiteral>();
+    high->debugInfo = makeDebugInfo(ctx);
+    high->value = parseIntegerLiteral(ctx->IntegerLiteral(1)->getText());
+    pat->high = high;
+
+    return std::any(std::static_pointer_cast<PatternNode>(pat));
 }
 
-std::any ASTGenerator::visitWildcardPattern(MingusParser::WildcardPatternContext* ctx) {
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<WildcardPattern>(getSourceLocation(ctx))
-    );
+std::any ASTGenerator::visitWildcardPattern(
+    MingusParser::WildcardPatternContext* ctx)
+{
+    auto pat = std::make_shared<WildcardPattern>();
+    pat->debugInfo = makeDebugInfo(ctx);
+    return std::any(std::static_pointer_cast<PatternNode>(pat));
 }
 
-std::any ASTGenerator::visitBindingPattern(MingusParser::BindingPatternContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    std::string name = ctx->Identifier()->getText();
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<BindingPattern>(name, loc)
-    );
+std::any ASTGenerator::visitBindingPattern(
+    MingusParser::BindingPatternContext* ctx)
+{
+    // V2 maps BindingPattern → IdentifierPattern
+    auto pat = std::make_shared<IdentifierPattern>();
+    pat->debugInfo = makeDebugInfo(ctx);
+    pat->name = ctx->Identifier()->getText();
+    return std::any(std::static_pointer_cast<PatternNode>(pat));
 }
 
-std::any ASTGenerator::visitTuplePattern(MingusParser::TuplePatternContext* ctx) {
-    auto loc = getSourceLocation(ctx);
-    
-    PatternList<PatternNode> elements;
-    for (auto* elemCtx : ctx->pattern()) {
-        auto elem = anyToNode<PatternNode>(visitPattern(elemCtx));
-        if (elem) elements.push_back(elem);
-    }
-    
-    return std::static_pointer_cast<ASTNode>(
-        std::make_shared<TuplePattern>(elements, loc)
-    );
+std::any ASTGenerator::visitTuplePattern(
+    MingusParser::TuplePatternContext* ctx)
+{
+    // V2 AST does not yet have a TuplePattern node
+    reportError(ctx, "Tuple patterns not yet supported in V2");
+    return std::any(std::shared_ptr<PatternNode>(nullptr));
 }
 
 } // namespace parser
