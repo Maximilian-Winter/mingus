@@ -459,8 +459,9 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // Run
-        int runResult = std::system(exeFile.c_str());
+        // Run (use .\ prefix on Windows so cmd.exe finds it in CWD)
+        std::string runCmd = ".\\" + exeFile;
+        int runResult = std::system(runCmd.c_str());
 
         // Cleanup
         if (emitFile.empty()) fs::remove(tempLL);

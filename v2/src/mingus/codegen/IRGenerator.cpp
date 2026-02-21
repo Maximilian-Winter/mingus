@@ -18,6 +18,7 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/TargetParser/Triple.h>
 #include <llvm/Support/raw_ostream.h>
 #pragma warning(pop)
 
@@ -110,6 +111,7 @@ IRGenerator::IRGenerator(SymbolTable& symbolTable,
 //================================================================================
 std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     module_ = std::make_unique<llvm::Module>("mingus_module", context_);
+    module_->setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
 
     // Phase A: Forward declarations
     declareStructTypes(program);
