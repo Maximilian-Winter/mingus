@@ -4,29 +4,31 @@
 // AstNode.h — AST base classes for Mingus V2
 //
 // Every AST node carries:
-//   - AstScopeNode: pointer to the scope this node lives in (set by Pass 1)
-//   - DebugInfoNode: full source range for diagnostics and debug info
+//   - astScopeNode: pointer to the scope this node lives in (set by Pass 1)
+//   - debugInfo: full source range for diagnostics and debug info
 //
 // This eliminates childIndexStack_ and positional scope navigation.
-// Each pass reads node->AstScopeNode directly.
 //
 // Node hierarchy:
 //   AstBaseNode
-//   +-- ExpressionBaseNode (has resolvedType, resolvedSymbol)
+//   +-- ExpressionBaseNode (resolvedType, resolvedSymbol)
 //   +-- StatementBaseNode
 //   |   +-- DeclarationBaseNode
-//   +-- BlockStatementNode (owns child statements, scope = BlockScope)
-//   +-- ArgumentsNode (per-argument IsReference tracking)
+//   +-- BlockStatementNode
+//   +-- ArgumentsNode (per-argument IsReference)
 //   +-- ParameterNode (linked to VariableSymbol by Pass 1)
-//   +-- TypeNode (type annotation in source)
-//   +-- ModuleNode (top-level module)
-//   +-- ProgramNode (root: owns all modules)
+//   +-- TypeNode + subclasses
+//   +-- PatternNode + subclasses (for match)
+//   +-- ModifiersNode
+//   +-- ModuleNode / ProgramNode
 // ============================================================================
 
 #include "Forward.h"
 #include "DebugInfo.h"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -39,61 +41,7 @@ namespace mingus {
 class ASTVisitor;
 
 // ============================================================================
-// AST Node Type Enums
-// ============================================================================
-
-enum class ExpressionNodeType {
-    Literal,
-    Identifier,
-    QualifiedName,
-    BinaryOperation,
-    UnaryOperation,
-    Call,
-    MemberAccess,
-    IndexAccess,
-    Assignment,
-    Lambda,
-    Match,
-    Pipe,
-    Cast,
-    New,
-    StringInterpolation,
-    TupleLiteral,
-    ArrayLiteral,
-    Null,
-    VariableDeclaration,  // var x = expr (dual: expression in statement context)
-    Ternary
-};
-
-enum class StatementType {
-    Expression,
-    Block,
-    If,
-    For,
-    While,
-    Return,
-    Break,
-    Continue,
-    Delete,
-    Declaration
-};
-
-enum class DeclarationNodeType {
-    Function,
-    Class,
-    Struct,
-    Enum,
-    Interface,
-    Module,
-    Import,
-    Extern,
-    Operator
-};
-
-// ============================================================================
 // AstBaseNode — Root of all AST nodes
-//
-// Every node has a scope reference and debug info. No exceptions.
 // ============================================================================
 
 class AstBaseNode {
@@ -101,7 +49,7 @@ public:
     virtual ~AstBaseNode() = default;
     virtual void accept(ASTVisitor& visitor) = 0;
 
-    // The scope this node lives in (set by Pass 1 — SymbolTableBuilder)
+    // The scope this node lives in (set by Pass 1)
     ScopePtr astScopeNode;
 
     // Source location with full range
@@ -115,19 +63,14 @@ public:
 
 // ============================================================================
 // ExpressionBaseNode — Base for all expression nodes
-//
-// After type checking (Pass 3), resolvedType holds the expression's type.
-// For identifier/member expressions, resolvedSymbol links to the symbol.
 // ============================================================================
 
 class ExpressionBaseNode : public AstBaseNode {
 public:
-    ExpressionNodeType expressionType;
-
     // Set by Pass 3 (TypeChecker)
     TypeSymbolPtr resolvedType;
 
-    // Set by Pass 2/3 for identifiers and member access
+    // Set by Pass 2/3 for identifiers, member access, etc.
     SymbolPtr resolvedSymbol;
 };
 
@@ -137,7 +80,6 @@ public:
 
 class StatementBaseNode : public AstBaseNode {
 public:
-    StatementType statementType;
 };
 
 // ============================================================================
@@ -146,51 +88,111 @@ public:
 
 class DeclarationBaseNode : public StatementBaseNode {
 public:
-    DeclarationNodeType declarationType;
 };
 
 // ============================================================================
 // BlockStatementNode — A { } block containing statements
-//
-// The astScopeNode for this node points to the BlockScope created for it.
 // ============================================================================
 
 class BlockStatementNode : public StatementBaseNode {
 public:
-    BlockStatementNode() { statementType = StatementType::Block; }
-
     void accept(ASTVisitor& visitor) override;
-
     std::vector<std::shared_ptr<StatementBaseNode>> statements;
 };
 
 // ============================================================================
-// TypeNode — Type annotation in source code (int, MyClass, T[10], etc.)
+// TypeNode hierarchy — Type annotations in source code
 //
-// Resolved to a TypeSymbol by Pass 2 (TypeResolver).
+// These represent what the programmer wrote. Resolved to TypeSymbol by Pass 2.
 // ============================================================================
 
 class TypeNode : public AstBaseNode {
 public:
     void accept(ASTVisitor& visitor) override;
 
-    std::string name;                         // "int", "MyClass", etc.
-    bool isArray = false;
-    int arraySize = -1;                       // for T[N] annotations
-    bool isPointer = false;
-    bool isReference = false;                 // for T& annotations
-    std::vector<std::shared_ptr<TypeNode>> typeArguments;  // for future generics
-
     // Resolved by Pass 2
     TypeSymbolPtr resolvedType;
+};
+
+class PrimitiveTypeNode : public TypeNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    PrimitiveKind kind;
+};
+
+class NamedTypeNode : public TypeNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::vector<std::string> qualifiedName;  // ["ModName", "TypeName"] or just ["TypeName"]
+};
+
+class PointerTypeNode : public TypeNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::shared_ptr<TypeNode> baseType;
+    bool isReference = false;  // true for T&
+};
+
+class ArrayTypeNode : public TypeNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::shared_ptr<TypeNode> elementType;
+    std::shared_ptr<ExpressionBaseNode> sizeExpr;  // nullptr for unsized
+};
+
+class TupleTypeNode : public TypeNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::vector<std::shared_ptr<TypeNode>> elementTypes;
+};
+
+class FunctionTypeNode : public TypeNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::vector<std::shared_ptr<TypeNode>> parameterTypes;
+    std::shared_ptr<TypeNode> returnType;
+};
+
+// ============================================================================
+// PatternNode hierarchy — For match expressions
+// ============================================================================
+
+class PatternNode : public AstBaseNode {
+public:
+};
+
+class LiteralPattern : public PatternNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::shared_ptr<ExpressionBaseNode> value;  // IntegerLiteral, StringLiteral, etc.
+};
+
+class IdentifierPattern : public PatternNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::string name;
+    // Guard expression (optional): "var x if x > 0"
+    std::shared_ptr<ExpressionBaseNode> guard;
+    // Resolved variable symbol (set by Pass 1)
+    std::shared_ptr<VariableSymbol> resolvedSymbol;
+};
+
+class WildcardPattern : public PatternNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+};
+
+class RangePattern : public PatternNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::shared_ptr<ExpressionBaseNode> low;
+    std::shared_ptr<ExpressionBaseNode> high;
 };
 
 // ============================================================================
 // ParameterNode — Function/lambda parameter declaration
 //
-// resolvedSymbol is set by Pass 1 (SymbolTableBuilder). This eliminates
-// the need for scanForParamSymbols — the link is established at declaration
-// time, not patched later.
+// resolvedSymbol set by Pass 1: eliminates scanForParamSymbols.
 // ============================================================================
 
 class ParameterNode : public AstBaseNode {
@@ -199,7 +201,8 @@ public:
 
     std::string name;
     std::shared_ptr<TypeNode> type;
-    bool isReference = false;                  // T& parameter
+    bool isReference = false;
+    std::shared_ptr<ExpressionBaseNode> defaultValue;  // nullptr if no default
 
     // Set by Pass 1: direct link to the parameter's VariableSymbol
     std::shared_ptr<VariableSymbol> resolvedSymbol;
@@ -208,39 +211,20 @@ public:
 // ============================================================================
 // ArgumentsNode — Call arguments with per-argument reference tracking
 //
-// IsReference[i] is set by Pass 3 (TypeChecker) when matching arguments
-// against the callee's parameters. Codegen reads this directly — no need
-// to re-resolve the callee type.
-//
-// This is the "ArgumentsBaseNode" pattern from the old compiler.
+// IsReference[i] set by Pass 3, read by codegen. No need to re-resolve callee.
 // ============================================================================
 
 class ArgumentsNode : public AstBaseNode {
 public:
     void accept(ASTVisitor& visitor) override;
 
-    // The argument expressions
     std::vector<std::shared_ptr<ExpressionBaseNode>> expressions;
-
-    // Per-argument: true if this argument should be passed by reference
-    // Set by TypeChecker, read by codegen
-    std::vector<bool> isReference;
+    std::vector<bool> isReference;  // per-argument, set by TypeChecker
 };
 
 // ============================================================================
 // ModifiersNode — Access modifiers, static, abstract, extern, virtual
 // ============================================================================
-
-enum class ModifierType {
-    Public,
-    Private,
-    Protected,
-    Static,
-    Abstract,
-    Extern,
-    Virtual,
-    Override
-};
 
 class ModifiersNode : public AstBaseNode {
 public:
@@ -249,20 +233,55 @@ public:
     std::vector<ModifierType> modifiers;
 
     bool hasModifier(ModifierType mod) const {
-        for (auto m : modifiers) {
-            if (m == mod) return true;
-        }
+        for (auto m : modifiers) if (m == mod) return true;
         return false;
     }
 };
 
 // ============================================================================
-// CaptureItem — Explicit capture in lambda expressions
+// Supporting structs (used by expression/statement/declaration nodes)
 // ============================================================================
 
 struct CaptureItem {
     std::string name;
     CaptureMode mode = CaptureMode::ByValue;
+};
+
+struct InterpolatedPart {
+    InterpolatedPartKind kind;
+    std::string text;                             // for Text parts
+    std::shared_ptr<ExpressionBaseNode> expression;  // for Expression parts
+};
+
+struct MatchArm {
+    std::shared_ptr<PatternNode> pattern;
+    std::shared_ptr<AstBaseNode> body;  // ExpressionBaseNode or BlockStatementNode
+};
+
+struct PipeStage {
+    std::shared_ptr<ExpressionBaseNode> function;  // identifier or qualified name
+    std::vector<std::shared_ptr<ExpressionBaseNode>> extraArguments;
+};
+
+struct ElseIfClause {
+    std::shared_ptr<ExpressionBaseNode> condition;
+    std::shared_ptr<StatementBaseNode> body;
+};
+
+struct SwitchCase {
+    std::shared_ptr<ExpressionBaseNode> value;  // nullptr for default case
+    std::vector<std::shared_ptr<StatementBaseNode>> body;
+};
+
+struct DestructureElement {
+    std::string name;
+    std::shared_ptr<TypeNode> type;   // nullptr if inferred
+    bool isInferred = false;
+};
+
+struct ImportTarget {
+    std::string name;
+    std::optional<std::string> alias;
 };
 
 // ============================================================================
@@ -271,8 +290,6 @@ struct CaptureItem {
 
 class ModuleNode : public DeclarationBaseNode {
 public:
-    ModuleNode() { declarationType = DeclarationNodeType::Module; }
-
     void accept(ASTVisitor& visitor) override;
 
     std::string name;
@@ -291,32 +308,98 @@ public:
     void accept(ASTVisitor& visitor) override;
 
     std::vector<std::shared_ptr<ModuleNode>> modules;
-    std::string entryPoint;  // --entry flag value
+    std::string entryPoint;
 };
 
 // ============================================================================
-// ASTVisitor — Abstract visitor interface
+// ASTVisitor — Complete visitor interface
 //
+// Default implementations are no-ops so visitors only override what they need.
 // Concrete visitors: SymbolTableBuilder, TypeResolver, TypeChecker,
-// SemanticValidator, IRGenerator
+// SemanticValidator, IRGenerator.
 // ============================================================================
 
 class ASTVisitor {
 public:
     virtual ~ASTVisitor() = default;
 
-    // Base nodes
+    // ---- Base / structural nodes ----
+    virtual void visit(ProgramNode& node) = 0;
+    virtual void visit(ModuleNode& node) = 0;
     virtual void visit(BlockStatementNode& node) = 0;
+
+    // ---- Type annotation nodes ----
     virtual void visit(TypeNode& node) {}
+    virtual void visit(PrimitiveTypeNode& node) {}
+    virtual void visit(NamedTypeNode& node) {}
+    virtual void visit(PointerTypeNode& node) {}
+    virtual void visit(ArrayTypeNode& node) {}
+    virtual void visit(TupleTypeNode& node) {}
+    virtual void visit(FunctionTypeNode& node) {}
+
+    // ---- Pattern nodes ----
+    virtual void visit(LiteralPattern& node) {}
+    virtual void visit(IdentifierPattern& node) {}
+    virtual void visit(WildcardPattern& node) {}
+    virtual void visit(RangePattern& node) {}
+
+    // ---- Parameter / Arguments / Modifiers ----
     virtual void visit(ParameterNode& node) {}
     virtual void visit(ArgumentsNode& node) {}
     virtual void visit(ModifiersNode& node) {}
-    virtual void visit(ModuleNode& node) = 0;
-    virtual void visit(ProgramNode& node) = 0;
 
-    // Expressions and statements will be added as concrete node types
-    // are defined (in separate headers like Expressions.h, Statements.h).
-    // The visitor can be extended with additional visit() overloads.
+    // ---- Expression nodes ----
+    virtual void visit(IntegerLiteral& node) {}
+    virtual void visit(FloatLiteral& node) {}
+    virtual void visit(BoolLiteral& node) {}
+    virtual void visit(CharLiteral& node) {}
+    virtual void visit(StringLiteral& node) {}
+    virtual void visit(NullLiteral& node) {}
+    virtual void visit(InterpolatedStringExpression& node) {}
+    virtual void visit(IdentifierExpression& node) {}
+    virtual void visit(QualifiedNameExpression& node) {}
+    virtual void visit(ThisExpression& node) {}
+    virtual void visit(MemberAccessExpression& node) {}
+    virtual void visit(BinaryExpression& node) {}
+    virtual void visit(UnaryExpression& node) {}
+    virtual void visit(AssignmentExpression& node) {}
+    virtual void visit(TernaryExpression& node) {}
+    virtual void visit(IndexExpression& node) {}
+    virtual void visit(CallExpression& node) {}
+    virtual void visit(CastExpression& node) {}
+    virtual void visit(NewExpression& node) {}
+    virtual void visit(SizeOfExpression& node) {}
+    virtual void visit(TupleExpression& node) {}
+    virtual void visit(MatchExpression& node) {}
+    virtual void visit(PipeExpression& node) {}
+    virtual void visit(LambdaExpression& node) {}
+    virtual void visit(VariableDeclarationExpression& node) {}
+
+    // ---- Statement nodes ----
+    virtual void visit(ExpressionStatement& node) {}
+    virtual void visit(ReturnStatement& node) {}
+    virtual void visit(IfStatement& node) {}
+    virtual void visit(ForStatement& node) {}
+    virtual void visit(WhileStatement& node) {}
+    virtual void visit(BreakStatement& node) {}
+    virtual void visit(ContinueStatement& node) {}
+    virtual void visit(DeleteStatement& node) {}
+    virtual void visit(SwitchStatement& node) {}
+
+    // ---- Declaration nodes ----
+    virtual void visit(VariableDeclaration& node) {}
+    virtual void visit(TupleDestructuringDeclaration& node) {}
+    virtual void visit(FunctionDeclaration& node) {}
+    virtual void visit(ConstructorDeclaration& node) {}
+    virtual void visit(DestructorDeclaration& node) {}
+    virtual void visit(ExternFunctionDeclaration& node) {}
+    virtual void visit(OperatorDeclaration& node) {}
+    virtual void visit(EnumMemberNode& node) {}
+    virtual void visit(EnumDeclaration& node) {}
+    virtual void visit(StructDeclaration& node) {}
+    virtual void visit(ClassDeclaration& node) {}
+    virtual void visit(InterfaceDeclaration& node) {}
+    virtual void visit(ImportDeclaration& node) {}
 };
 
 } // namespace mingus

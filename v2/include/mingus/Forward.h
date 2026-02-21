@@ -61,13 +61,79 @@ class DeclarationBaseNode;
 class BlockStatementNode;
 class ArgumentsNode;
 class ParameterNode;
+class TypeNode;
+class ModifiersNode;
+class ModuleNode;
+class ProgramNode;
+
+// ---- AST expression nodes ----
+class IntegerLiteral;
+class FloatLiteral;
+class BoolLiteral;
+class CharLiteral;
+class StringLiteral;
+class NullLiteral;
+class InterpolatedStringExpression;
+class IdentifierExpression;
+class QualifiedNameExpression;
+class ThisExpression;
+class MemberAccessExpression;
+class BinaryExpression;
+class UnaryExpression;
+class AssignmentExpression;
+class TernaryExpression;
+class IndexExpression;
+class CallExpression;
+class CastExpression;
+class NewExpression;
+class SizeOfExpression;
+class TupleExpression;
+class MatchExpression;
+class PipeExpression;
+class LambdaExpression;
+class VariableDeclarationExpression;
+
+// ---- AST statement nodes ----
+class ExpressionStatement;
+class ReturnStatement;
+class IfStatement;
+class ForStatement;
+class WhileStatement;
+class BreakStatement;
+class ContinueStatement;
+class DeleteStatement;
+class SwitchStatement;
+
+// ---- AST declaration nodes ----
+class VariableDeclaration;
+class TupleDestructuringDeclaration;
+class FunctionDeclaration;
+class ConstructorDeclaration;
+class DestructorDeclaration;
+class ExternFunctionDeclaration;
+class OperatorDeclaration;
+class EnumDeclaration;
+class StructDeclaration;
+class ClassDeclaration;
+class InterfaceDeclaration;
+class ImportDeclaration;
+class EnumMemberNode;
+
+// ---- AST pattern nodes (for match expressions) ----
+class PatternNode;
+class LiteralPattern;
+class IdentifierPattern;
+class WildcardPattern;
+class RangePattern;
 
 // ---- Common type aliases ----
 using SymbolPtr     = std::shared_ptr<Symbol>;
 using ScopePtr      = std::shared_ptr<Scope>;
 using TypeSymbolPtr = std::shared_ptr<TypeSymbol>;
 
-// ---- Enums ----
+// ============================================================================
+// Enums
+// ============================================================================
 
 enum class AccessModifier {
     Public,
@@ -104,7 +170,8 @@ enum class OverloadableOp {
     Greater,    // >
     LessEq,    // <=
     GreaterEq,  // >=
-    Negate      // unary -
+    Negate,     // unary -
+    Index       // []
 };
 
 enum class CaptureDefault {
@@ -116,6 +183,53 @@ enum class CaptureDefault {
 enum class CaptureMode {
     ByValue,
     ByReference
+};
+
+// ---- Expression operator enums ----
+
+enum class BinaryOp {
+    Add, Sub, Mul, Div, Mod,
+    Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual,
+    LogicalAnd, LogicalOr,
+    BitwiseAnd, BitwiseOr, BitwiseXor,
+    ShiftLeft, ShiftRight
+};
+
+enum class UnaryOp {
+    Negate,
+    LogicalNot,
+    BitwiseNot,
+    AddressOf,
+    Dereference,
+    PreIncrement,
+    PreDecrement,
+    PostIncrement,
+    PostDecrement
+};
+
+enum class AssignOp {
+    Assign,
+    AddAssign, SubAssign, MulAssign, DivAssign, ModAssign,
+    AndAssign, OrAssign, XorAssign,
+    ShiftLeftAssign, ShiftRightAssign
+};
+
+enum class InterpolatedPartKind {
+    Text,
+    Expression
+};
+
+// ---- Modifier types ----
+
+enum class ModifierType {
+    Public,
+    Private,
+    Protected,
+    Static,
+    Abstract,
+    Extern,
+    Virtual,
+    Override
 };
 
 } // namespace mingus

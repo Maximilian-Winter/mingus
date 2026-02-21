@@ -64,6 +64,12 @@ void SymbolTable::setCurrentScope(const ScopePtr& scope) {
 
 void SymbolTable::pushScope(const ScopePtr& scope) {
     scopeStack_.push_back(currentScope_);
+    // Wire the enclosing scope if not already set.
+    // This ensures SymbolWithScope entries (functions, modules, classes)
+    // have their enclosing chain connected for name resolution.
+    if (!scope->getEnclosingScope()) {
+        scope->setEnclosingScope(currentScope_);
+    }
     currentScope_ = scope;
 }
 
