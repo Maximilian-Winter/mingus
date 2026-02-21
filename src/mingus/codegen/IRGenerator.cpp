@@ -3516,7 +3516,17 @@ void IRGenerator::visit(PipeExpression& node) {
         } else {
             // Regular function or closure pipe
             std::vector<llvm::Value*> pipeArgs;
-            pipeArgs.push_back(currentVal);
+            // Struct args must be passed by pointer (same as CallExpression)
+            if (currentVal && currentVal->getType()->isStructTy() &&
+                !currentVal->getType()->getStructName().starts_with("closure.") &&
+                !currentVal->getType()->getStructName().starts_with("interface.")) {
+                auto* tmp = createEntryBlockAlloca(currentFunction_,
+                    currentVal->getType(), "pipe.arg.tmp");
+                builder_.CreateStore(currentVal, tmp);
+                pipeArgs.push_back(tmp);
+            } else {
+                pipeArgs.push_back(currentVal);
+            }
             for (auto& extra : stage.extraArguments) {
                 extra->accept(*this);
                 if (lastValue_) pipeArgs.push_back(lastValue_);

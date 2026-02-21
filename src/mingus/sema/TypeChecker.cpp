@@ -968,6 +968,14 @@ void TypeChecker::visit(IndexExpression& node) {
         return;
     }
 
+    // String indexing: str[i] → char
+    if (auto* primType = objType->as<PrimitiveTypeSymbol>()) {
+        if (primType->primitiveKind == PrimitiveKind::String) {
+            node.resolvedType = symbolTable_.getCharType();
+            return;
+        }
+    }
+
     // Operator[] overload
     auto opSym = findOperatorOverload(objType.get(), OverloadableOp::Index);
     if (opSym) {
