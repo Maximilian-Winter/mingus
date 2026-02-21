@@ -1,340 +1,996 @@
 # Mingus Semantic Analysis Pipeline
 
-The Mingus compiler performs four sequential semantic analysis passes over the AST before code generation. Each pass reads data deposited by prior passes and adds new information.
+The Mingus compiler performs four sequential semantic analysis passes over the AST before code generation. Each pass is implemented as an `ASTVisitor` that walks the entire AST, reading data deposited by prior passes and annotating new information onto AST nodes and symbol objects.
 
 **Source files:**
-- `src/mingus/sema/SymbolTableBuilder.cpp` — Pass 1
-- `src/mingus/sema/TypeResolver.cpp` — Pass 2
-- `src/mingus/sema/TypeChecker.cpp` — Pass 3
-- `src/mingus/sema/SemanticValidator.cpp` — Pass 4
-- `include/mingus/Symbols.h` — Symbol types (V2: FunctionSymbol, ClassSymbol, etc.)
-- `include/mingus/TypeSymbol.h` — Type hierarchy (V2: types ARE symbols — TypeSymbol, PointerTypeSymbol, FunctionTypeSymbol, etc.)
-- `include/mingus/SymbolTable.h` — Scope tree, type interning, isCompatible()
+
+| File | Role |
+|------|------|
+| `src/mingus/sema/SymbolTableBuilder.cpp` | Pass 1 (~900 lines) |
+| `src/mingus/sema/TypeResolver.cpp` | Pass 2 (~670 lines) |
+| `src/mingus/sema/TypeChecker.cpp` | Pass 3 (~1260 lines) |
+| `src/mingus/sema/SemanticValidator.cpp` | Pass 4 (~880 lines) |
+| `include/mingus/Symbol.h` | Symbol base classes |
+| `include/mingus/Symbols.h` | Concrete symbol types |
+| `include/mingus/TypeSymbol.h` | Type-as-symbol hierarchy |
+| `include/mingus/Scope.h` | Scope hierarchy |
+| `include/mingus/SymbolTable.h` | Scope tree owner, type interning |
+| `include/mingus/sema/ErrorReporter.h` | Diagnostic collection |
 
 ---
 
 ## Table of Contents
 
-1. [Pipeline Overview](#1-pipeline-overview)
-2. [Type System](#2-type-system)
-3. [Pass 1: Symbol Table Builder](#3-pass-1-symbol-table-builder)
-4. [Pass 2: Type Resolver](#4-pass-2-type-resolver)
-5. [Pass 3: Type Checker](#5-pass-3-type-checker)
-6. [Pass 4: Semantic Validator](#6-pass-4-semantic-validator)
-7. [Pass Interaction Summary](#7-pass-interaction-summary)
+1. [Overview](#1-overview)
+2. [Symbol System](#2-symbol-system)
+3. [Scope System](#3-scope-system)
+4. [Pass 1: SymbolTableBuilder](#4-pass-1-symboltablebuilder)
+5. [Pass 2: TypeResolver](#5-pass-2-typeresolver)
+6. [Pass 3: TypeChecker](#6-pass-3-typechecker)
+7. [Pass 4: SemanticValidator](#7-pass-4-semanticvalidator)
+8. [Error Reporting](#8-error-reporting)
+9. [Key Invariants](#9-key-invariants)
 
 ---
 
-## 1. Pipeline Overview
+## 1. Overview
+
+### Four-Pass Architecture
 
 ```
 AST (from ANTLR4/ASTGenerator)
-  │
-  ▼
+  |
+  v
 Pass 1: SymbolTableBuilder
-  → Scope tree, symbol objects, vtables, auto ctor/dtor, imports
-  │
-  ▼
+  -> Scope tree, symbol objects, vtables, auto ctor/dtor, imports
+  |
+  v
 Pass 2: TypeResolver
-  → Resolves TypeNode → Type for all declarations (does NOT enter function bodies)
-  │
-  ▼
+  -> Resolves TypeNode -> TypeSymbol for all annotations
+  |
+  v
 Pass 3: TypeChecker
-  → Types all expressions, resolves identifiers, enforces compatibility
-  │
-  ▼
+  -> Types all expressions, resolves identifiers, enforces compatibility
+  |
+  v
 Pass 4: SemanticValidator
-  → RAII tracking, lambda captures, control flow, raw block safety, exhaustiveness
-  │
-  ▼
+  -> RAII tracking, lambda captures, control flow, exhaustiveness
+  |
+  v
 IRGenerator (codegen)
 ```
 
+### Why This Order
+
+The four passes form a strict dependency chain. Each pass requires data from all prior passes but never modifies their output:
+
+1. **Pass 1 must run first** because all subsequent passes need the scope tree and symbol objects. You cannot resolve a type name until the named symbol exists in a scope. Import resolution requires all module scopes to exist, so Pass 1 internally splits into Phase 1a (build everything) and Phase 1b (resolve imports).
+
+2. **Pass 2 must follow Pass 1** because it maps `TypeNode` AST annotations to `TypeSymbol` instances by looking up names in the scope tree. It sets the `type` field on `VariableSymbol` and `returnType` on `FunctionSymbol` using only explicit annotations -- it does not enter function bodies or perform inference.
+
+3. **Pass 3 must follow Pass 2** because expression type inference depends on knowing the declared types of variables, function parameters, and return types. When type-checking `x + y`, Pass 3 looks up the types that Pass 2 resolved. For `var`-declared variables, Pass 3 performs inference from the initializer expression.
+
+4. **Pass 4 must follow Pass 3** because lambda capture analysis needs to know which identifiers resolve to which symbols (set by Pass 3), and RAII tracking needs to know the fully-resolved types of local variables (also set by Pass 3). Return completeness checking needs the return type established in Pass 2.
+
+Each pass is **strictly additive** -- no pass modifies data written by a prior pass. This makes the pipeline easy to reason about and debug: if a bug appears in expression types, it is in Pass 3; if a capture is wrong, it is in Pass 4.
+
+### Invocation
+
+The compiler driver invokes the four passes in sequence:
+
+```cpp
+SymbolTable symbolTable;
+ErrorReporter errors;
+
+SymbolTableBuilder pass1(symbolTable, errors);
+pass1.build(program);  // Phase 1a + 1b
+
+TypeResolver pass2(symbolTable, errors);
+pass2.resolve(program);
+
+TypeChecker pass3(symbolTable, errors);
+pass3.check(program);
+
+SemanticValidator pass4(symbolTable, errors);
+pass4.validate(program);
+
+// pass4.getRAIIInfo() -> handed to IRGenerator
+```
+
 ---
 
-## 2. Type System
+## 2. Symbol System
 
-### Type Hierarchy (V2: Types ARE Symbols)
+The symbol system uses two core abstractions from `Symbol.h`:
 
-**File:** `include/mingus/TypeSymbol.h`
-
-In V2, there is no separate `Type` hierarchy. All types are `TypeSymbol` subclasses that inherit from `Symbol`:
-
-```
-TypeSymbol (abstract, extends Symbol)
-├── PrimitiveTypeSymbol  — int, double, float, byte, char, bool, string, void
-├── PointerTypeSymbol    — T* (has baseType field)
-├── ArrayTypeSymbol      — T[N] or T[]
-├── FunctionTypeSymbol   — (T1, T2) => R (with ParameterInfo::isReference)
-├── TupleTypeSymbol      — (T1, T2, ...)
-├── NullTypeSymbol       — the type of `null`
-└── ErrorTypeSymbol      — placeholder for unresolvable types
-```
-
-Note: `ReferenceType` is no longer a separate type. Reference semantics are encoded as `VariableSymbol::isReference` and `FunctionTypeSymbol::ParameterInfo::isReference`.
+- **`Symbol`** -- abstract interface for any named entity (variable, function, type, module)
+- **`SymbolWithScope`** -- the key dual-nature pattern: inherits from both `BaseScope` and `Symbol` via multiple inheritance, meaning a single object IS both a named symbol and a scope that contains other symbols
 
 ### Symbol Hierarchy
 
-**File:** `include/mingus/Symbols.h`
-
 ```
-Symbol (abstract)
-├── VariableSymbol    — variables, parameters, fields
-├── FunctionSymbol    — functions, methods, constructors, destructors, operators
-│   (has buildFunctionType() → FunctionTypeSymbol with ParameterInfo)
-├── TypeSymbol        — base for ALL types (see above)
-│   ├── ClassSymbol   — classes (+ vtable, allFields, interfaces, inheritance chain)
-│   ├── StructSymbol  — structs
-│   ├── EnumSymbol    — enums
-│   └── InterfaceSymbol — interfaces
-└── ModuleSymbol      — modules
+Symbol (abstract interface)
++-- BaseSymbol (leaf symbols -- no scope of their own)
+|   +-- TypedSymbol (abstract -- getType()/setType() for TypeSymbol)
+|       +-- VariableSymbol
++-- SymbolWithScope (MI: BaseScope + Symbol -- the dual-nature pattern)
+    +-- TypeSymbol (base for ALL types -- every type IS a scope)
+    |   +-- PrimitiveTypeSymbol (int, double, float, byte, char, string, bool, void)
+    |   +-- PointerTypeSymbol (T*)
+    |   +-- ArrayTypeSymbol (T[N])
+    |   +-- TupleTypeSymbol ((T1, T2, ...))
+    |   +-- FunctionTypeSymbol ((T1, T2) => R)
+    |   +-- ReferenceTypeSymbol (T& -- transient, unwrapped by Pass 2)
+    |   +-- ErrorTypeSymbol (sentinel for error recovery)
+    |   +-- NullTypeSymbol (compatible with pointers and closures)
+    |   +-- ClassSymbol (class declarations)
+    |   +-- StructSymbol (struct declarations)
+    |   +-- EnumSymbol (enum declarations)
+    |   +-- InterfaceSymbol (interface declarations)
+    +-- FunctionSymbol (named functions)
+    |   +-- MethodSymbol (instance methods)
+    |   +-- ConstructorSymbol (class constructors)
+    |   +-- DestructorSymbol (class destructors)
+    |   +-- OperatorSymbol (operator overloads)
+    +-- ModuleSymbol (module declarations)
 ```
 
-V2 key change: `ConstructorSymbol`, `DestructorSymbol`, and `OperatorSymbol` are unified into `FunctionSymbol`. Classes store them as `constructor`, `destructor`, `operators` fields on `ClassSymbol`.
+### VariableSymbol
 
-Key `VariableSymbol` fields:
-- `role`: `Field` (struct/class member) or `Local` (function-local)
-- `fieldIndex`: GEP index for struct/class fields
-- `isReference`: true for `T&` parameters
-- `isInferred`: true for `var` declarations
-- `isMutable`: exists but not currently enforced
+Defined in `Symbols.h`. Represents locals, parameters, and struct/class fields.
 
-Key `ClassSymbol` fields:
-- `vtable: vector<FunctionSymbol*>` — virtual method slots (slot 0 = destructor)
-- `allFields: vector<VariableSymbol*>` — base fields + own fields
-- `implementedInterfaces: vector<InterfaceSymbol*>`
-- `baseClass: ClassSymbol*`
-- `constructor`, `destructor`
+| Field | Type | Description |
+|-------|------|-------------|
+| `role` | `VariableRole` | `Local`, `Parameter`, or `Field` |
+| `isReference` | `bool` | True for `T&` parameters -- pass-by-pointer semantics |
+| `isInferred` | `bool` | True for `var x = expr` declarations |
+| `isMutable` | `bool` | True unless declared `const` |
+| `isInitialized` | `bool` | Tracks definite assignment |
+| `fieldIndex` | `int` | GEP index for struct/class fields (-1 if not a field) |
+| `accessLevel` | `AccessModifier` | `Public`, `Private`, or `Protected` |
 
-### Type Compatibility Rules
+The `role` field is set in Pass 1:
+- Inside a struct/class scope (`inTypeScope_ == true`): `Field`
+- Function parameters: `Parameter`
+- Everything else: `Local`
 
-**File:** `src/mingus/SymbolTable.cpp` (V2: merged from TypeRegistry)
+### FunctionSymbol
 
-`isCompatible(from, to)` is the core compatibility check, used for assignments, arguments, and returns:
+Defined in `Symbols.h`. Extends `SymbolWithScope`, meaning a function IS the scope for its body. Parameters are `VariableSymbol` instances defined within this scope.
 
-1. **Same type**: always compatible
-2. **Pointer equality**: if both resolve to the same `Type*`
-3. **UserType name match**: if both are `UserType` with the same `name` and `underlyingKind`
-4. **Numeric widening** (one-directional): `byte` → `int`, `char` → `int`, `int` → `float`/`double`, `float` → `double`
-5. **Null literal**: `NullType` compatible with any `PointerType` or `FunctionType`
-6. **Enum ↔ underlying**: both directions allowed
-7. **Interface pointer**: `Dog*` → `Drawable*` if Dog implements Drawable
-8. **byte* universal pointer**: `byte*` compatible both ways with any `T*` (like `void*`)
-9. **Inheritance pointer**: `Derived*` → `Base*`
-10. **Inheritance value**: `Derived` → `Base`
-11. **Reference**: `T&` ↔ `T&`, `T` → `T&` (implicit address-of at call site)
+| Field | Type | Description |
+|-------|------|-------------|
+| `returnType` | `TypeSymbolPtr` | Set by Pass 2 |
+| `parameters` | `vector<shared_ptr<VariableSymbol>>` | Ordered parameter list |
+| `isMethod` | `bool` | True if declared inside a class/struct |
+| `isExtern` | `bool` | True for `extern func` declarations |
+| `isStatic` | `bool` | Static methods do not receive `this` |
+| `isAbstract` | `bool` | No body, must be overridden |
+| `isVirtual` | `bool` | Has a vtable slot |
+| `isVariadic` | `bool` | Accepts variable arguments (extern only) |
+| `hasThisParam` | `bool` | True for non-static methods |
+| `vtableIndex` | `int` | Slot in the class vtable (-1 if not virtual) |
+| `accessLevel` | `AccessModifier` | Public/Private/Protected |
+
+`buildFunctionType()` constructs a `FunctionTypeSymbol` from the function's parameter list and return type, preserving `ParameterInfo::isReference` for each parameter. This is used whenever a function reference is stored in a variable or passed as an argument.
+
+Subclasses:
+- **`MethodSymbol`**: Adds `classOfThisMethod` to link back to the owning class.
+- **`ConstructorSymbol`**: Always `isMethod = true`, `hasThisParam = true`. Name is `"constructor"`.
+- **`DestructorSymbol`**: Always `isMethod = true`, `hasThisParam = true`. Name is `"destructor"`.
+- **`OperatorSymbol`**: Adds `op` (the `OverloadableOp` enum value) and `ownerType`.
+
+### ClassSymbol
+
+Defined in `Symbols.h`. Extends `TypeSymbol` (which extends `SymbolWithScope`), so a class IS both a type and a scope for its members.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `baseClassNames` | `vector<string>` | Unresolved names from the parse tree |
+| `resolvedBaseClass` | `ClassSymbol*` | Resolved in Pass 1 |
+| `isAbstract` | `bool` | Cannot be instantiated directly |
+| `fields` | `vector<shared_ptr<VariableSymbol>>` | Own fields only |
+| `allFields` | `vector<shared_ptr<VariableSymbol>>` | Inherited + own fields (LLVM GEP order) |
+| `constructor` | `shared_ptr<ConstructorSymbol>` | Always present (auto-generated if missing) |
+| `destructor` | `shared_ptr<DestructorSymbol>` | Always present (auto-generated if missing) |
+| `vtable` | `vector<shared_ptr<FunctionSymbol>>` | Virtual method slots (slot 0 = destructor) |
+| `vtableSize` | `int` | Number of vtable entries |
+| `implementedInterfaces` | `vector<shared_ptr<InterfaceSymbol>>` | Interfaces this class implements |
+
+Key methods:
+- `hasRAII()`: Returns true if the class has a destructor (always true due to auto-generation).
+- `hasVtable()`: Returns true if `vtableSize > 0`.
+- `resolve(name)`: Overridden to walk the inheritance chain -- checks own scope, then base class scope recursively.
+
+### StructSymbol
+
+Defined in `Symbols.h`. Extends `TypeSymbol`. Simpler than `ClassSymbol`: no inheritance, no vtable, no constructor/destructor.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fields` | `vector<shared_ptr<VariableSymbol>>` | All fields |
+
+`needsCleanup()` returns true if any field is closure-typed (requires synthetic cleanup function in codegen).
+
+### EnumSymbol
+
+Defined in `Symbols.h`. Extends `TypeSymbol`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `members` | `vector<MemberInfo>` | Name, integer value, string value, explicit flag |
+| `underlyingType` | `TypeSymbolPtr` | Default `int`; can be `string` for string-backed enums |
+
+Each `MemberInfo` has:
+- `name`: The member identifier
+- `intValue`: Auto-incremented integer value (or explicit)
+- `stringValue`: For string-backed enums
+- `hasExplicitValue`: Whether the value was explicitly assigned
+
+`findMember(name)` searches the members vector by name.
+
+### InterfaceSymbol
+
+Defined in `Symbols.h`. Extends `TypeSymbol`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `methods` | `vector<shared_ptr<FunctionSymbol>>` | Abstract method declarations |
+
+Each method gets a `vtableIndex` assigned sequentially (0-based) for itable dispatch at runtime.
+
+### ModuleSymbol
+
+Defined in `Symbols.h`. Extends `SymbolWithScope`, so a module IS the scope for its top-level declarations.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `importedModules` | `vector<shared_ptr<ModuleSymbol>>` | Modules imported by this module |
 
 ---
 
-## 3. Pass 1: Symbol Table Builder
+## 3. Scope System
+
+### Scope Hierarchy
+
+Defined in `Scope.h`:
+
+```
+Scope (abstract interface)
++-- BaseScope (concrete: symbol map, enclosing chain, nesting)
+    +-- GlobalScope (root scope, one per compilation)
+    +-- BlockScope (anonymous { } blocks, for bodies, match arms)
+```
+
+`SymbolWithScope` also extends `BaseScope` -- this is the key multiple-inheritance pattern. `ClassSymbol`, `FunctionSymbol`, and `ModuleSymbol` are all both symbols and scopes.
+
+### Scope Interface
+
+Every scope provides:
+
+```cpp
+// Name resolution: walk up enclosing chain
+SymbolPtr resolve(const string& name) const;
+
+// Define a symbol in this scope
+void define(const SymbolPtr& sym);
+
+// All symbols directly in this scope
+vector<SymbolPtr> getAllSymbols() const;
+
+// Scope chain navigation
+ScopePtr getEnclosingScope() const;
+void setEnclosingScope(const ScopePtr& scope);
+
+// Nest a child scope (block scopes)
+void nest(const ScopePtr& childScope);
+
+// Operator overload management (separate namespace)
+void defineOperator(const shared_ptr<OperatorSymbol>& op);
+shared_ptr<OperatorSymbol> resolveOperator(OverloadableOp op) const;
+```
+
+### Name Resolution (`resolve`)
+
+`BaseScope::resolve(name)` implements the standard scope chain walk:
+
+1. Check this scope's local symbol map
+2. If not found, delegate to `enclosingScope_->resolve(name)`
+3. Continue until `GlobalScope` (which has no enclosing scope)
+
+`ClassSymbol` overrides `resolve()` to also walk the inheritance chain: after checking own symbols, it checks `resolvedBaseClass->resolve(name)`.
+
+### How Class Scope Enables Bare Field Access
+
+Inside a class method, the method's `FunctionSymbol` scope has the `ClassSymbol` as its enclosing scope. When code references a bare identifier like `field`, the resolution chain is:
+
+1. Check the function's local scope (parameters, local variables)
+2. Check the class scope (fields, methods)
+3. Check the module scope
+4. Check the global scope
+
+This means `field` resolves to the class field without requiring `this.field`, because the class scope is in the enclosing chain.
+
+### Scope Kinds in Mingus
+
+| Construct | Scope Kind | Notes |
+|-----------|-----------|-------|
+| Program root | `GlobalScope` | One per compilation |
+| `module X { }` | `ModuleSymbol` (is scope) | All top-level decls live here |
+| `class X { }` | `ClassSymbol` (is scope) | Fields, methods, ctor, dtor |
+| `struct X { }` | `StructSymbol` (is scope) | Fields, methods, operators |
+| `interface X { }` | `InterfaceSymbol` (is scope) | Abstract method signatures |
+| `func f() { }` | `FunctionSymbol` (is scope) | Parameters + body statements |
+| `constructor() { }` | `ConstructorSymbol` (is scope) | Parameters + body |
+| `destructor() { }` | `DestructorSymbol` (is scope) | Body only (no params) |
+| `operator+() { }` | `OperatorSymbol` (is scope) | Parameters + body |
+| `{ }` block | `BlockScope` | Anonymous child scope |
+| `for (...) { }` | `BlockScope` | Loop variable visible in body |
+| match arm | `BlockScope` | Binding pattern variables |
+| lambda `[=](x) => { }` | `BlockScope` (label `__lambda`) | Parameter symbols |
+
+### SymbolTable
+
+Defined in `SymbolTable.h`. The `SymbolTable` is the root owner of:
+
+1. **The `GlobalScope`** -- root of the entire scope tree
+2. **The current scope pointer** -- maintained via `pushScope()`/`popScope()` during Pass 1 construction
+3. **The type interning map** -- ensures structural type equality (same `T*` produces the same `PointerTypeSymbol` instance)
+
+**Primitive types** are pre-registered on construction: `getIntType()`, `getDoubleType()`, `getFloatType()`, `getByteType()`, `getCharType()`, `getStringType()`, `getBoolType()`, `getVoidType()`.
+
+**Compound types** are interned by structural key:
+- `getPointerType(baseType)` -- interns `T*`
+- `getArrayType(elementType, size)` -- interns `T[N]`
+- `getTupleType(elementTypes)` -- interns `(T1, T2, ...)`
+- `getFunctionType(params, returnType)` -- interns `(T1, T2) => R`
+- `getReferenceType(baseType)` -- interns `T&` (transient, unwrapped by Pass 2)
+
+**Sentinel types**: `getErrorType()` (absorbs cascading errors) and `getNullType()` (compatible with pointers and closures).
+
+**User types** are registered by name via `registerType(name, typeSymbol)` and looked up via `resolveType(name)`.
+
+**Type compatibility** is checked via `isCompatible(from, to)`:
+1. Same type instance: always compatible
+2. Either side is `ErrorTypeSymbol`: compatible (prevents cascading errors)
+3. `NullTypeSymbol` to `PointerTypeSymbol` or `FunctionTypeSymbol`: compatible
+4. Numeric widening: `byte` -> `int`, `char` -> `int`, `int` -> `float`/`double`, `float` -> `double`
+5. Enum to underlying type and vice versa
+6. `byte*` as universal pointer (like `void*`)
+7. Inheritance: `Derived*` -> `Base*`, `Derived` -> `Base`
+8. Interface: `ConcreteClass*` -> `Interface*` if class implements interface
+9. Reference: `T` -> `T&` (implicit address-of at call site)
+
+---
+
+## 4. Pass 1: SymbolTableBuilder
+
+**Header:** `include/mingus/sema/SymbolTableBuilder.h`
+**Source:** `src/mingus/sema/SymbolTableBuilder.cpp`
 
 ### Purpose
 
-Creates all named symbols, builds the scope tree, resolves imports, builds vtables, and auto-generates constructors/destructors.
+Pass 1 creates all named symbols, builds the scope tree, resolves imports, builds vtables, and auto-generates constructors/destructors. After Pass 1 completes, every AST node has an `astScopeNode` pointer linking it to its enclosing scope, and every declaration node has a `resolvedXxx` pointer to its corresponding symbol.
 
 ### Execution Structure
 
+```cpp
+void SymbolTableBuilder::build(ProgramNode& program) {
+    // Phase 1a: Build scope tree and symbols
+    visit(program);
+
+    // Phase 1b: Resolve imports (all module scopes now exist)
+    resolveAllImports(program);
+}
 ```
-build(ProgramNode):
-  Pass 1a: Visit all modules (create scopes, symbols — no imports resolved yet)
-  Pass 1b: resolveAllImports() (cross-module symbol injection)
+
+Phase 1a visits every module and declaration, creating symbols and building the scope tree. Phase 1b runs separately because imports require all module scopes to exist before cross-module symbol injection can work.
+
+### State Tracking
+
+```cpp
+bool inTypeScope_ = false;          // true when inside struct/class members
+shared_ptr<ClassSymbol> currentClass_;  // for ctor/dtor context
 ```
 
-All module scopes must exist before any import can resolve, hence the two sub-passes.
+`inTypeScope_` determines whether a `VariableDeclaration` creates a `Field` or `Local` symbol.
 
-### Scope Creation
+### Scope Helpers
 
-| Construct | Scope Kind |
-|-----------|-----------|
-| Program (global) | `Global` |
-| `module X { }` | `Module` |
-| `struct/class/interface` | `TypeMembers` |
-| `function/constructor/destructor/operator` | `Function` |
-| `{ }` block | `Block` |
-| `for` statement | `Block` (for loop variable) |
-| `raw { }` | `RawBlock` |
-| Lambda expression | `Function` |
-| Match arm | `Block` |
+Two key helpers establish scope context:
 
-### Symbol Registration
+- `setScope(node)`: Sets `node.astScopeNode = symbolTable_.getCurrentScope()` -- stamps the current scope onto the node without creating a new scope.
+- `pushBlockScope(node)`: Creates a new `BlockScope`, nests it in the current scope, pushes it onto the scope stack, and sets it as the node's scope.
 
-- **Functions**: Symbol defined in current scope before pushing function scope. Parameters defined inside function scope.
-- **Struct fields**: `role = Field`, ascending `fieldIndex` (0-based).
-- **Class fields**: Same as struct fields. Vtable and `allFields` built after all members processed.
-- **Variables**: `role = Field` if inside TypeMembers scope, otherwise `Local`.
-- **Enum members**: Values evaluated eagerly (auto-increment from last explicit value).
-- **Lambda expressions**: Creates a `Function` scope with parameter symbols.
-- **Binding patterns** (`var x` in match): Creates `Local` variable in the arm's `Block` scope.
+### Symbol Creation for Declarations
+
+**Variables:**
+
+```cpp
+void SymbolTableBuilder::visit(VariableDeclaration& node) {
+    auto varSym = make_shared<VariableSymbol>(node.name, nullptr);
+    varSym->role = inTypeScope_ ? VariableRole::Field : VariableRole::Local;
+    varSym->isInferred = node.isInferred;
+    varSym->isMutable = !node.isConst;
+    varSym->accessLevel = node.accessModifier;
+    symbolTable_.defineSymbol(varSym);
+    node.resolvedVariable = varSym;
+    // Walk initializer for nested lambdas/declarations
+}
+```
+
+The type is left as `nullptr` -- Pass 2 fills it in.
+
+**Functions:**
+
+```cpp
+void SymbolTableBuilder::visit(FunctionDeclaration& node) {
+    // If inTypeScope_: create MethodSymbol with classOfThisMethod
+    // Otherwise: create FunctionSymbol
+    // Set isStatic, isAbstract, isMethod, hasThisParam, accessLevel
+    symbolTable_.defineSymbol(funcSym);
+    node.resolvedFunction = funcSym;
+
+    // Push function as scope, create parameter symbols inside it
+    symbolTable_.pushScope(funcSym);
+    createParameterSymbols(node.parameters, funcSym);
+    visitStatements(node.body->statements);
+    symbolTable_.popScope();
+}
+```
+
+Key detail: the `FunctionSymbol` IS the scope -- `pushScope(funcSym)` pushes the function symbol itself.
+
+**Parameters:**
+
+```cpp
+void SymbolTableBuilder::createParameterSymbols(...) {
+    for (auto& param : params) {
+        auto paramSym = make_shared<VariableSymbol>(param->name, nullptr);
+        paramSym->role = VariableRole::Parameter;
+        paramSym->isReference = param->isReference;
+        symbolTable_.defineSymbol(paramSym);
+        funcSym->parameters.push_back(paramSym);
+        param->resolvedSymbol = paramSym;  // V2: direct link
+    }
+}
+```
+
+The `param->resolvedSymbol = paramSym` line is critical. In V2, every `ParameterNode` has a direct pointer to its `VariableSymbol`. This eliminates the V1 `scanForParamSymbols` hack where codegen had to search the AST to find parameter-symbol mappings.
+
+**Structs:**
+
+Pass 1 enters the struct as a scope (`pushScope(structSym)`), sets `inTypeScope_ = true`, then visits fields (which become `Field` role variables with ascending `fieldIndex`), methods, and operators. After all members, it restores the previous state.
+
+**Classes:**
+
+Similar to structs but with additional steps:
+
+1. Resolve base class by looking up `baseClassNames[0]` in the current scope. If found, copy inherited `allFields`.
+2. Remaining base class names are treated as implemented interfaces.
+3. Visit fields (appended to both `fields` and `allFields`).
+4. Visit or auto-generate constructor and destructor.
+5. Visit methods and operators.
+6. Call `buildVtable(classSym)` after all members are registered.
+
+**Enums:**
+
+Enum members are evaluated eagerly with auto-increment:
+
+```cpp
+int64_t nextValue = 0;
+for (auto& member : node.members) {
+    if (member->value is IntegerLiteral) {
+        info.intValue = intLit->value;
+        nextValue = info.intValue + 1;
+    } else if (member->value is StringLiteral) {
+        info.stringValue = strLit->value;
+    } else {
+        info.intValue = nextValue++;
+    }
+    enumSym->members.push_back(info);
+}
+```
+
+**Interfaces:**
+
+All interface methods are marked `isAbstract = true`. Each method gets a sequential `vtableIndex` for itable dispatch.
+
+**Lambdas:**
+
+A lambda creates a `BlockScope` labeled `__lambda`, not a `FunctionSymbol` scope. Parameters are created as `VariableSymbol` instances with `role = Parameter` inside this scope. The lambda body is visited within this scope.
+
+**Match Arms:**
+
+Each match arm gets its own `BlockScope`. `IdentifierPattern` nodes create `Local` variables in the arm scope (for binding patterns like `x` in `match val { x => ... }`).
 
 ### Auto-Generated Constructors and Destructors
 
-If a `ClassDeclaration` lacks an explicit constructor, Pass 1 injects:
-1. A synthetic `ConstructorDeclaration` AST node (empty body, no parameters, public)
-2. A `ConstructorSymbol` in the class's TypeMembers scope
+If a `ClassDeclaration` lacks an explicit constructor:
 
-Same for missing destructors. This ensures `classSym->hasRAII()` always returns `true`, so all class instances get automatic destructor calls at scope exit.
+```cpp
+void SymbolTableBuilder::autoGenerateConstructor(ClassDeclaration& node, ...) {
+    auto ctorSym = make_shared<ConstructorSymbol>(classSym->getName());
+    symbolTable_.defineSymbol(ctorSym);
+    classSym->constructor = ctorSym;
 
-### Import Resolution (Pass 1b)
+    // Create empty body AST node for consistency
+    auto body = make_shared<BlockStatementNode>();
+    body->astScopeNode = ctorSym;
+    node.constructor = make_shared<ConstructorDeclaration>();
+    node.constructor->body = body;
+    node.constructor->resolvedConstructor = ctorSym;
+}
+```
 
-**Selective import** (`import Foo, Bar from Mod`):
-1. Look up source module in global scope
-2. For each target name, look up in source module's scope
-3. Call `moduleScope->defineAs(name_or_alias, sym)` in the importing module
-
-**Whole-module import** (`import Mod`):
-1. Iterate source module's symbol map
-2. Copy all public symbols into importing module's scope
-3. Skip existing names (silent override suppression)
-4. Operators are NOT imported (resolved via type, not name)
+The same pattern applies to destructors. This guarantees that `classSym->constructor` and `classSym->destructor` are never null, which means `hasRAII()` always returns true for classes, ensuring all class instances get automatic destructor calls at scope exit.
 
 ### Vtable Building
 
 `buildVtable(ClassSymbol*)` runs after all class members are registered:
 
-1. Inherit base class vtable and `allFields` (copy base vectors)
-2. Add own fields to `allFields`
-3. Slot 0 = destructor (root class: insert; derived: override)
-4. For each non-static method:
-   - If base has a slot with same name: override → record `vtableIndex`
-   - Otherwise: append as new slot
+1. **Inherit base vtable**: Copy the base class's vtable vector.
+2. **Slot 0 = destructor**: Root classes insert the destructor at slot 0; derived classes override slot 0 with their own destructor. The destructor always gets `vtableIndex = 0`.
+3. **Instance methods**: For each non-static, non-ctor/dtor method:
+   - If the base vtable has a slot with the same name: override that slot, set `vtableIndex`.
+   - Otherwise: append as a new slot, set `isVirtual = true`.
+4. Set `vtableSize = vtable.size()`.
 
-**Note:** Vtable ordering for new methods is alphabetical (from `std::map` iteration), not source declaration order.
+All instance methods are automatically virtual. This differs from C++ where you must explicitly mark methods as `virtual`.
 
-### Pass 1 Limitations
+### Import Resolution (Phase 1b)
 
-- **No forward declarations**: Base class must be defined before derived class.
-- **Operator imports**: Whole-module import does not transfer operator overloads.
-- **Single constructor/destructor**: Only one per class; multiple definitions silently overwrite.
-- **Vtable ordering**: New virtual methods added by derived classes are in alphabetical order.
+`resolveAllImports()` runs after all modules have been visited:
 
----
+**Whole-module import** (`import Module;`):
+1. Look up source module in the root scope.
+2. Iterate all symbols in the source module.
+3. Copy all `Public` symbols into the importing module's scope.
 
-## 4. Pass 2: Type Resolver
-
-### Purpose
-
-Converts all **declaration-level** `TypeNode` AST nodes into concrete `TypeSymbol` objects. Does NOT enter function bodies.
-
-### Core Resolution
-
-| TypeNode | Resolution |
-|----------|-----------|
-| `PrimitiveTypeNode` | `SymbolTable::getIntType()`, `getDoubleType()`, etc. |
-| `NamedTypeNode` | Scope lookup → must be `TypeSymbol` → `SymbolTable::resolveType(name)` |
-| `PointerTypeNode` | Recursive resolve → `SymbolTable::getPointerTo()` |
-| `ArrayTypeNode` | Recursive resolve → `SymbolTable::getArrayOf(elementType, size)` |
-| `TupleTypeNode` | Resolve all elements → `SymbolTable::getTupleOf(types)` |
-| `FunctionTypeNode` | Resolve params + return → `FunctionTypeSymbol` with `ParameterInfo` |
-
-### Reference Parameter Unwrapping
-
-When a parameter is `int& x`:
-- `VariableSymbol::type` is set to `int` (the base type)
-- `VariableSymbol::isReference = true` carries the reference semantic
-- Codegen uses `isReference` to decide pointer vs value passing
-
-### What Pass 2 Does NOT Do
-
-- Does NOT enter function bodies or statements
-- Does NOT resolve `var`-declared types (deferred to Pass 3)
-- Does NOT resolve expression types
-
-### Pass 2 Limitations
-
-- **No forward reference for types**: Types must be defined before use in type annotations.
-- **Array size must be integer literal**: Constant expressions are not evaluated.
+**Selective import** (`import x, y from Module;`):
+1. Look up source module in the root scope.
+2. For each target name, look up in the source module's scope.
+3. Define the symbol in the importing module's scope.
+4. Aliased imports are supported but currently define the original symbol.
 
 ---
 
-## 5. Pass 3: Type Checker
+## 5. Pass 2: TypeResolver
+
+**Header:** `include/mingus/sema/TypeResolver.h`
+**Source:** `src/mingus/sema/TypeResolver.cpp`
 
 ### Purpose
 
-The most complex pass. Enters all function bodies and:
-- Sets `resolvedType` on every expression
-- Resolves identifiers to symbols
-- Enforces type compatibility
-- Handles type inference for `var`
-- Resolves operator overloads
-- Enforces access modifiers
-- Type-checks lambda expressions
+Pass 2 converts all `TypeNode` AST annotations into concrete `TypeSymbol` instances. It sets the `type` field on `VariableSymbol` for explicitly-typed variables, the `returnType` on `FunctionSymbol`, and the `underlyingType` on `EnumSymbol`. It does NOT perform type inference for `var`-declared variables -- that is deferred to Pass 3.
 
-### Scope Navigation
+### Core Type Resolution
 
-Pass 3 uses a different navigation model. Named scopes (functions, type members) are entered by reference. Anonymous child scopes (blocks, match arms, for loops, lambdas) are entered sequentially via `enterNextChildScope()` using a child index counter.
+`resolveTypeNode(TypeNode*)` dispatches based on the TypeNode subclass:
 
-### Expression Type Rules
+| TypeNode | Resolution Strategy |
+|----------|-------------------|
+| `PrimitiveTypeNode` | Direct lookup: `symbolTable_.getIntType()`, etc. |
+| `NamedTypeNode` | Check type registry first, then scope chain lookup |
+| `PointerTypeNode` | Recursive resolve of base type, then `symbolTable_.getPointerType(base)` |
+| `ArrayTypeNode` | Recursive resolve of element type, evaluate literal size, then `symbolTable_.getArrayType(elem, size)` |
+| `TupleTypeNode` | Resolve all element types, then `symbolTable_.getTupleType(types)` |
+| `FunctionTypeNode` | Resolve parameter types (with reference unwrapping) and return type, then `symbolTable_.getFunctionType(params, ret)` |
 
-| Expression | Result Type |
-|-----------|-------------|
+Named type resolution follows two paths:
+1. **Single name**: Check `symbolTable_.resolveType(name)` first (type registry), then fall back to scope resolution via `scope->resolve(name)`.
+2. **Qualified name** (e.g., `Module.TypeName`): Resolve the first part as a module, then look up the type within the module's scope.
+
+Unresolvable types become `ErrorTypeSymbol` to prevent cascading errors.
+
+### The Critical ReferenceType Unwrap
+
+When a parameter type annotation is `T&` (e.g., `int& x`), the parser produces a `PointerTypeNode` with `isReference = true`. Pass 2 resolves this to a `ReferenceTypeSymbol`, but then **must unwrap it**:
+
+```cpp
+void TypeResolver::resolveParameters(...) {
+    for (auto& param : params) {
+        auto resolvedType = resolveTypeNode(param->type);
+        if (auto* refType = resolvedType->as<ReferenceTypeSymbol>()) {
+            varSym->setType(refType->baseType);    // Store BASE type
+            varSym->isReference = true;              // Carry ref semantics as flag
+        } else {
+            varSym->setType(resolvedType);
+        }
+    }
+}
+```
+
+This unwrapping is **critical**. Without it, codegen's `mapType()` would receive `ReferenceTypeSymbol(int)` and map it to `ptr` (LLVM pointer type) instead of `i32`. The reference semantic is carried entirely by the `isReference` flag on `VariableSymbol`, not by the type itself.
+
+The same unwrapping applies in two locations:
+1. `resolveParameters()` -- for regular function/method parameters
+2. `visit(LambdaExpression&)` -- for lambda parameters
+
+And within `FunctionTypeNode` resolution, reference parameters in function type annotations are also unwrapped into `FunctionTypeSymbol::ParameterInfo::isReference`.
+
+### Variable Type Resolution
+
+For variables with explicit type annotations:
+
+```cpp
+void TypeResolver::visit(VariableDeclaration& node) {
+    if (node.type && node.resolvedVariable) {
+        auto resolvedType = resolveTypeNode(node.type);
+        node.resolvedVariable->setType(resolvedType);
+    }
+    // Walk initializer for nested lambdas/var-decl-exprs
+    if (node.initializer) node.initializer->accept(*this);
+}
+```
+
+For `var`-declared variables (`isInferred = true`), the type is left as `nullptr`. Pass 3 infers it from the initializer expression.
+
+### What Pass 2 Does and Does Not Do
+
+**Does:**
+- Resolves all explicit type annotations to `TypeSymbol` instances
+- Sets `VariableSymbol::type` for explicitly-typed variables and parameters
+- Sets `FunctionSymbol::returnType` (defaults to `void` if no annotation)
+- Sets `EnumSymbol::underlyingType` (defaults to `int`)
+- Unwraps `ReferenceTypeSymbol` on parameters
+- Resolves `CastExpression::targetType` and `NewExpression::type`
+- Resolves `SizeOfExpression::targetType`
+
+**Does NOT:**
+- Infer types for `var`-declared variables (deferred to Pass 3)
+- Set `resolvedType` on expression nodes (deferred to Pass 3)
+- Evaluate constant expressions for array sizes (only integer literals)
+- Resolve identifiers to symbols
+
+---
+
+## 6. Pass 3: TypeChecker
+
+**Header:** `include/mingus/sema/TypeChecker.h`
+**Source:** `src/mingus/sema/TypeChecker.cpp`
+
+### Purpose
+
+The most complex pass. Pass 3 performs bottom-up expression type inference, identifier resolution, call resolution, operator overload dispatch, type compatibility checking, and `var` type inference. After Pass 3, every `ExpressionBaseNode` has a non-null `resolvedType`.
+
+### Context Tracking
+
+```cpp
+shared_ptr<FunctionSymbol> currentFunction_;   // Current function being checked
+TypeSymbolPtr currentReturnType_;              // Expected return type
+TypeSymbol* currentClass_ = nullptr;           // Current class/struct context
+```
+
+These are saved and restored at each function/class/struct boundary.
+
+### Expression Type Inference (Bottom-Up)
+
+Pass 3 visits children first, then infers the parent node's type from child types.
+
+**Literals:**
+
+| Literal | Resolved Type |
+|---------|--------------|
 | `IntegerLiteral` | `int` |
 | `FloatLiteral` | `double` |
 | `BoolLiteral` | `bool` |
 | `CharLiteral` | `char` |
 | `StringLiteral` | `string` |
 | `NullLiteral` | `NullType` |
-| `IdentifierExpression` | Looked up via scope chain |
-| `ThisExpression` | Current class/struct `UserType` |
-| `BinaryExpression` | Operator overload check → arithmetic rules → widened type |
-| `UnaryExpression` | Negate/Not/BitwiseNot/AddressOf/Dereference |
-| `CallExpression` | Return type of called function/constructor |
-| `MemberAccessExpression` | Field type, method type, enum value, or string builtin |
-| `IndexExpression` | Element type (array/pointer/string/operator[]) |
-| `NewExpression` | `pointer_to<T>` |
-| `CastExpression` | Target type (validated for legality) |
-| `TernaryExpression` | Wider of then/else branches |
-| `PipeExpression` | Output type of final stage |
-| `MatchExpression` | Wider type across all arm bodies |
-| `TupleExpression` | `TupleType` of element types |
-| `LambdaExpression` | `FunctionType(params, inferredReturn)` |
+| `InterpolatedStringExpression` | `string` |
 
-### MemberAccessExpression (Most Complex)
+**Identifier Resolution:**
 
-Resolves in this priority order:
-1. Arrow (`->`) requires and dereferences pointer
-2. Dot auto-dereferences one level of pointer
-3. String built-in methods (`length`, `charAt`, `substring`)
-4. Enum member access
-5. Static access (type name + static method)
-6. Field access (by name)
-7. Method access (by name)
-8. Access modifier enforcement (public/private/protected)
-
-### Type Inference for `var`
-
-```
-var x = expr;
-→ Evaluate expr → get resolvedType → set varSym->type
+```cpp
+void TypeChecker::visit(IdentifierExpression& node) {
+    auto sym = scope->resolve(node.name);
+    node.resolvedSymbol = sym;
+    node.resolvedType = getSymbolType(sym);
+}
 ```
 
-Errors: `var` without initializer, `var = null` (unknown type), `var = voidFunc()`.
+`getSymbolType()` maps symbols to types:
+- `VariableSymbol` -> its declared/inferred type
+- `FunctionSymbol` -> `buildFunctionType()` result
+- `TypeSymbol` -> the type itself
 
-### Access Modifier Enforcement
+**This Expression:**
 
-- `public`/none: always accessible
-- `private`: only from within the same type
-- `protected`: accessible from the same type or subclasses
+`this` resolves to the current class type (looked up via `symbolTable_.resolveType(currentClass_->getName())`). Reports an error if used outside a class context.
 
-### Pass 3 Limitations
+**Qualified Names:**
 
-- **No function overloading**: Only one function per name. Operator overloads are the only overloading.
-- **Lambda return inference**: Block-bodied lambdas infer from first `return` statement. Conflicting return types across branches are not cross-checked.
-- **No mutability enforcement**: `isMutable` flag exists but is never checked.
-- **No definite assignment analysis**: Variables can be read before assignment.
-- **No null safety**: Pointers can be dereferenced without null checks.
-- **Float literal always `double`**: No `1.0f` suffix.
+`QualifiedNameExpression` walks a chain of scope lookups. Special handling for enum member access: `Color.Red` resolves the enum symbol, finds the member, and sets `isEnumAccess = true` with the resolved integer or string value.
+
+### Call Resolution
+
+`visit(CallExpression&)` is the most critical resolution in Pass 3. It must handle multiple calling patterns:
+
+1. **Direct function call**: Callee is an `IdentifierExpression` that resolved to a `FunctionSymbol`. Extract `FunctionTypeSymbol` via `buildFunctionType()`.
+
+2. **Method call**: Callee is a `MemberAccessExpression` whose `resolvedSymbol` is a `FunctionSymbol`. Same extraction.
+
+3. **String builtin method call**: Callee is a `MemberAccessExpression` with `isStringBuiltinMethod = true`. Return type is determined by method name (`length` -> `int`, `substring` -> `string`, etc.).
+
+4. **Closure/function variable call**: Callee type is already a `FunctionTypeSymbol` (variable holding a closure).
+
+5. **Struct construction**: Callee type is a `StructSymbol`. Result is the struct type (zero-initialized value).
+
+6. **Constructor call**: Callee type is a `ClassSymbol`. Looks up `classSym->constructor` and uses its function type. Result is the class type.
+
+After resolving the function type, Pass 3:
+- Sets `node.resolvedCallee = funcSym` (used by codegen)
+- Sets `node.resolvedType = funcType->returnType`
+- Validates argument count (exact match for non-variadic, minimum for variadic)
+- Sets `node.arguments->isReference[i]` for each argument (from `FunctionTypeSymbol::ParameterInfo::isReference`)
+- Type-checks each argument against its parameter type
+
+**The `funcTypeHolder` pattern**: `buildFunctionType()` returns a `shared_ptr<FunctionTypeSymbol>` that must be kept alive for the duration of the call resolution. The local variable `funcTypeHolder` prevents the function type from being destroyed before it is used:
+
+```cpp
+shared_ptr<FunctionTypeSymbol> funcTypeHolder;
+// ...
+funcTypeHolder = fSym->buildFunctionType();
+if (funcTypeHolder) funcType = funcTypeHolder.get();
+```
+
+### Binary Expression Type Rules
+
+Pass 3 first checks for operator overloads on the left operand's type. If found, it sets `isOperatorOverload = true` and `resolvedOperatorFunction`, and the result type is the operator's return type.
+
+Without an overload:
+
+| Operator | Result Type |
+|----------|------------|
+| `+` (with string) | `string` (concatenation) |
+| `+` (with pointer) | pointer type (pointer arithmetic) |
+| `+`, `-`, `*`, `/`, `%` | wider of the two operand types |
+| `&`, `\|`, `^`, `<<`, `>>` | wider of the two operand types |
+| `==`, `!=`, `<`, `>`, `<=`, `>=` | `bool` |
+| `&&`, `\|\|` | `bool` |
+
+Widening follows the rank: `byte(1) < char(2) < int(3) < float(4) < double(5)`. Enum types are unwrapped to their underlying type for arithmetic.
+
+### Unary Expression Type Rules
+
+| Operator | Result Type |
+|----------|------------|
+| `-` (negate) | same as operand |
+| `!` (logical not) | `bool` |
+| `~` (bitwise not) | same as operand |
+| `*` (dereference) | pointer's base type (error if non-pointer) |
+| `&` (address-of) | `PointerTypeSymbol(operandType)` |
+
+### Member Access Resolution
+
+`visit(MemberAccessExpression&)` resolves in priority order:
+
+1. **Auto-dereference**: If the object type is a pointer, unwrap one level.
+2. **Enum member access**: If the object type is an enum, look up the member by name.
+3. **String builtin methods**: If the object type is `string`, check for `length`, `charAt`, `substring`, `indexOf`, `toInt`, `toDouble`.
+4. **Struct/class member**: Cast the type to a `Scope*` and call `resolve(memberName)`.
+5. **Static access detection**: If the resolved member is a static function, set `isStaticAccess = true`.
+
+### Assignment Checking
+
+Pass 3 validates:
+- **L-value**: Target must be an `IdentifierExpression`, `MemberAccessExpression`, `IndexExpression`, or dereference `UnaryExpression`.
+- **Mutability**: If the target symbol is a `VariableSymbol` with `isMutable = false`, report an error.
+- **Type compatibility**: The value type must be compatible with the target type.
+
+### Variable Type Inference
+
+For `var x = expr;` declarations:
+
+```cpp
+if (node.isInferred && node.initializer) {
+    auto initType = node.initializer->resolvedType;
+    if (initType is NullTypeSymbol) -> error("cannot infer type from null")
+    else if (initType is void) -> error("cannot declare variable with void type")
+    else -> varSym->setType(initType);
+}
+```
+
+For explicitly-typed variables with initializers, Pass 3 checks compatibility between the initializer type and the declared type.
+
+### Tuple Destructuring
+
+When the initializer type is a `TupleTypeSymbol`, Pass 3 assigns each element type to the corresponding destructured variable:
+
+```cpp
+for (size_t i = 0; i < node.resolvedVariables.size(); i++) {
+    node.resolvedVariables[i]->setType(tupType->elementTypes[i]);
+}
+```
+
+### Lambda Return Type Inference
+
+Lambda expressions get special handling:
+
+1. Save `currentReturnType_` and set it to `nullptr`.
+2. Visit the lambda body:
+   - **Block body**: Visit all statements. The first `return` statement sets `currentReturnType_` (inferred from the return value's type).
+   - **Expression body**: The expression's type becomes the return type directly.
+3. Build a `FunctionTypeSymbol` from the parameter types and inferred return type.
+4. Set `node.resolvedType` to this function type.
+5. Restore `currentReturnType_`.
+
+### Condition Type Checking
+
+`if` and `while` conditions are checked to ensure they produce a `bool` type:
+
+```cpp
+if (!symbolTable_.isCompatible(condition->resolvedType.get(),
+                                symbolTable_.getBoolType().get())) {
+    errors_.error("if condition must be bool", node.debugInfo);
+}
+```
+
+### Delete Statement Checking
+
+The target of `delete` must be a `PointerTypeSymbol` or `ClassSymbol`:
+
+```cpp
+if (!target->resolvedType->is<PointerTypeSymbol>() &&
+    !target->resolvedType->is<ClassSymbol>()) {
+    errors_.error("delete requires pointer or class type", ...);
+}
+```
 
 ---
 
-## 6. Pass 4: Semantic Validator
+## 7. Pass 4: SemanticValidator
+
+**Header:** `include/mingus/sema/SemanticValidator.h`
+**Source:** `src/mingus/sema/SemanticValidator.cpp`
 
 ### Purpose
 
-Final pass performing: reachability analysis, RAII tracking, raw block safety, pattern exhaustiveness, lambda capture analysis, and abstract/interface checking.
+Pass 4 performs five categories of validation that all require the fully-typed AST from Passes 1-3:
 
-### 6a: Reachability Analysis
+- **4a**: Lambda capture resolution (the most critical invariant)
+- **4b**: RAII variable tracking (destructor calls at scope exit)
+- **4c**: Return completeness checking
+- **4d**: Control flow validation (break/continue in loops)
+- **4e**: Class/interface implementation checking + match exhaustiveness
 
-Three-state lattice: `NeverReturns` < `SometimesReturns` < `AlwaysReturns`
+### Context Tracking
+
+```cpp
+int loopDepth_ = 0;                                    // For break/continue validation
+TypeSymbolPtr currentReturnType_;                       // For return completeness
+unordered_map<Scope*, ScopeRAIIInfo> raiiInfo_;         // Per-scope RAII tracking
+Scope* currentScope_ = nullptr;                         // Current scope for RAII
+
+struct LambdaContext {
+    LambdaExpression* lambda;
+    set<Symbol*> localSymbols;  // params + declarations owned by this lambda
+};
+vector<LambdaContext> lambdaStack_;                     // Lambda capture context stack
+```
+
+### 4a: Lambda Capture Analysis
+
+This is the most critical part of Pass 4. When a `LambdaExpression` is visited, a new `LambdaContext` is pushed onto `lambdaStack_` with the lambda's parameters registered as local symbols. When any `IdentifierExpression` is visited inside the lambda body, `checkLambdaCapture()` is called.
+
+**The Algorithm:**
+
+```cpp
+void SemanticValidator::checkLambdaCapture(IdentifierExpression& node) {
+    // Only capture VariableSymbol with role Local or Parameter (not Field)
+    if (lambdaStack_.empty()) return;
+    auto* varSym = node.resolvedSymbol->as<VariableSymbol>();
+    if (!varSym || varSym->role == VariableRole::Field) return;
+
+    // CRITICAL: Walk from innermost lambda outward
+    for (int i = lambdaStack_.size() - 1; i >= 0; --i) {
+        auto& ctx = lambdaStack_[i];
+
+        // If this lambda owns the variable locally, stop
+        if (ctx.localSymbols.count(node.resolvedSymbol.get()) > 0) break;
+
+        // Determine capture mode from capture specification
+        CaptureMode mode = ...;  // From [x], [&x], [=], [&]
+        bool allowed = ...;
+
+        if (!allowed) {
+            // [] capture list blocks capture -- report error for innermost
+            break;
+        }
+
+        // Add to captured variables (avoid duplicates)
+        if (!alreadyCaptured) {
+            lambda->capturedVariables.push_back(node.resolvedSymbol);
+            lambda->captureModesResolved.push_back(mode);
+        }
+    }
+}
+```
+
+**CRITICAL INVARIANT: Full-stack propagation.** The loop walks the ENTIRE `lambdaStack_` from innermost to outermost. If variable `x` is used in an inner lambda but defined outside all lambdas, every lambda in the chain must capture it. Without full-stack propagation, outer lambdas get a null environment pointer, causing a segfault at runtime.
+
+Example:
+```
+func outer() {
+    var x = 42;
+    var f = [=]() => {           // Must capture x
+        var g = [=]() => {       // Must capture x
+            return x;            // Uses x
+        };
+    };
+}
+```
+
+When `x` is visited inside `g`, the loop walks: `g` (captures x), then `f` (also captures x), then stops because `x` is a local of `outer` (outside all lambdas).
+
+**Capture Mode Resolution:**
+
+For each lambda in the stack, the capture mode is determined by:
+1. **Explicit capture items**: `[x]` (by value) or `[&x]` (by reference) -- checked first by matching the variable name.
+2. **Default capture mode**: `[=]` (by copy for all) or `[&]` (by reference for all) -- used as fallback.
+3. **Empty capture list** `[]`: No captures allowed. If the variable needs to be captured, an error is reported (but only for the innermost lambda that needs it).
+
+**Self-Capture Detection:**
+
+After visiting a `VariableDeclaration` whose initializer is a lambda, `checkSelfCapture()` checks if the lambda captured the variable being declared:
+
+```
+var f = [=](int x) => { return f(x - 1); };
+```
+
+If `f` appears in the lambda's captured variables, `lambda->selfCapture = true`. This tells codegen to handle the letrec pattern (the closure must reference itself).
+
+**Escape Analysis:**
+
+In `visit(CallExpression&)`, lambdas passed directly as function arguments are marked `escapes = false`:
+
+```cpp
+if (auto* lambda = arg->as<LambdaExpression>()) {
+    lambda->escapes = false;
+}
+```
+
+All other lambdas default to `escapes = true`. Non-escaping lambdas can potentially be stack-allocated rather than heap-allocated.
+
+### 4b: RAII Variable Tracking
+
+When a `VariableDeclaration` is visited, `trackRAIIVariable()` checks if the variable needs destructor cleanup:
+
+```cpp
+void SemanticValidator::trackRAIIVariable(VariableSymbol* var) {
+    if (!var || !var->getType() || !currentScope_) return;
+
+    auto* cls = var->getType()->as<ClassSymbol>();
+    if (!cls || !cls->hasRAII()) return;
+
+    auto& info = raiiInfo_[currentScope_];
+    info.destructibles.push_back({var, cls->destructor.get()});
+}
+```
+
+A variable is tracked only if:
+1. Its type is a `ClassSymbol` (not a primitive, struct, or pointer)
+2. The class has a destructor (`hasRAII()` -- always true due to auto-generation)
+3. Its role is `Local` (not `Field` or `Parameter`)
+
+The `raiiInfo_` map is exported via `getRAIIInfo()` and consumed by the IRGenerator for scope-exit cleanup. Codegen reverses the vector for LIFO destruction order.
+
+**Scope tracking**: `currentScope_` is updated at every scope boundary (module, function, block). The RAII info is keyed by scope pointer, so each scope independently tracks which variables need destruction when it exits.
+
+### 4c: Return Completeness Checking
+
+Three-level reachability classification:
+
+```cpp
+enum class Reachability {
+    AlwaysReturns,      // All code paths reach a return
+    SometimesReturns,   // Some paths return, some don't
+    NeverReturns        // No return statement reached
+};
+```
+
+Classification rules:
 
 | Statement | Classification |
 |-----------|---------------|
@@ -342,102 +998,184 @@ Three-state lattice: `NeverReturns` < `SometimesReturns` < `AlwaysReturns`
 | `if/else` (all branches return) | `AlwaysReturns` |
 | `if` (no else) | At best `SometimesReturns` |
 | `switch` (all cases + default return) | `AlwaysReturns` |
-| `for`/`while` | `NeverReturns` (may not execute) |
-| `break`/`continue`/`delete`/`expression` | `NeverReturns` |
+| `for`/`while` | `NeverReturns` (body may not execute) |
+| `break`/`continue`/`delete`/expression | `NeverReturns` |
 
-Non-void functions must have `AlwaysReturns` reachability. Unreachable statements after a `return` emit warnings.
+For blocks, the classification is the first statement that returns `AlwaysReturns` or `SometimesReturns` (short-circuit).
 
-`break`/`continue` are validated to be inside a loop (`loopDepth_` counter).
+Non-void functions whose body classifies as anything other than `AlwaysReturns` produce a warning: "not all code paths in 'funcName' return a value".
 
-### 6b: RAII Tracking
+### 4d: Break/Continue Validation
+
+A `loopDepth_` counter is incremented on entering `for`/`while` loops and decremented on exit. `break` and `continue` statements report an error if `loopDepth_ == 0`:
 
 ```cpp
-// Per-scope RAII info
-std::unordered_map<Scope*, ScopeRAIIInfo> raiiInfo_;
-// Each entry: vector of {VariableSymbol*, DestructorSymbol*} pairs
+void SemanticValidator::visit(BreakStatement& node) {
+    if (loopDepth_ == 0) {
+        errors_.error("'break' statement outside of loop", node.debugInfo);
+    }
+}
 ```
 
-A variable is tracked for RAII only if:
-1. Its type is a `UserType` backed by a `ClassSymbol`
-2. The class has a destructor (`hasRAII()` — always true due to auto-generation)
-3. Its role is `Local` (not `Field`)
+### 4e: Abstract/Interface Implementation Checking
 
-Fields are handled by the class destructor epilogue in codegen. Closure RAII is handled separately by the IRGenerator.
+**Abstract method checking** (`checkAbstractImplementation`):
 
-### 6c: Raw Block Safety
+For every non-abstract class with a base class, walks up the entire inheritance chain collecting abstract methods. For each, checks if the concrete class implements it (via scope resolution). Reports an error for each unimplemented abstract method.
 
-Two constructs require `raw { }` context:
-- **Pointer arithmetic**: `+`/`-` with a pointer operand
-- **Pointer casts**: Different pointer types, or pointer ↔ integer
+**Interface implementation checking** (`checkInterfaceImplementation`):
 
-The `rawDepth_` counter tracks nesting. Error if either construct appears at `rawDepth_ == 0`.
+For every interface in `cls->implementedInterfaces`, checks that the class has a method with the same name for each interface method. Reports an error for missing implementations.
 
-### 6d: Pattern Exhaustiveness
+### 4e (continued): Match Exhaustiveness
 
-1. If any arm has an unguarded `WildcardPattern` or `BindingPattern` → exhaustive
-2. Guarded patterns do NOT count (guard might be false)
-3. For enum subjects: check all enum members are covered
-4. For non-enum subjects without wildcard → error
+`checkExhaustiveness(MatchExpression&)` determines if a match expression covers all cases:
 
-### 6e: Lambda Capture Analysis
+1. If any arm has an unguarded `WildcardPattern` (`_`) or an unguarded `IdentifierPattern` (binding pattern) -> exhaustive.
+2. Guarded patterns do NOT count as exhaustive (the guard might be false).
+3. For enum subjects: collect covered member names from `LiteralPattern` arms, compare against all enum members. Report missing members as a warning.
+4. For non-enum subjects without a wildcard -> warning: "match expression may not be exhaustive".
 
-Populates `LambdaExpression::capturedVariables` and `captureModesResolved`.
+### Access Modifier Checking
 
-Algorithm: When an identifier is visited inside a lambda, walk from innermost to outermost lambda. At each level, if the variable is not locally owned, it must be captured. The capture mode is determined from:
-1. Explicit capture list items matching by name
-2. Default capture mode (`[=]` or `[&]`)
-
-**Propagation**: If a variable used in an inner lambda must pass through an outer lambda, it is captured at each level in the chain.
-
-**Self-capture detection**: After visiting a `VariableDeclaration` whose initializer is a lambda, checks if the lambda captured the variable being defined. Sets `selfCapture = true` if so.
-
-**Escape analysis**: Lambda literals passed directly as function arguments are marked `escapes = false`. All others default to `true`.
-
-### 6f: Abstract and Interface Checking
-
-- **Abstract methods**: Every non-abstract class must override all abstract vtable slots.
-- **Interface methods**: Every non-abstract class must implement all methods from each interface it declares.
-
-### Pass 4 Limitations
-
-- **No escape analysis for non-trivial cases**: Only direct lambda-as-argument is marked non-escaping.
-- **Enum exhaustiveness is name-based**: Does not handle numeric or complex patterns.
-- **No control flow through loops**: Loops always classified as `NeverReturns`, even if they always return.
-- **RAII only for class-typed locals**: Structs with closure fields and function-typed variables are handled by codegen, not Pass 4.
-- **No dangling reference detection**: `[&x]` captures that outlive the captured variable are not detected.
-- **Capture propagation stops at disallowed boundary**: If an intermediate lambda lacks the right capture mode, propagation halts.
+Access modifiers (`Public`, `Private`, `Protected`) are stored on symbols via `accessLevel` and set during Pass 1. Import resolution in Pass 1b filters to `Public` symbols only when doing whole-module imports.
 
 ---
 
-## 7. Pass Interaction Summary
+## 8. Error Reporting
+
+**Header:** `include/mingus/sema/ErrorReporter.h`
+
+The `ErrorReporter` is a shared diagnostic collector used by all four passes:
+
+```cpp
+class ErrorReporter {
+public:
+    void error(const string& message, const shared_ptr<DebugInfo>& loc = nullptr);
+    void warning(const string& message, const shared_ptr<DebugInfo>& loc = nullptr);
+    void note(const string& message, const shared_ptr<DebugInfo>& loc = nullptr);
+
+    bool hasErrors() const;
+    int errorCount() const;
+    const vector<Diagnostic>& diagnostics() const;
+    void dump(ostream& out = cerr) const;
+    void clear();
+};
+```
+
+Each diagnostic has:
+- `level`: `Error`, `Warning`, or `Note`
+- `message`: Human-readable description
+- `location`: Optional `DebugInfo` (file, line, column)
+
+The `dump()` method prints all diagnostics in the format:
+```
+error: path/to/file.mingus:42:10: undefined identifier 'x'
+warning: path/to/file.mingus:55:1: not all code paths in 'foo' return a value
+```
+
+**Error recovery strategy**: Unresolvable types become `ErrorTypeSymbol`, which is compatible with everything (via `isCompatible()`). This prevents a single unresolved type from producing a cascade of secondary type errors throughout the program.
+
+---
+
+## 9. Key Invariants
+
+These are critical behaviors that must be preserved. Violating any of these causes compiler crashes, incorrect code generation, or runtime failures.
+
+### 9.1 ReferenceType Unwrapping in Pass 2
+
+`TypeResolver::resolveParameters()` MUST unwrap `ReferenceTypeSymbol` into base type + `isReference` flag:
+
+```cpp
+if (auto* refType = resolvedType->as<ReferenceTypeSymbol>()) {
+    varSym->setType(refType->baseType);    // NOT the ReferenceTypeSymbol
+    varSym->isReference = true;
+}
+```
+
+Without this, `mapType(ReferenceType(int))` in codegen returns `ptr` instead of `i32`, causing LLVM verification failures.
+
+### 9.2 Nested Lambda Capture Propagation
+
+`checkLambdaCapture()` MUST walk the **entire** `lambdaStack_` from innermost to outermost, adding the variable as a capture at each level that does not locally own it.
+
+Only checking `lambdaStack_.back()` (the innermost lambda) causes outer lambdas to have null environment pointers, leading to segfaults at runtime.
+
+### 9.3 ParameterNode::resolvedSymbol Set in Pass 1
+
+`createParameterSymbols()` MUST set `param->resolvedSymbol = paramSym`. This is the V2 replacement for V1's `scanForParamSymbols` hack. Without it, codegen cannot map parameter AST nodes to their LLVM allocas.
+
+### 9.4 Auto-Generated Constructors and Destructors
+
+Every class MUST have a constructor and destructor after Pass 1 completes (auto-generated if not explicitly declared). This ensures:
+- `classSym->hasRAII()` always returns `true`
+- RAII tracking in Pass 4 works for all class-typed locals
+- Codegen can always emit vtable slot 0 (destructor) and constructor calls
+
+### 9.5 Vtable Slot 0 = Destructor
+
+`buildVtable()` always places the destructor at vtable index 0. All user method `vtableIndex` values start at 1+. `DeleteStatement` dispatches through vtable slot 0. Changing the vtable layout breaks virtual destructor dispatch.
+
+### 9.6 FunctionSymbol IS the Scope
+
+`FunctionSymbol` extends `SymbolWithScope`. When Pass 1 visits a function, it pushes the `FunctionSymbol` itself as the scope (`symbolTable_.pushScope(funcSym)`). Parameters and body statements are defined within this scope. The function body's `astScopeNode` is set to the function symbol.
+
+### 9.7 ClassSymbol resolve() Walks Inheritance
+
+`ClassSymbol::resolve(name)` overrides `BaseScope::resolve()` to additionally search the base class chain. This is essential for inherited member access -- without it, `derivedObj.baseMethod()` would fail to resolve.
+
+### 9.8 The funcTypeHolder Lifetime in CallExpression
+
+In `TypeChecker::visit(CallExpression&)`, the `funcTypeHolder` local variable keeps the `buildFunctionType()` result alive. Without it, the `FunctionTypeSymbol` is destroyed immediately, and the raw pointer `funcType` becomes dangling. This causes use-after-free crashes.
+
+### 9.9 Self-Capture Detection Order
+
+`checkSelfCapture()` must run AFTER the initializer lambda has been visited (so its captured variables are already populated). In `visit(VariableDeclaration&)`:
+
+```cpp
+// 1. Visit initializer first (populates lambda captures)
+if (node.initializer) node.initializer->accept(*this);
+
+// 2. Register as local symbol in current lambda context
+if (!lambdaStack_.empty() && node.resolvedVariable)
+    lambdaStack_.back().localSymbols.insert(node.resolvedVariable.get());
+
+// 3. Check self-capture (relies on captures being populated)
+checkSelfCapture(node);
+```
+
+### 9.10 Each Pass is Strictly Additive
+
+No pass modifies data written by a prior pass. This is maintained by convention and is essential for reasoning about the pipeline:
 
 ```
 Pass 1 produces:
-  ├── Scope tree (Global → Module → TypeMembers → Function → Block)
-  ├── Symbol objects for all declarations
-  ├── Vtable slots and allFields for classes
-  ├── Auto-generated ctor/dtor for classes
-  └── Import aliases in module scopes
+  +-- Scope tree (Global -> Module -> ClassSymbol -> FunctionSymbol -> BlockScope)
+  +-- Symbol objects for all declarations (astScopeNode, resolvedXxx links)
+  +-- Vtable slots and allFields for classes
+  +-- Auto-generated ctor/dtor for classes
+  +-- Import aliases in module scopes
+  +-- ParameterNode::resolvedSymbol links
 
 Pass 2 reads Pass 1 scopes/symbols, produces:
-  ├── VariableSymbol::type for explicitly-typed fields and parameters
-  ├── FunctionSymbol::returnType and parameter types
-  ├── EnumSymbol::underlyingType
-  └── TypeNode::resolvedType at declaration sites
+  +-- VariableSymbol::type for explicitly-typed fields and parameters
+  +-- FunctionSymbol::returnType and parameter types
+  +-- EnumSymbol::underlyingType
+  +-- TypeNode::resolvedType at declaration and expression sites
 
 Pass 3 reads Pass 1+2 data, produces:
-  ├── ExpressionNode::resolvedType on ALL expressions
-  ├── ExpressionNode::resolvedSymbol on identifiers
-  ├── VariableSymbol::type for 'var'-inferred variables
-  ├── BinaryExpression::isOperatorOverload + resolvedOperatorFunction
-  ├── MemberAccessExpression flags
-  └── LambdaExpression::resolvedType (FunctionType)
+  +-- ExpressionBaseNode::resolvedType on ALL expressions
+  +-- ExpressionBaseNode::resolvedSymbol on identifiers and members
+  +-- VariableSymbol::type for var-inferred variables
+  +-- CallExpression::resolvedCallee and ArgumentsNode::isReference
+  +-- BinaryExpression::isOperatorOverload + resolvedOperatorFunction
+  +-- MemberAccessExpression flags (isEnumAccess, isStaticAccess, etc.)
+  +-- LambdaExpression::resolvedType (FunctionTypeSymbol)
+  +-- TupleDestructuringDeclaration variable types
 
 Pass 4 reads Pass 1+2+3 data, produces:
-  ├── raiiInfo_ map (scope → RAII variables)
-  ├── LambdaExpression::capturedVariables, captureModesResolved
-  ├── LambdaExpression::selfCapture, escapes
-  └── Control flow / safety / exhaustiveness errors
+  +-- raiiInfo_ map (scope -> RAII variables with destructor symbols)
+  +-- LambdaExpression::capturedVariables and captureModesResolved
+  +-- LambdaExpression::selfCapture and escapes flags
+  +-- Diagnostic errors/warnings for all validation checks
 ```
-
-Each pass is strictly additive — no pass modifies data written by a prior pass.

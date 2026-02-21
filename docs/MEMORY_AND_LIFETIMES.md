@@ -1,101 +1,833 @@
 # Mingus Memory Management and Lifetimes
 
-This document describes how Mingus manages memory: stack vs heap allocation, the RAII system, closure reference counting, string memory, and zero-initialization patterns.
+This document describes how Mingus manages memory: the RAII system for deterministic
+destruction, closure reference counting, string memory, heap object lifecycle, and
+zero-initialization patterns. Mingus has no garbage collector -- memory is managed
+through RAII (stack objects), reference counting (closure environments), and manual
+`new`/`delete` (heap objects).
 
 **Source files:**
-- `src/mingus/codegen/IRGenerator.cpp` — All memory management codegen
-- `include/mingus/codegen/IRGenerator.h` — RAII data structures
-- `src/mingus/sema/SemanticValidator.cpp` — RAII tracking (Pass 4)
+- `include/mingus/codegen/IRGenerator.h` -- RAII data structures, closure RC function caches
+- `src/mingus/codegen/IRGenerator.cpp` -- All memory management codegen (~4400 lines)
+- `include/mingus/sema/SemanticValidator.h` -- ScopeRAIIInfo, LambdaContext
+- `src/mingus/sema/SemanticValidator.cpp` -- Pass 4: RAII tracking, capture analysis, escape detection
 
 ---
 
 ## Table of Contents
 
-1. [Stack vs Heap Allocation](#1-stack-vs-heap-allocation)
-2. [The RAII System](#2-the-raii-system)
-3. [Closure Reference Counting](#3-closure-reference-counting)
-4. [String Memory](#4-string-memory)
-5. [Zero-Initialization Patterns](#5-zero-initialization-patterns)
-6. [Memory Limitations](#6-memory-limitations)
+1. [Overview](#1-overview)
+2. [RAII Scope Stack](#2-raii-scope-stack)
+3. [Scope Destruction](#3-scope-destruction)
+4. [Closure Reference Counting](#4-closure-reference-counting)
+5. [Closure Lifecycle](#5-closure-lifecycle)
+6. [Struct Cleanup](#6-struct-cleanup)
+7. [Class Destructor Epilogue](#7-class-destructor-epilogue)
+8. [String Memory](#8-string-memory)
+9. [Heap Objects](#9-heap-objects)
+10. [Lambda RAII Isolation](#10-lambda-raii-isolation)
+11. [Escape Analysis](#11-escape-analysis)
+12. [Universal Zero-Init](#12-universal-zero-init)
+13. [Known Memory Limitations](#13-known-memory-limitations)
 
 ---
 
-## 1. Stack vs Heap Allocation
+## 1. Overview
 
-### Local Variables — Stack (`alloca`)
+Mingus uses three complementary memory management strategies:
 
-All local variables are stack-allocated using LLVM `alloca` in the function's entry block:
+| Strategy | Applies To | Mechanism |
+|----------|-----------|-----------|
+| **RAII** (stack) | Local variables, struct/class instances, closures, strings | Deterministic destruction at scope exit in LIFO order |
+| **Reference counting** (heap) | Closure capture environments | `retain`/`release` with per-closure cleanup functions |
+| **Manual** (heap) | Objects created with `new` | Programmer calls `delete`; virtual destructor dispatch via vtable |
 
-```llvm
-; Variable: var x = 42;
-%x = alloca i32, align 4       ; entry block
-store i32 42, ptr %x            ; initialization
+There is no garbage collector. The compiler inserts all cleanup code at compile time.
+Stack-allocated objects are automatically destroyed when they go out of scope. Heap-allocated
+closure environments are reference-counted so they can be shared across multiple closures
+and survive past the creating scope. Heap-allocated class instances created with `new` must
+be explicitly freed with `delete`.
+
+### Allocation Summary
+
+| Declaration | Allocation | Cleanup |
+|------------|-----------|---------|
+| `var x = 42;` | `alloca` (stack) | None needed (primitive) |
+| `var arr = DynamicArray(8);` | `alloca` (stack) | Destructor called via RAII |
+| `var f = [=](int x) => { ... };` | Fat pointer on stack, env on heap | RAII releases env; RC frees at zero |
+| `var p = new Foo(1);` | `malloc` (heap) | Programmer calls `delete p;` |
+| `var s = a + b;` (strings) | `malloc` (heap) | `__mingus_string_free` via RAII |
+
+---
+
+## 2. RAII Scope Stack
+
+### Data Structures
+
+The RAII system is built on two data structures: a compile-time scope tracker in semantic
+analysis (Pass 4) and a runtime scope stack in codegen.
+
+**Semantic analysis** (`SemanticValidator.h`):
+
+```cpp
+struct ScopeRAIIInfo {
+    struct Destructible {
+        VariableSymbol* variable;      // the variable
+        DestructorSymbol* destructor;  // its class destructor
+    };
+    std::vector<Destructible> destructibles;
+};
 ```
 
-The `createEntryBlockAlloca()` helper places all allocas at the start of the entry block, following LLVM best practice (enables mem2reg promotion).
+Pass 4 builds a `map<Scope*, ScopeRAIIInfo>` identifying which variables in each scope
+need destructor calls. This is exported to codegen via `getRAIIInfo()`.
 
-Variables are tracked in `namedValues_[symbol] → alloca_ptr`.
+**Codegen** (`IRGenerator.h`):
 
-### Function Parameters
+```cpp
+struct RAIIScope {
+    std::vector<std::pair<llvm::Value*, llvm::Function*>> destructibles;
+    std::set<Symbol*> returnedVars;  // suppress cleanup for returned values
+};
+std::vector<RAIIScope> raiiScopeStack_;
+```
 
-Parameters are also stack-allocated with allocas in the entry block:
+Each `RAIIScope` holds a list of `(pointer, destructor_function)` pairs. The `returnedVars`
+set tracks variables whose ownership is being transferred out via `return`, so their
+destructors should be suppressed.
 
-```llvm
-define i32 @func(i32 %x.arg) {
-    %x = alloca i32
-    store i32 %x.arg, ptr %x
-    ; ... use %x as alloca ...
+### Core Operations
+
+Three functions manage the RAII scope stack:
+
+```cpp
+void IRGenerator::pushRAIIScope() {
+    raiiScopeStack_.push_back({});
+}
+
+void IRGenerator::popRAIIScope() {
+    if (!raiiScopeStack_.empty()) {
+        raiiScopeStack_.pop_back();
+    }
+}
+
+void IRGenerator::registerRAII(llvm::Value* ptr, llvm::Function* dtor) {
+    if (!raiiScopeStack_.empty()) {
+        raiiScopeStack_.back().destructibles.push_back({ptr, dtor});
+    }
 }
 ```
 
-**Reference parameters** (`int& x`): The argument IS the pointer to the caller's alloca — used directly, no copy:
+### Scope Boundaries
 
-```llvm
-define void @swap(ptr %a.ref, ptr %b.ref) {
-    ; %a.ref and %b.ref point to caller's stack
-    %tmp = load i32, ptr %a.ref
-    ; ...
+| Event | Action |
+|-------|--------|
+| Function body entry | `pushRAIIScope()` |
+| Block `{ }` entry | `pushRAIIScope()` |
+| Variable declaration (with RAII type) | `registerRAII(alloca, dtor)` on innermost scope |
+| Block `{ }` exit (no terminator) | `emitScopeDestructors()` + `popRAIIScope()` |
+| Function body end (no terminator) | `emitScopeDestructors()` + `popRAIIScope()` |
+| `return` statement | `emitReturnDestructors()` (all scopes) |
+| `break` / `continue` | `emitBreakDestructors()` (loop scopes only) |
+
+### What Gets Registered
+
+| Object Type | Destructor Function | Registration Site |
+|------------|-------------------|-------------------|
+| Class instance (stack) | `ClassName_destructor` | `visit(VariableDeclaration)` |
+| Struct with closure fields | `__struct_cleanup_<Name>` | `visit(VariableDeclaration)` |
+| Closure-typed variable | `__mingus_closure_release_wrapper` | `visit(VariableDeclaration)` |
+| String concat result | `__mingus_string_free` | `emitStringConcat()` |
+| Interpolated string buffer | `__mingus_string_free` | `visit(InterpolatedStringExpression)` |
+| Temporary closure argument | `__mingus_closure_release_wrapper` | `visit(CallExpression)` |
+
+Registration in `visit(VariableDeclaration)`:
+
+```cpp
+// Register RAII for class types with destructors
+if (varSym->getType() && varSym->getType()->is<ClassSymbol>()) {
+    auto* classSym = varSym->getType()->as<ClassSymbol>();
+    if (classSym && classSym->hasRAII()) {
+        auto dtorIt = functionCache_.find(classSym->destructor.get());
+        if (dtorIt != functionCache_.end()) {
+            registerRAII(alloca, dtorIt->second);
+        }
+    }
+}
+
+// Register RAII for structs with closure-typed fields
+if (varSym->getType() && varSym->getType()->is<StructSymbol>()) {
+    auto* structSym = varSym->getType()->as<StructSymbol>();
+    if (structSym && structSym->needsCleanup()) {
+        registerRAII(alloca, getOrCreateStructCleanupFn(structSym));
+    }
+}
+
+// Register RAII for closure-typed variables
+if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
+    registerRAII(alloca, getOrCreateClosureReleaseWrapper());
 }
 ```
 
-**Struct/class parameters**: Passed by pointer at the IR level, copied into local alloca for GEP access.
+---
 
-### `new` Expression — Heap Allocation
+## 3. Scope Destruction
+
+Three distinct destruction paths handle scope exit, early return, and loop control flow.
+
+### Normal Scope Exit -- `emitScopeDestructors()`
+
+Called when a block `{ }` or function body exits normally (falls through without a
+terminator). Iterates the **current scope only**, in **reverse order** (LIFO):
+
+```cpp
+void IRGenerator::emitScopeDestructors() {
+    if (raiiScopeStack_.empty()) return;
+    auto& scope = raiiScopeStack_.back();
+    for (auto it = scope.destructibles.rbegin();
+         it != scope.destructibles.rend(); ++it) {
+        // Check if this variable is being returned (skip if so)
+        bool skip = false;
+        for (auto& [sym, val] : namedValues_) {
+            if (val == it->first && scope.returnedVars.count(sym)) {
+                skip = true;
+                break;
+            }
+        }
+        if (!skip && it->second) {
+            builder_.CreateCall(it->second, {it->first});
+        }
+    }
+}
+```
+
+The `returnedVars` check implements return value suppression: when a `return` statement
+names a variable (e.g., `return arr;`), that variable's symbol is added to the scope's
+`returnedVars` set, and its destructor is skipped. This transfers ownership to the caller.
+
+### BlockStatement guard: The codegen for `BlockStatementNode` checks for a terminator
+before emitting scope destructors, because `return` statements already call
+`emitReturnDestructors()`:
+
+```cpp
+void IRGenerator::visit(BlockStatementNode& node) {
+    pushRAIIScope();
+    for (auto& stmt : node.statements) {
+        stmt->accept(*this);
+        if (builder_.GetInsertBlock()->getTerminator()) break;
+    }
+    if (!builder_.GetInsertBlock()->getTerminator()) {
+        emitScopeDestructors();
+    }
+    popRAIIScope();
+}
+```
+
+### Early Return -- `emitReturnDestructors()`
+
+Called from `visit(ReturnStatement)`. Walks **ALL** active scopes from innermost to
+outermost, destroying everything in LIFO order:
+
+```cpp
+void IRGenerator::emitReturnDestructors() {
+    for (auto scopeIt = raiiScopeStack_.rbegin();
+         scopeIt != raiiScopeStack_.rend(); ++scopeIt) {
+        for (auto it = scopeIt->destructibles.rbegin();
+             it != scopeIt->destructibles.rend(); ++it) {
+            bool skip = false;
+            for (auto& [sym, val] : namedValues_) {
+                if (val == it->first && scopeIt->returnedVars.count(sym)) {
+                    skip = true;
+                    break;
+                }
+            }
+            if (!skip && it->second) {
+                builder_.CreateCall(it->second, {it->first});
+            }
+        }
+    }
+}
+```
+
+This ensures that an early `return` from inside a nested block still cleans up all
+outer scopes. The return value suppression check applies at each scope level.
+
+### Break/Continue -- `emitBreakDestructors()`
+
+Called from `visit(BreakStatement)` and `visit(ContinueStatement)`. Only destroys
+scopes created **inside** the loop body, not outer scopes:
+
+```cpp
+void IRGenerator::emitBreakDestructors() {
+    for (size_t i = raiiScopeStack_.size(); i > loopRAIIScopeDepth_; --i) {
+        auto& scope = raiiScopeStack_[i - 1];
+        for (auto it = scope.destructibles.rbegin();
+             it != scope.destructibles.rend(); ++it) {
+            if (it->second) {
+                builder_.CreateCall(it->second, {it->first});
+            }
+        }
+    }
+}
+```
+
+### Loop RAII Depth Tracking
+
+The `loopRAIIScopeDepth_` field records the RAII stack depth at the point where the
+loop body begins. This is the boundary -- `emitBreakDestructors()` only cleans up
+scopes above this depth.
+
+Both `for` and `while` loops save/restore the depth for nested loop support:
+
+```cpp
+// In visit(ForStatement) and visit(WhileStatement):
+auto* prevExitBlock = loopExitBlock_;
+auto* prevIterBlock = loopIterBlock_;
+auto prevLoopRAIIDepth = loopRAIIScopeDepth_;
+loopExitBlock_ = exitBB;
+loopIterBlock_ = iterBB;        // or condBB for while
+loopRAIIScopeDepth_ = raiiScopeStack_.size();
+
+node.body->accept(*this);
+
+loopExitBlock_ = prevExitBlock;
+loopIterBlock_ = prevIterBlock;
+loopRAIIScopeDepth_ = prevLoopRAIIDepth;
+```
+
+**Example**: Consider a `break` inside a nested block within a loop:
+
+```
+func example() {         // RAII scope 0 (function)
+    var a = Resource();  // registered in scope 0
+    while (true) {       // loopRAIIScopeDepth_ = 1
+        var b = Res2();  // RAII scope 1 (block)
+        {
+            var c = Res3();  // RAII scope 2 (nested block)
+            break;           // emitBreakDestructors: destroys scopes 2, 1 (not 0)
+        }
+    }
+}                        // emitScopeDestructors: destroys scope 0
+```
+
+---
+
+## 4. Closure Reference Counting
+
+### Environment Struct Layout
+
+Every capturing closure allocates a heap environment struct with a two-field RC header
+followed by the captured values:
+
+```
+closure_env = {
+    i64  refcount,      // field 0 -- starts at 1
+    ptr  cleanup_fn,    // field 1 -- per-closure cleanup function, or null
+    T0   capture_0,     // field 2 -- first captured variable
+    T1   capture_1,     // field 3 -- second captured variable
+    ...
+}
+```
+
+Capture storage depends on capture mode:
+- **By-value** captures (`[x]` or `[=]`): The actual value is copied into the env struct.
+- **By-reference** captures (`[&x]` or `[&]`): A `ptr` to the original stack `alloca` is stored.
+- **Captured closures** (by value): The `{ ptr, ptr }` fat pointer is stored, and the
+  inner closure's envPtr is retained (refcount incremented).
+
+### Fat Pointer Representation
+
+All closures (capturing or not) are represented as fat pointers `{ ptr, ptr }`:
+- **Field 0**: Function pointer (the lambda's generated function)
+- **Field 1**: Environment pointer (heap-allocated env struct, or `null` if no captures)
+
+```llvm
+%fat_ptr = type { ptr, ptr }
+; Field 0 = fnPtr, Field 1 = envPtr
+```
+
+### RC Runtime Functions
+
+Three internal LLVM functions are lazily created (once per module):
+
+**`__mingus_closure_retain(ptr %env)`** -- Increment refcount:
+
+```
+entry:
+    if %env == null -> return          ; null check (nullable closures)
+do_retain:
+    %rc = load i64 from %env[0]
+    %rc_inc = add i64 %rc, 1
+    store i64 %rc_inc to %env[0]
+done:
+    ret void
+```
+
+**`__mingus_closure_release(ptr %env)`** -- Decrement refcount, free at zero:
+
+```
+entry:
+    if %env == null -> return          ; null check
+do_release:
+    %rc = load i64 from %env[0]
+    %rc_dec = sub i64 %rc, 1
+    store i64 %rc_dec to %env[0]
+    if %rc_dec != 0 -> return          ; still alive
+cleanup:
+    %cleanup_fn = load ptr from %env[1]
+    if %cleanup_fn != null -> call %cleanup_fn(%env)
+do_free:
+    call free(%env)
+done:
+    ret void
+```
+
+**`__mingus_closure_release_wrapper(ptr %alloca_ptr)`** -- RAII adapter:
+
+```
+entry:
+    %fat = load { ptr, ptr } from %alloca_ptr
+    %env = extractvalue %fat, 1
+    call __mingus_closure_release(%env)
+    ret void
+```
+
+The wrapper takes a pointer to the fat pointer's alloca (not the env directly), because
+RAII `registerRAII` stores the alloca address. The wrapper loads the fat pointer, extracts
+the envPtr, and calls release.
+
+### Per-Closure Cleanup Function
+
+When a closure captures other closures by value, a cleanup function is generated to
+release the inner closures when the outer closure's env is freed. Named
+`__closure_cleanup_N`:
+
+```cpp
+llvm::Function* IRGenerator::generateClosureCleanupFn(
+    llvm::StructType* closureTy,
+    const std::vector<SymbolPtr>& capturedVars,
+    int headerOffset,
+    const std::vector<CaptureMode>* captureModes)
+{
+    // For each captured variable:
+    //   - Skip if captured by reference
+    //   - If it's a FunctionTypeSymbol (closure), release its envPtr
+    for (size_t i = 0; i < capturedVars.size(); i++) {
+        if (isByReference) continue;
+        if (varSym->getType()->is<FunctionTypeSymbol>()) {
+            // GEP to field, load fat pointer, extract envPtr, call release
+            auto* fieldPtr = b.CreateStructGEP(closureTy, env, headerOffset + i);
+            auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr);
+            auto* envPtr = b.CreateExtractValue(fatVal, {1});
+            b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+        }
+    }
+}
+```
+
+This enables recursive deep release: when a closure containing other closures is freed,
+the inner closures' refcounts are decremented, potentially triggering a chain of frees.
+
+---
+
+## 5. Closure Lifecycle
+
+### Creation
+
+When a lambda expression with captures is evaluated, codegen:
+
+1. **Allocates** the env struct on the heap via `malloc`:
+   ```llvm
+   %closure.ptr = call ptr @malloc(i64 <sizeof(env_struct)>)
+   ```
+
+2. **Initializes refcount** to 1:
+   ```llvm
+   %rc.slot = getelementptr %closure_ty, ptr %closure.ptr, 0, 0
+   store i64 1, ptr %rc.slot
+   ```
+
+3. **Stores cleanup function** (or null if no inner closures):
+   ```llvm
+   %cleanup.slot = getelementptr %closure_ty, ptr %closure.ptr, 0, 1
+   store ptr @__closure_cleanup_N, ptr %cleanup.slot  ; or null
+   ```
+
+4. **Copies captured values** into env fields:
+   ```llvm
+   ; By-value: load value from outer alloca, store into env
+   %val = load i32, ptr %outer_x
+   %cap.slot = getelementptr %closure_ty, ptr %closure.ptr, 0, 2
+   store i32 %val, ptr %cap.slot
+
+   ; By-reference: store pointer to outer alloca directly
+   store ptr %outer_x, ptr %cap.slot
+
+   ; Captured closures: copy fat pointer + retain inner env
+   %inner.fat = load { ptr, ptr }, ptr %outer_closure
+   store { ptr, ptr } %inner.fat, ptr %cap.slot
+   %inner.env = extractvalue %inner.fat, 1
+   call void @__mingus_closure_retain(ptr %inner.env)
+   ```
+
+5. **Builds fat pointer** `{ fnPtr, envPtr }`:
+   ```llvm
+   %fat = insertvalue { ptr, ptr } undef, ptr @__lambda_0, 0
+   %fat.1 = insertvalue { ptr, ptr } %fat, ptr %closure.ptr, 1
+   ```
+
+For non-capturing lambdas, the fat pointer has `null` as the envPtr (no heap allocation).
+
+### Variable Assignment
+
+When the fat pointer is stored into a local variable's alloca, the RAII system registers
+the alloca with `__mingus_closure_release_wrapper`:
+
+```cpp
+registerRAII(alloca, getOrCreateClosureReleaseWrapper());
+```
+
+The refcount remains 1. At scope exit, RAII calls the wrapper, which releases the env.
+
+### Reassignment
+
+When a closure variable is reassigned, codegen releases the old env before storing the new value:
+
+```cpp
+// Release old closure envPtr before overwriting
+if (isFunctionKind(targetType)) {
+    auto* oldFat = builder_.CreateLoad(getFatPtrType(), targetPtr, "old.fat");
+    auto* oldEnv = builder_.CreateExtractValue(oldFat, {1}, "old.env");
+    builder_.CreateCall(getOrCreateClosureReleaseFn(), {oldEnv});
+}
+// Store new value
+builder_.CreateStore(lastValue_, targetPtr);
+```
+
+### Retain-on-Field-Store
+
+When assigning a closure to a struct or class **field** (via `MemberAccessExpression`),
+an extra retain is needed because the source variable's RAII will also release its own
+reference:
+
+```cpp
+// Retain new closure envPtr when storing into a field
+if (isFunctionKind(targetType)) {
+    bool isFieldStore = (node.target->as<MemberAccessExpression>() != nullptr);
+    if (!isFieldStore) {
+        if (auto* ident = node.target->as<IdentifierExpression>()) {
+            if (auto* vs = ident->resolvedSymbol->as<VariableSymbol>()) {
+                isFieldStore = (vs->role == VariableRole::Field);
+            }
+        }
+    }
+    if (isFieldStore) {
+        auto* newEnv = builder_.CreateExtractValue(lastValue_, {1}, "new.env");
+        builder_.CreateCall(getOrCreateClosureRetainFn(), {newEnv});
+    }
+}
+```
+
+Local variable reassignment does NOT retain because RAII already holds exactly one
+reference for the alloca.
+
+### Null Closures
+
+Mingus supports nullable closures (`var f: (int) -> int = null;`). Null is represented
+as a zero fat pointer `{ null, null }`:
+
+```cpp
+if (isFunctionKind(targetType) && llvm::isa<llvm::ConstantPointerNull>(lastValue_)) {
+    lastValue_ = llvm::ConstantAggregateZero::get(getFatPtrType());
+}
+```
+
+The retain and release functions both perform null checks on the envPtr, so operations
+on null closures are safe no-ops.
+
+### Self-Capturing Closures
+
+A closure can reference the variable it is being assigned to (letrec pattern):
+
+```mingus
+var f = [=](int x) => { return f(x - 1); };
+```
+
+Pass 4 (`SemanticValidator`) detects this pattern and sets `lambda->selfCapture = true`.
+Codegen patches the env struct after initial construction to store the fat pointer in
+the self-capture slot:
+
+```cpp
+if (selfCaptureIdx >= 0) {
+    auto* envPtr = builder_.CreateExtractValue(lastValue_, {1}, "self.env");
+    auto* selfSlot = builder_.CreateStructGEP(closureTy, envPtr,
+        headerOffset + selfCaptureIdx, "self.capture.slot");
+    builder_.CreateStore(lastValue_, selfSlot);  // store fat ptr
+}
+```
+
+The self-reference is **unretained** to avoid a guaranteed reference cycle.
+
+---
+
+## 6. Struct Cleanup
+
+Structs do not have destructors, but they may contain closure-typed fields that need
+cleanup. For each such struct, codegen generates a synthetic cleanup function named
+`__struct_cleanup_<Name>`:
+
+```cpp
+llvm::Function* IRGenerator::getOrCreateStructCleanupFn(StructSymbol* structSym) {
+    // Cached per struct name
+    auto* fn = /* create internal function taking ptr %struct_ptr */;
+
+    for (auto& field : structSym->fields) {
+        if (field->getType() && field->getType()->is<FunctionTypeSymbol>()) {
+            auto* fieldPtr = b.CreateStructGEP(structTy, structPtr,
+                                                field->fieldIndex);
+            auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr);
+            auto* envPtr = b.CreateExtractValue(fatVal, {1});
+            b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+        }
+    }
+    b.CreateRetVoid();
+    return fn;
+}
+```
+
+The generated IR looks like:
+
+```llvm
+define internal void @__struct_cleanup_Oscillator(ptr %struct_ptr) {
+entry:
+    ; For each closure-typed field:
+    %callback.cleanup = getelementptr %Oscillator, ptr %struct_ptr, 0, 2
+    %callback.fat = load { ptr, ptr }, ptr %callback.cleanup
+    %callback.env = extractvalue { ptr, ptr } %callback.fat, 1
+    call void @__mingus_closure_release(ptr %callback.env)
+    ret void
+}
+```
+
+The cleanup function is registered via RAII when the struct variable is declared:
+
+```cpp
+if (structSym && structSym->needsCleanup()) {
+    registerRAII(alloca, getOrCreateStructCleanupFn(structSym));
+}
+```
+
+The `needsCleanup()` method on `StructSymbol` returns true when any field has a
+`FunctionTypeSymbol` type.
+
+---
+
+## 7. Class Destructor Epilogue
+
+Class destructors have compiler-generated cleanup code that runs **after** the user's
+destructor body. This cleanup releases any closure-typed fields owned by the class:
+
+```cpp
+void IRGenerator::visit(DestructorDeclaration& node) {
+    // ... emit user destructor body ...
+
+    // Release closure-typed fields (auto-generated epilogue)
+    if (!builder_.GetInsertBlock()->getTerminator()) {
+        auto* structTy = getStructType(currentClassSym_);
+        auto* fatPtrTy = getFatPtrType();
+
+        for (auto& field : currentClassSym_->fields) {
+            if (field->getType() && field->getType()->is<FunctionTypeSymbol>()) {
+                int gepIdx = getFieldGEPIndex(currentClassSym_, field.get());
+                if (gepIdx >= 0) {
+                    auto* fieldPtr = builder_.CreateStructGEP(structTy, currentThisPtr_,
+                                                              gepIdx);
+                    auto* fatVal = builder_.CreateLoad(fatPtrTy, fieldPtr);
+                    auto* envPtr = builder_.CreateExtractValue(fatVal, {1});
+                    builder_.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+                }
+            }
+        }
+    }
+
+    // Chain to base class destructor
+    if (currentClassSym_->resolvedBaseClass &&
+        currentClassSym_->resolvedBaseClass->destructor) {
+        builder_.CreateCall(baseDtorFn, {currentThisPtr_});
+    }
+    builder_.CreateRetVoid();
+}
+```
+
+The destruction order within a class is:
+1. User destructor body executes
+2. Compiler releases all closure-typed fields (this class only, not inherited)
+3. Base class destructor is called (which recursively does the same)
+
+This mirrors C++ destruction order: derived class cleanup first, then base class.
+
+---
+
+## 8. String Memory
+
+### String Constants
+
+`StringLiteral` nodes produce global string constants via `CreateGlobalStringPtr()`.
+These live in the `.rodata` section and require no allocation or cleanup.
+
+### String Concatenation
+
+`emitStringConcat()` for the `+` operator on strings:
+
+```cpp
+llvm::Value* IRGenerator::emitStringConcat(llvm::Value* left, llvm::Value* right) {
+    llvm::Value* len1 = builder_.CreateCall(strlenCallee, {left}, "len1");
+    llvm::Value* len2 = builder_.CreateCall(strlenCallee, {right}, "len2");
+    llvm::Value* sum = builder_.CreateAdd(len1, len2, "sum");
+    llvm::Value* total = builder_.CreateAdd(sum, ConstantInt::get(i64Ty, 1), "total");
+    llvm::Value* buf = builder_.CreateCall(mallocCallee, {total}, "str.buf");
+    builder_.CreateCall(strcpyCallee, {buf, left});
+    builder_.CreateCall(strcatCallee, {buf, right});
+    registerRAII(buf, getOrCreateStringFreeFn());
+    return buf;
+}
+```
+
+Every concatenation allocates a new heap buffer and registers it for RAII cleanup.
+The `__mingus_string_free` function simply wraps `free(ptr)`:
+
+```cpp
+llvm::Function* IRGenerator::getOrCreateStringFreeFn() {
+    // void __mingus_string_free(ptr %str)
+    //   call free(%str)
+    //   ret void
+}
+```
+
+### String Interpolation
+
+Interpolated strings use a two-pass `snprintf` approach:
+
+```llvm
+; Pass 1: compute needed buffer size
+%len = call i32 @snprintf(ptr null, i32 0, ptr @fmt, <args>)
+; Allocate buffer
+%buf = call ptr @malloc(i64 %len + 1)
+; Pass 2: format into buffer
+call i32 @snprintf(ptr %buf, i32 %len+1, ptr @fmt, <args>)
+; Register for RAII cleanup
+registerRAII(%buf, @__mingus_string_free)
+```
+
+Format specifiers: `double`/`float` use `%f`, `int`/`byte`/`char`/`enum` use `%d`,
+`bool` uses `%d`, `string`/`ptr` use `%s`.
+
+### Chain Waste
+
+Concatenation chains like `a + b + c` create intermediate buffers. `a + b` allocates
+one buffer, then `(a+b) + c` allocates another. Both buffers are registered for RAII in
+the same scope and persist until scope exit, even though only the final result is used.
+
+---
+
+## 9. Heap Objects
+
+### `new` Expression
 
 `new Type(args)` calls `malloc` + constructor:
 
-```llvm
-%obj = call ptr @malloc(i32 <sizeof(Type)>)
-; store vtable ptr if needed
-call void @ClassName_constructor(ptr %obj, <args>)
-; result: %obj (raw pointer, no RAII)
+```cpp
+void IRGenerator::visit(NewExpression& node) {
+    // Calculate object size via DataLayout
+    auto& dl = module_->getDataLayout();
+    uint64_t objSize = dl.getTypeAllocSize(objTy);
+
+    // Allocate
+    llvm::Value* rawPtr = builder_.CreateCall(mallocCallee, {sizeVal}, "new.ptr");
+
+    // Call constructor (passes rawPtr as 'this')
+    if (classSym->constructor) {
+        std::vector<llvm::Value*> ctorArgs;
+        ctorArgs.push_back(rawPtr);
+        // ... add user arguments ...
+        builder_.CreateCall(ctorFn, ctorArgs);
+    } else {
+        storeVtablePtr(rawPtr, classSym);  // still need vtable
+    }
+    lastValue_ = rawPtr;
+}
 ```
 
-The programmer is responsible for `delete`. No automatic RAII for heap objects.
-
-### `new Type[N]` — Array Heap Allocation
+Array allocation with `new Type[N]`:
 
 ```llvm
 %total = mul i32 %N, <sizeof(element)>
 %arr = call ptr @malloc(i32 %total)
 ```
 
+The programmer is responsible for calling `delete`. Heap objects are NOT registered
+for RAII -- there is no automatic cleanup.
+
 ### `delete` Statement
 
-Calls destructor (virtual if applicable), then `free`:
+`delete` calls the destructor (with virtual dispatch if applicable), then `free`:
+
+```cpp
+void IRGenerator::visit(DeleteStatement& node) {
+    // Evaluate target expression to get pointer
+    node.target->accept(*this);
+    llvm::Value* ptrVal = lastValue_;
+
+    if (/* interface pointer */) {
+        // Extract object pointer from fat pointer { objPtr, itablePtr }
+        ptrVal = builder_.CreateExtractValue(ptrVal, {0}, "iface.del.obj");
+    } else if (auto* classSym = /* class type */) {
+        if (classSym->destructor) {
+            if (classSym->hasVtable() && classSym->destructor->vtableIndex >= 0) {
+                // VIRTUAL destructor dispatch via vtable slot 0
+                auto* vtablePtrPtr = builder_.CreateStructGEP(structTy, ptrVal, 0);
+                auto* vtable = builder_.CreateLoad(ptrTy, vtablePtrPtr);
+                auto* dtorSlot = builder_.CreateGEP(ptrTy, vtable,
+                    builder_.getInt32(0));   // slot 0 = destructor
+                auto* dtorFn = builder_.CreateLoad(ptrTy, dtorSlot);
+                builder_.CreateCall(dtorFnTy, dtorFn, {ptrVal});
+            } else {
+                // Direct (non-virtual) destructor call
+                builder_.CreateCall(dtorFn, {ptrVal});
+            }
+        }
+    }
+
+    // Always free the memory
+    builder_.CreateCall(freeCallee, {ptrVal});
+}
+```
+
+### Virtual Destructor Dispatch
+
+Vtable slot 0 is always the destructor. When `delete` is called on a base-class pointer,
+the virtual dispatch mechanism loads the correct destructor from the vtable:
 
 ```llvm
-; For virtual destructor:
-%vtable = load ptr, ptr %obj         ; load vtable from slot 0
-%dtor.slot = getelementptr ptr, ptr %vtable, i32 0
-%dtor = load ptr, ptr %dtor.slot
-call void %dtor(ptr %obj)            ; virtual destructor call
-call void @free(ptr %obj)
+; delete basePtr;  (where basePtr points to a Derived)
+%vtable.ptr = getelementptr %Base, ptr %basePtr, 0, 0     ; field 0 = vtable ptr
+%vtable = load ptr, ptr %vtable.ptr
+%dtor.slot = getelementptr ptr, ptr %vtable, i32 0         ; slot 0 = dtor
+%dtor.fn = load ptr, ptr %dtor.slot                        ; -> Derived_destructor
+call void %dtor.fn(ptr %basePtr)
+call void @free(ptr %basePtr)
 ```
+
+The destructor chain (derived -> base) is handled within each destructor's epilogue
+(see [Class Destructor Epilogue](#7-class-destructor-epilogue)).
 
 ### Stack-Allocated Class Instances
 
-`var arr = DynamicArray(8);` without `new` allocates on the stack:
+Class instances declared without `new` are stack-allocated:
+
+```mingus
+var arr = DynamicArray(8);   // stack alloca, RAII cleanup
+```
 
 ```llvm
 %arr.tmp = alloca %DynamicArray
@@ -103,328 +835,251 @@ call void @free(ptr %obj)
 call void @DynamicArray_constructor(ptr %arr.tmp, i32 8)
 %arr.val = load %DynamicArray, ptr %arr.tmp
 store %DynamicArray %arr.val, ptr %arr
-; RAII registered → destructor called at scope exit
+; RAII registered -> destructor called at scope exit
 ```
 
 ---
 
-## 2. The RAII System
+## 10. Lambda RAII Isolation
 
-### Data Structures
+Lambdas create separate LLVM functions but share the same `IRGenerator` instance. Without
+isolation, the RAII scope stack from the parent function would leak into the lambda, causing
+`emitReturnDestructors()` inside the lambda to walk the parent's RAII stack and create
+cross-function IR references (using a Value from function A inside function B). This
+crashes LLVM verification.
 
-```cpp
-struct RAIIScope {
-    vector<pair<llvm::Value*, llvm::Function*>> destructibles;  // (ptr, dtor_fn)
-    set<sema::Symbol*> returnedVars;  // suppress cleanup for returned values
-};
-vector<RAIIScope> raiiScopeStack_;
-```
-
-### Scope Stack Lifecycle
-
-| Event | Action |
-|-------|--------|
-| Function body start | `pushRAIIScope()` |
-| Block `{ }` entry | `pushRAIIScope()` |
-| Variable declaration | `registerRAII(ptr, dtor)` on innermost scope |
-| Block `{ }` exit | `emitScopeDestructors()` + pop |
-| Function body end | `emitScopeDestructors()` + pop |
-| `return` statement | `emitReturnDestructors()` (all scopes) |
-| `break`/`continue` | `emitBreakDestructors()` (loop scopes only) |
-
-### What Gets Registered
-
-| Object Type | Destructor Function | Registration Site |
-|------------|-------------------|-------------------|
-| Class instance (stack) | `ClassName_destructor` | `VariableDeclaration` |
-| Struct with closure fields | `__struct_cleanup_<Name>` | `VariableDeclaration` |
-| Closure-typed variable | `__mingus_closure_release_wrapper` | `VariableDeclaration` |
-| String concat result | `__mingus_string_free` | `emitStringConcat` |
-| Interpolated string buffer | `__mingus_string_free` | `InterpolatedString` |
-| Temporary closure argument | `__mingus_closure_release_wrapper` | `CallExpression` |
-
-### Destruction Order
-
-**Normal scope exit** (`emitScopeDestructors`): Reverse registration order (LIFO) within the current scope only.
+The fix: save, clear, and restore the entire RAII stack (plus other codegen state) when
+entering and leaving a lambda:
 
 ```cpp
-// Iterates destructibles in reverse
-for (auto it = scope.destructibles.rbegin(); it != scope.destructibles.rend(); ++it) {
-    if (!isReturned(it->first))
-        builder_.CreateCall(it->second, {it->first});
+void IRGenerator::visit(LambdaExpression& node) {
+    // CRITICAL: Save/restore state for lambda isolation
+    auto* prevFunction = currentFunction_;
+    auto* prevThisPtr = currentThisPtr_;
+    auto savedNamedValues = namedValues_;
+    auto savedInsertPoint = builder_.GetInsertBlock();
+    auto savedInsertPointIt = builder_.GetInsertPoint();
+    auto savedRAIIStack = std::move(raiiScopeStack_);   // <-- save
+    raiiScopeStack_.clear();                             // <-- isolate
+
+    currentFunction_ = lambdaFn;
+    currentThisPtr_ = nullptr;
+    namedValues_.clear();
+
+    // ... emit lambda body with its own RAII scope ...
+    pushRAIIScope();
+    // ... emit body ...
+    popRAIIScope();
+
+    // Restore state
+    currentFunction_ = prevFunction;
+    currentThisPtr_ = prevThisPtr;
+    namedValues_ = savedNamedValues;
+    raiiScopeStack_ = std::move(savedRAIIStack);         // <-- restore
+    builder_.SetInsertPoint(savedInsertPoint, savedInsertPointIt);
 }
 ```
 
-**Early return** (`emitReturnDestructors`): Walks ALL active scopes from inner to outer, LIFO within each:
+The lambda gets its own clean RAII stack. After the lambda body is emitted, the parent's
+RAII stack is restored, and codegen continues in the parent function's context (building
+the closure env struct and fat pointer).
+
+---
+
+## 11. Escape Analysis
+
+Pass 4 (`SemanticValidator`) performs a simple escape analysis for lambda expressions.
+Lambdas that are passed directly as function arguments (without being stored in a variable
+first) are marked as non-escaping:
 
 ```cpp
-for (auto scopeIt = raiiScopeStack_.rbegin(); scopeIt != raiiScopeStack_.rend(); ++scopeIt) {
-    for (auto it = scopeIt->destructibles.rbegin(); ...) {
-        // call dtor
+void SemanticValidator::visit(CallExpression& node) {
+    if (node.arguments) {
+        for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
+            auto& arg = node.arguments->expressions[i];
+            if (arg) {
+                arg->accept(*this);
+
+                // Non-escaping lambda detection: lambdas passed directly
+                // as arguments don't escape (can be stack-allocated)
+                if (auto* lambda = arg->as<LambdaExpression>()) {
+                    lambda->escapes = false;
+                }
+            }
+        }
     }
 }
 ```
 
-**Break/Continue** (`emitBreakDestructors`): Only destroys scopes created INSIDE the loop body. Uses `loopRAIIScopeDepth_` as the boundary:
+By default, `LambdaExpression::escapes` is `true`. When a lambda is passed directly as a
+call argument (e.g., `arr.map([=](int x) => { return x * 2; })`), it is marked
+`escapes = false`.
 
-```cpp
-// Only scopes at index > loopRAIIScopeDepth_ are destroyed
-for (size_t i = raiiScopeStack_.size(); i > loopRAIIScopeDepth_; --i) {
-    // call dtors in reverse
-}
-```
-
-`loopRAIIScopeDepth_` is saved/restored at loop entry/exit to handle nested loops correctly.
-
-### Return Value Suppression
-
-When returning a named variable, its destructor is suppressed:
-
-```cpp
-// var arr = DynamicArray(8);
-// return arr;  ← don't destroy arr, caller takes ownership
-scope.returnedVars.insert(arrSymbol);
-```
-
-### Lambda RAII Isolation
-
-Lambdas create separate LLVM functions but share the same `IRGenerator`. The RAII stack is saved and cleared before entering a lambda, then restored after:
-
-```cpp
-auto savedRAIIStack = std::move(raiiScopeStack_);
-raiiScopeStack_.clear();
-// ... emit lambda body ...
-raiiScopeStack_ = std::move(savedRAIIStack);
-```
-
-Without this, `emitReturnDestructors()` inside a lambda would walk the parent function's RAII stack, creating cross-function IR references that crash LLVM.
+This analysis result is available for codegen to use as a stack-allocation optimization:
+a non-escaping closure's env struct could be `alloca`'d on the stack instead of `malloc`'d
+on the heap, avoiding allocation overhead and eliminating the need for reference counting.
+The current codegen does not yet use this information for optimization, but the analysis
+is in place for future use.
 
 ---
 
-## 3. Closure Reference Counting
+## 12. Universal Zero-Init
 
-### Environment Struct Layout
+Four distinct zero-initialization sites prevent use of uninitialized memory:
 
-Every capturing closure allocates a heap environment:
+### 1. Closure-typed Local Variables
 
-```
-closure_env = {
-    i64  refcount,     ; field 0 — starts at 1
-    ptr  cleanup_fn,   ; field 1 — per-closure cleanup, or null
-    T0   capture_0,    ; field 2 — first captured variable
-    T1   capture_1,    ; field 3 — second captured variable
-    ...
-}
-```
-
-- By-value captures: store the actual value
-- By-reference captures: store a `ptr` to the original `alloca`
-- Captured closures (by value): store the `{ ptr, ptr }` fat pointer + retain the inner envPtr
-
-### RC Runtime Functions
-
-Three internal LLVM functions (lazily created, one per module):
-
-**`__mingus_closure_retain(ptr %env)`**
-```
-if %env == null → return
-%rc = load i64 from %env[0]
-%rc_inc = add i64 %rc, 1
-store i64 %rc_inc to %env[0]
-```
-
-**`__mingus_closure_release(ptr %env)`**
-```
-if %env == null → return
-%rc = load i64 from %env[0]
-%rc_dec = sub i64 %rc, 1
-store i64 %rc_dec to %env[0]
-if %rc_dec != 0 → return
-; refcount hit zero:
-%cleanup = load ptr from %env[1]
-if %cleanup != null → call %cleanup(%env)
-call free(%env)
-```
-
-**`__mingus_closure_release_wrapper(ptr %alloca_ptr)`**
-```
-; RAII adapter — takes alloca pointer, extracts envPtr, calls release
-%fat = load { ptr, ptr } from %alloca_ptr
-%env = extractvalue %fat, 1
-call __mingus_closure_release(%env)
-```
-
-### Per-Closure Cleanup Function
-
-Generated for closures that capture other closures by value. Named `__closure_cleanup_N`:
-
-```
-define internal void @__closure_cleanup_0(ptr %env) {
-    ; For each by-value-captured closure field:
-    %field = getelementptr %closure_ty, ptr %env, 0, <2+i>
-    %fat = load { ptr, ptr }, ptr %field
-    %inner_env = extractvalue %fat, 1
-    call __mingus_closure_release(%inner_env)
-}
-```
-
-This enables recursive deep release: when a closure containing other closures is freed, the inner closures' refcounts are decremented.
-
-### Lifecycle
-
-1. **Creation**: `malloc(sizeof(env))`, refcount = 1, captures stored
-2. **Variable assignment**: Fat pointer stored in alloca, `release_wrapper` registered via RAII
-3. **Reassignment**: Release old envPtr, store new fat pointer. Retain only for struct/class field assignments.
-4. **Scope exit**: RAII calls `release_wrapper(alloca)` → releases envPtr
-5. **Refcount zero**: Cleanup function runs (releases inner closures), then `free(env)`
-
-### Retain-on-Field-Store
-
-When assigning a closure to a struct/class **field** (not a local variable):
+Before any initializer runs, the alloca is zeroed to prevent `__mingus_closure_release`
+from calling `free` on garbage if the variable is reassigned before initialized:
 
 ```cpp
-// Assignment to obj.closure_field:
-release(old_env);        // release what was there before
-store new_fat to field;
-retain(new_env);         // because source variable's RAII will also release
-```
-
-Local variable reassignment does NOT retain because RAII already holds exactly one reference.
-
-### Struct Cleanup Functions
-
-For structs with closure-typed fields, `__struct_cleanup_<Name>` releases all closure fields:
-
-```
-define internal void @__struct_cleanup_Foo(ptr %struct_ptr) {
-    ; For each closure-typed field:
-    %field = getelementptr %Foo, ptr %struct_ptr, 0, <fieldIndex>
-    %fat = load { ptr, ptr }, ptr %field
-    %env = extractvalue %fat, 1
-    call __mingus_closure_release(%env)
+if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
+    builder_.CreateStore(llvm::ConstantAggregateZero::get(varTy), alloca);
 }
 ```
 
-### Class Destructor Epilogue
-
-After the user's destructor body runs, the compiler auto-generates cleanup for closure-typed fields:
-
-```
-; In ClassName_destructor, after user body:
-; For each closure-typed field in this class (not base):
-%field_ptr = getelementptr %ClassName, ptr %this, 0, <gepIdx>
-%fat = load { ptr, ptr }, ptr %field_ptr
-%env = extractvalue %fat, 1
-call __mingus_closure_release(%env)
-; Then chain to base destructor:
-call void @BaseClass_destructor(ptr %this)
-```
-
----
-
-## 4. String Memory
-
-### String Constants
-
-`StringLiteral` → `CreateGlobalStringPtr()` → global `.rodata` constant. No allocation, no RAII needed.
-
-### String Concatenation
-
-`emitStringConcat` for `s1 + s2`:
-
-```
-%len1 = call i32 @strlen(ptr %s1)
-%len2 = call i32 @strlen(ptr %s2)
-%total = add + 1
-%buf = call ptr @malloc(i64 %total)
-call ptr @strcpy(ptr %buf, ptr %s1)
-call ptr @strcat(ptr %buf, ptr %s2)
-registerRAII(%buf, @__mingus_string_free)
-```
-
-The `__mingus_string_free` function simply wraps `free(ptr)`.
-
-Every concatenation allocates a new buffer. Concatenation chains (`a + b + c`) create intermediate buffers that are all registered for RAII cleanup at the current scope — they persist for the entire scope even though only the final buffer is used.
-
-### String Interpolation
-
-Two-pass `snprintf` approach:
-
-```
-; Pass 1: compute needed size
-%len = call i32 @snprintf(ptr null, i32 0, ptr @fmt, <args>)
-; Allocate
-%buf = call ptr @malloc(i64 %len + 1)
-; Pass 2: format into buffer
-call i32 @snprintf(ptr %buf, i32 %len+1, ptr @fmt, <args>)
-registerRAII(%buf, @__mingus_string_free)
-```
-
-Format specifiers: `double`/`float` → `%f`, `int`/`byte`/`char`/`enum` → `%d`, `bool` → `%d`, `string`/`ptr` → `%s`.
-
----
-
-## 5. Zero-Initialization Patterns
-
-Four distinct zero-init sites prevent use of uninitialized memory:
-
-### 1. Closure-typed local variables
-
-Before any initializer runs, the alloca is zeroed:
 ```llvm
 store { ptr null, ptr null }, ptr %closure_alloca
 ```
-Prevents `__closure_release` from calling `free` on garbage if the variable is reassigned before initialized.
 
-### 2. Structs with closure fields
+### 2. All Struct and Class Construction
 
-The entire struct alloca is zeroed:
-```llvm
-store %StructType zeroinitializer, ptr %struct_alloca
+ALL struct and class allocas are zeroed using `zeroinitializer` (not `undef`):
+
+```cpp
+if (varSym->getType() && (varSym->getType()->is<StructSymbol>() ||
+                           varSym->getType()->is<ClassSymbol>())) {
+    builder_.CreateStore(llvm::Constant::getNullValue(varTy), alloca);
+}
 ```
-Ensures closure fields start as null fat pointers.
 
-### 3. All struct construction
+This prevents NaN/garbage propagation in accumulator patterns where fields are read
+before explicit assignment (e.g., `mix = mix + osc`). Prior to this change, `undef`
+values caused non-deterministic NaN results in floating-point accumulation.
 
-All struct literal construction uses `zeroinitializer` (not `undef`):
-```llvm
-%s = zeroinitializer  ; not undef
+### 3. Class Constructor Closure-Field Init
+
+After `storeVtablePtr` and before the user constructor body, all closure-typed fields
+are explicitly zeroed:
+
+```cpp
+// In visit(ConstructorDeclaration):
+storeVtablePtr(currentThisPtr_, currentClassSym_);
+
+// Zero-init closure-typed fields
+for (auto& field : currentClassSym_->fields) {
+    if (field->getType() && field->getType()->is<FunctionTypeSymbol>()) {
+        int gepIdx = getFieldGEPIndex(currentClassSym_, field.get());
+        if (gepIdx >= 0) {
+            auto* fieldPtr = builder_.CreateStructGEP(structTy, currentThisPtr_, gepIdx);
+            builder_.CreateStore(llvm::ConstantAggregateZero::get(fatPtrTy), fieldPtr);
+        }
+    }
+}
+// ... user constructor body runs ...
 ```
-Prevents NaN/garbage in accumulator patterns where fields are read before explicit assignment (e.g., `mix = mix + osc`).
 
-### 4. Class constructor closure-field init
+This ensures that if the user constructor does not assign all closure fields, the
+destructor epilogue's release calls encounter null envPtrs (which are safe no-ops)
+rather than garbage pointers.
 
-After `storeVtablePtr` and before the user constructor body, all closure-typed fields are zeroed:
-```llvm
-; In constructor prologue:
-%field = getelementptr %Class, ptr %this, 0, <field_idx>
-store { ptr null, ptr null }, ptr %field
+### 4. Null-to-Zero Fat Pointer Conversion
+
+When assigning `null` to a closure-typed variable, `ConstantPointerNull` is converted
+to a zero fat pointer:
+
+```cpp
+if (isFunctionKind(targetType) && llvm::isa<llvm::ConstantPointerNull>(lastValue_)) {
+    lastValue_ = llvm::ConstantAggregateZero::get(getFatPtrType());
+}
 ```
+
+This ensures `null` closures are represented as `{ null, null }` rather than a bare
+null pointer, maintaining the fat pointer invariant.
 
 ---
 
-## 6. Memory Limitations
+## 13. Known Memory Limitations
 
-### Temporary Closure Leak
+### By-Reference Captures That Escape
 
-Closures passed directly as function arguments (without variable storage) leak one refcount in some cases. The compiler creates a temporary alloca with RAII cleanup, but the interaction between the temporary and the callee's potential retain is imperfect.
+`[&x]` captures store a pointer to the original stack alloca. If the closure escapes
+the scope where `x` is declared (e.g., returned or stored in a data structure), the
+pointer becomes dangling. This is programmer responsibility, same as C++:
+
+```mingus
+func makeCounter() -> (int) -> int {
+    var count = 0;
+    return [&count](int n) => { count = count + n; return count; };
+    // BUG: count is on makeCounter's stack, which is gone after return
+}
+```
+
+### Temporary Closure Argument Leak
+
+Closures passed directly as function arguments without variable storage get RAII
+cleanup via a temporary alloca, but the interaction between the temporary and the
+callee's potential retain is imperfect. In some cases, one refcount may leak:
+
+```mingus
+arr.map([=](int x) => { return x * 2; });
+// The temporary closure alloca gets RAII cleanup, but edge cases exist
+```
 
 ### Captures are Copy-on-Entry
 
-By-value captures copy the value into the env struct at creation time, then copy again into a local alloca inside the lambda body. Writes modify the local copy only — never written back to the env or outer variable. Workaround: capture by reference (`[&x]`) or capture a pointer (`var ptr = &obj;`).
+By-value captures (`[x]` or `[=]`) copy the value into the env struct at creation
+time, then copy again into a local alloca inside the lambda body. Writes inside the
+lambda modify only the local copy -- they are never written back to the env or outer
+variable:
 
-### Self-Capturing Closures
+```mingus
+var x = 10;
+var f = [=](int n) => { x = x + n; return x; };
+// Modifying x inside f does NOT affect the outer x
+```
 
-Self-references in the env struct are **unretained** (to avoid reference cycles). If the closure is freed while still calling itself, the self-reference becomes dangling.
+### Self-Capturing Closures and Cycles
 
-### String Concatenation Chain Waste
+Self-references in the env struct are unretained (to avoid a guaranteed reference
+cycle). If the closure is freed while still calling itself, the self-reference
+becomes dangling:
 
-`a + b + c` creates two heap buffers: one for `a+b` and one for `(a+b)+c`. Both are registered for RAII. The intermediate buffer persists for the entire scope even though its contents have been copied. Not a correctness bug, but a space inefficiency.
-
-### No Debug Info for RC Operations
-
-Retain/release/destructor calls have no `DebugLoc` attached — they appear as "unknown location" in debuggers.
+```mingus
+var f = [=](int x) => { return f(x - 1); };
+// Self-reference is unretained -- safe as long as f stays alive
+```
 
 ### No Cycle Detection
 
-The reference counting system has no cycle detection. If closures form a reference cycle (A captures B, B captures A), neither will ever be freed.
+The reference counting system has no cycle detection. If closures form a reference
+cycle (A captures B by value, B captures A by value), neither will ever be freed:
+
+```mingus
+var a = [=]() => { b(); };   // a captures b
+var b = [=]() => { a(); };   // b captures a
+// Reference cycle -- both leak
+```
+
+### String Concatenation Chain Waste
+
+`a + b + c` creates two heap buffers: one for `a+b` and one for `(a+b)+c`. Both
+are registered for RAII. The intermediate buffer persists for the entire scope even
+though its contents have been copied into the final buffer.
+
+### No Debug Info for RC Operations
+
+Retain, release, and destructor calls have no `DebugLoc` attached -- they appear
+as "unknown location" in debuggers and cannot be stepped through meaningfully.
+
+### Closures with Struct Parameters
+
+Fat-pointer call sites pass struct arguments as `ptr`, but the lambda function
+expects the struct by value. This causes an LLVM verification failure. Workaround:
+pass struct fields as individual scalar arguments.
+
+### Closures with Reference Parameters
+
+Call sites pass the `i32` value directly, not a `ptr` to the alloca. This causes
+an LLVM verification failure when the lambda expects a reference parameter.
+Workaround: use non-closure functions for reference parameters.
