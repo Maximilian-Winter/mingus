@@ -26,6 +26,11 @@ add_library(mingus_v2_core STATIC
 
     # AST base nodes
     src/mingus/AstNode.cpp
+
+    # Sema passes
+    src/mingus/sema/SymbolTableBuilder.cpp
+    src/mingus/sema/TypeResolver.cpp
+    src/mingus/sema/TypeChecker.cpp
 )
 
 target_include_directories(mingus_v2_core PUBLIC

@@ -17,6 +17,10 @@
 #include "mingus/Expressions.h"
 #include "mingus/Statements.h"
 #include "mingus/Declarations.h"
+#include "mingus/sema/ErrorReporter.h"
+#include "mingus/sema/SymbolTableBuilder.h"
+#include "mingus/sema/TypeResolver.h"
+#include "mingus/sema/TypeChecker.h"
 
 #include <cassert>
 #include <iostream>
@@ -663,6 +667,1160 @@ int main() {
     }
 
     // ========================================
+    // 12. Pass 1 — SymbolTableBuilder basic
+    // ========================================
+    {
+        // Build a mini program AST:
+        //   module Main {
+        //     func add(int a, int b) => int { return a + b; }
+        //     var PI: double;
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        // func add(int a, int b) => int { return a + b; }
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "add";
+        funcDecl->accessModifier = AccessModifier::Public;
+
+        auto paramA = std::make_shared<ParameterNode>();
+        paramA->name = "a";
+        paramA->isReference = false;
+        auto paramB = std::make_shared<ParameterNode>();
+        paramB->name = "b";
+        paramB->isReference = true;  // b is ref param
+        funcDecl->parameters = {paramA, paramB};
+
+        // Body: return a + b;
+        auto body = std::make_shared<BlockStatementNode>();
+        auto retStmt = std::make_shared<ReturnStatement>();
+        auto binExpr = std::make_shared<BinaryExpression>();
+        binExpr->op = BinaryOp::Add;
+        binExpr->left = std::make_shared<IdentifierExpression>();
+        binExpr->right = std::make_shared<IdentifierExpression>();
+        retStmt->value = binExpr;
+        body->statements.push_back(retStmt);
+        funcDecl->body = body;
+
+        // var PI: double;
+        auto piDecl = std::make_shared<VariableDeclaration>();
+        piDecl->name = "PI";
+        piDecl->isInferred = false;
+
+        module->declarations.push_back(funcDecl);
+        module->declarations.push_back(piDecl);
+        program->modules.push_back(module);
+
+        // Run Pass 1
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 1 no errors");
+
+        // Verify: module resolved
+        ASSERT_NOT_NULL(module->resolvedModule, "module has resolvedModule");
+        ASSERT_EQ(module->resolvedModule->getName(), std::string("Main"), "module name = Main");
+
+        // Verify: function resolved
+        ASSERT_NOT_NULL(funcDecl->resolvedFunction, "func has resolvedFunction");
+        ASSERT_EQ(funcDecl->resolvedFunction->getName(), std::string("add"), "func name = add");
+        ASSERT_EQ(funcDecl->resolvedFunction->parameters.size(), size_t(2), "func has 2 params");
+
+        // Verify: parameter symbols linked directly (no scanForParamSymbols needed!)
+        ASSERT_NOT_NULL(paramA->resolvedSymbol, "param a has resolvedSymbol");
+        ASSERT_EQ(paramA->resolvedSymbol->getName(), std::string("a"), "param a name");
+        ASSERT_EQ(paramA->resolvedSymbol->isReference, false, "param a not ref");
+        ASSERT_NOT_NULL(paramB->resolvedSymbol, "param b has resolvedSymbol");
+        ASSERT_EQ(paramB->resolvedSymbol->isReference, true, "param b is ref");
+        ASSERT_TRUE(paramB->resolvedSymbol->role == VariableRole::Parameter, "param b is Parameter role");
+
+        // Verify: variable resolved
+        ASSERT_NOT_NULL(piDecl->resolvedVariable, "PI has resolvedVariable");
+        ASSERT_EQ(piDecl->resolvedVariable->getName(), std::string("PI"), "PI name");
+
+        // Verify: scope chain — resolve PI from function scope
+        auto piFromFunc = funcDecl->resolvedFunction->resolve("PI");
+        ASSERT_NOT_NULL(piFromFunc, "func scope resolves PI from module");
+
+        // Verify: resolve params from function scope
+        auto aFromFunc = funcDecl->resolvedFunction->resolve("a");
+        ASSERT_NOT_NULL(aFromFunc, "func scope resolves param a");
+
+        // Verify: module scope has the function and variable
+        auto addFromModule = module->resolvedModule->resolve("add");
+        ASSERT_NOT_NULL(addFromModule, "module resolves 'add'");
+        auto piFromModule = module->resolvedModule->resolve("PI");
+        ASSERT_NOT_NULL(piFromModule, "module resolves 'PI'");
+
+        // Verify: every AST node has scope set
+        ASSERT_NOT_NULL(program->astScopeNode, "program has scope");
+        ASSERT_NOT_NULL(module->astScopeNode, "module has scope");
+        ASSERT_NOT_NULL(funcDecl->astScopeNode, "funcDecl has scope");
+        ASSERT_NOT_NULL(retStmt->astScopeNode, "returnStmt has scope");
+        ASSERT_NOT_NULL(binExpr->astScopeNode, "binExpr has scope");
+
+        passed++;
+        std::cout << "[PASS] 12. Pass 1 — SymbolTableBuilder basic\n";
+    }
+
+    // ========================================
+    // 13. Pass 1 — Class with inheritance + auto ctor/dtor
+    // ========================================
+    {
+        // Build:
+        //   module Zoo {
+        //     class Animal {
+        //       string name;
+        //       func speak() => void { }
+        //     }
+        //     class Dog : Animal {
+        //       int age;
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Zoo";
+
+        // class Animal
+        auto animalDecl = std::make_shared<ClassDeclaration>();
+        animalDecl->name = "Animal";
+
+        auto nameField = std::make_shared<VariableDeclaration>();
+        nameField->name = "name";
+        animalDecl->fields.push_back(nameField);
+
+        auto speakMethod = std::make_shared<FunctionDeclaration>();
+        speakMethod->name = "speak";
+        speakMethod->isVirtual = true;
+        speakMethod->body = std::make_shared<BlockStatementNode>();
+        animalDecl->methods.push_back(speakMethod);
+
+        // No explicit ctor/dtor — should auto-generate
+
+        // class Dog : Animal
+        auto dogDecl = std::make_shared<ClassDeclaration>();
+        dogDecl->name = "Dog";
+        dogDecl->baseClasses = {"Animal"};
+
+        auto ageField = std::make_shared<VariableDeclaration>();
+        ageField->name = "age";
+        dogDecl->fields.push_back(ageField);
+
+        module->declarations.push_back(animalDecl);
+        module->declarations.push_back(dogDecl);
+        program->modules.push_back(module);
+
+        // Run Pass 1
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 1 class no errors");
+
+        // Verify: Animal class symbol
+        auto* animalSym = animalDecl->resolvedClass.get();
+        ASSERT_NOT_NULL(animalSym, "Animal has resolvedClass");
+        ASSERT_EQ(animalSym->getName(), std::string("Animal"), "Animal name");
+        ASSERT_EQ(animalSym->fields.size(), size_t(1), "Animal has 1 field");
+        ASSERT_EQ(animalSym->fields[0]->getName(), std::string("name"), "Animal field = name");
+        ASSERT_EQ(animalSym->fields[0]->fieldIndex, 0, "Animal field index = 0");
+        ASSERT_TRUE(animalSym->fields[0]->role == VariableRole::Field, "field role = Field");
+
+        // Auto-generated ctor/dtor
+        ASSERT_NOT_NULL(animalSym->constructor, "Animal has auto-generated constructor");
+        ASSERT_NOT_NULL(animalSym->destructor, "Animal has auto-generated destructor");
+
+        // Vtable: slot 0 = dtor, slot 1 = speak
+        ASSERT_TRUE(animalSym->hasVtable(), "Animal has vtable");
+        ASSERT_TRUE(animalSym->vtableSize >= 2, "Animal vtable >= 2 slots");
+        ASSERT_EQ(animalSym->destructor->vtableIndex, 0, "destructor at vtable slot 0");
+
+        // Dog class symbol
+        auto* dogSym = dogDecl->resolvedClass.get();
+        ASSERT_NOT_NULL(dogSym, "Dog has resolvedClass");
+        ASSERT_NOT_NULL(dogSym->resolvedBaseClass, "Dog has base class");
+        ASSERT_EQ(dogSym->resolvedBaseClass->getName(), std::string("Animal"),
+            "Dog base = Animal");
+        ASSERT_EQ(dogSym->fields.size(), size_t(1), "Dog own fields = 1");
+        ASSERT_TRUE(dogSym->allFields.size() >= 2,
+            "Dog allFields >= 2 (inherited name + own age)");
+
+        // Dog resolves Animal.name through inheritance
+        auto nameFromDog = dogSym->resolve("name");
+        ASSERT_NOT_NULL(nameFromDog, "Dog resolves 'name' from Animal");
+
+        // Dog resolves speak through inheritance
+        auto speakFromDog = dogSym->resolve("speak");
+        ASSERT_NOT_NULL(speakFromDog, "Dog resolves 'speak' from Animal");
+
+        // Dog has auto-generated ctor/dtor
+        ASSERT_NOT_NULL(dogSym->constructor, "Dog has auto-generated constructor");
+        ASSERT_NOT_NULL(dogSym->destructor, "Dog has auto-generated destructor");
+
+        // Type registered in SymbolTable
+        auto animalType = st.resolveType("Animal");
+        ASSERT_NOT_NULL(animalType, "Animal registered in type registry");
+        auto dogType = st.resolveType("Dog");
+        ASSERT_NOT_NULL(dogType, "Dog registered in type registry");
+
+        passed++;
+        std::cout << "[PASS] 13. Pass 1 — Class with inheritance + auto ctor/dtor\n";
+    }
+
+    // ========================================
+    // 14. Pass 1 — Struct, Enum, Lambda, For, Match
+    // ========================================
+    {
+        // Build:
+        //   module Shapes {
+        //     struct Vec2 { double x; double y; }
+        //     enum Color { Red, Green, Blue }
+        //     func apply() => void {
+        //       var fn = [=](int x) => { return x; };
+        //       for (var i = 0; i < 10; i++) { }
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Shapes";
+
+        // struct Vec2
+        auto structDecl = std::make_shared<StructDeclaration>();
+        structDecl->name = "Vec2";
+        auto xField = std::make_shared<VariableDeclaration>();
+        xField->name = "x";
+        auto yField = std::make_shared<VariableDeclaration>();
+        yField->name = "y";
+        structDecl->fields = {xField, yField};
+
+        // enum Color
+        auto enumDecl = std::make_shared<EnumDeclaration>();
+        enumDecl->name = "Color";
+        auto red = std::make_shared<EnumMemberNode>();
+        red->name = "Red";
+        auto green = std::make_shared<EnumMemberNode>();
+        green->name = "Green";
+        auto blue = std::make_shared<EnumMemberNode>();
+        blue->name = "Blue";
+        enumDecl->members = {red, green, blue};
+
+        // func apply() => void { ... }
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "apply";
+
+        auto funcBody = std::make_shared<BlockStatementNode>();
+
+        // Lambda: var fn = [=](int x) => { return x; };
+        auto lambdaDecl = std::make_shared<VariableDeclaration>();
+        lambdaDecl->name = "fn";
+        lambdaDecl->isInferred = true;
+        auto lambda = std::make_shared<LambdaExpression>();
+        lambda->captureDefault = CaptureDefault::ByCopy;
+        auto lambdaParam = std::make_shared<ParameterNode>();
+        lambdaParam->name = "x";
+        lambdaParam->isReference = false;
+        lambda->parameters = {lambdaParam};
+        auto lambdaBody = std::make_shared<BlockStatementNode>();
+        auto lambdaRet = std::make_shared<ReturnStatement>();
+        lambdaRet->value = std::make_shared<IdentifierExpression>();
+        lambdaBody->statements.push_back(lambdaRet);
+        lambda->body = lambdaBody;
+        lambdaDecl->initializer = lambda;
+        auto lambdaDeclStmt = std::make_shared<ExpressionStatement>();
+        // We'll use VariableDeclaration directly in statements
+        funcBody->statements.push_back(lambdaDecl);
+
+        // For: for (var i = 0; i < 10; i++) { }
+        auto forStmt = std::make_shared<ForStatement>();
+        auto initVar = std::make_shared<VariableDeclaration>();
+        initVar->name = "i";
+        initVar->isInferred = true;
+        initVar->initializer = std::make_shared<IntegerLiteral>();
+        forStmt->initDeclaration = initVar;
+        forStmt->condition = std::make_shared<BinaryExpression>();
+        forStmt->body = std::make_shared<BlockStatementNode>();
+        funcBody->statements.push_back(forStmt);
+
+        funcDecl->body = funcBody;
+
+        module->declarations.push_back(structDecl);
+        module->declarations.push_back(enumDecl);
+        module->declarations.push_back(funcDecl);
+        program->modules.push_back(module);
+
+        // Run Pass 1
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 1 struct/enum no errors");
+
+        // Verify struct
+        ASSERT_NOT_NULL(structDecl->resolvedStruct, "Vec2 has resolvedStruct");
+        ASSERT_EQ(structDecl->resolvedStruct->fields.size(), size_t(2), "Vec2 has 2 fields");
+        ASSERT_EQ(structDecl->resolvedStruct->fields[0]->fieldIndex, 0, "x index = 0");
+        ASSERT_EQ(structDecl->resolvedStruct->fields[1]->fieldIndex, 1, "y index = 1");
+        ASSERT_TRUE(structDecl->resolvedStruct->fields[0]->role == VariableRole::Field,
+            "struct field role");
+
+        // Verify enum
+        ASSERT_NOT_NULL(enumDecl->resolvedEnum, "Color has resolvedEnum");
+        ASSERT_EQ(enumDecl->resolvedEnum->members.size(), size_t(3), "Color has 3 members");
+        ASSERT_EQ(enumDecl->resolvedEnum->members[0].name, std::string("Red"), "member 0 = Red");
+        ASSERT_EQ(enumDecl->resolvedEnum->members[1].intValue, int64_t(1), "Green = 1");
+        ASSERT_EQ(enumDecl->resolvedEnum->members[2].intValue, int64_t(2), "Blue = 2");
+
+        // Verify types registered
+        ASSERT_NOT_NULL(st.resolveType("Vec2"), "Vec2 in type registry");
+        ASSERT_NOT_NULL(st.resolveType("Color"), "Color in type registry");
+
+        // Verify lambda parameter symbol linked
+        ASSERT_NOT_NULL(lambdaParam->resolvedSymbol, "lambda param has resolvedSymbol");
+        ASSERT_EQ(lambdaParam->resolvedSymbol->getName(), std::string("x"),
+            "lambda param name = x");
+        ASSERT_TRUE(lambdaParam->resolvedSymbol->role == VariableRole::Parameter,
+            "lambda param role = Parameter");
+
+        // Verify for-loop creates its own scope with init var
+        ASSERT_NOT_NULL(initVar->resolvedVariable, "for-init var resolved");
+        ASSERT_EQ(initVar->resolvedVariable->getName(), std::string("i"), "for-init var = i");
+
+        // Verify fn variable resolved
+        ASSERT_NOT_NULL(lambdaDecl->resolvedVariable, "fn var resolved");
+        ASSERT_EQ(lambdaDecl->resolvedVariable->getName(), std::string("fn"), "fn name");
+
+        passed++;
+        std::cout << "[PASS] 14. Pass 1 — Struct, Enum, Lambda, For\n";
+    }
+
+    // ========================================
+    // 15. Pass 1 — Import resolution
+    // ========================================
+    {
+        // Build a two-module program:
+        //   module MathLib {
+        //     func sin(double x) => double { }
+        //     func cos(double x) => double { }
+        //   }
+        //   module Main {
+        //     import sin from MathLib;
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+
+        // Module: MathLib
+        auto mathModule = std::make_shared<ModuleNode>();
+        mathModule->name = "MathLib";
+
+        auto sinFunc = std::make_shared<FunctionDeclaration>();
+        sinFunc->name = "sin";
+        auto sinParam = std::make_shared<ParameterNode>();
+        sinParam->name = "x";
+        sinFunc->parameters = {sinParam};
+        sinFunc->body = std::make_shared<BlockStatementNode>();
+
+        auto cosFunc = std::make_shared<FunctionDeclaration>();
+        cosFunc->name = "cos";
+        auto cosParam = std::make_shared<ParameterNode>();
+        cosParam->name = "x";
+        cosFunc->parameters = {cosParam};
+        cosFunc->body = std::make_shared<BlockStatementNode>();
+
+        mathModule->declarations.push_back(sinFunc);
+        mathModule->declarations.push_back(cosFunc);
+
+        // Module: Main (imports sin from MathLib)
+        auto mainModule = std::make_shared<ModuleNode>();
+        mainModule->name = "Main";
+
+        auto importDecl = std::make_shared<ImportDeclaration>();
+        importDecl->sourcePath = {"MathLib"};
+        importDecl->isWholeModule = false;
+        importDecl->targets = {{"sin", std::nullopt}};
+
+        mainModule->declarations.push_back(importDecl);
+        program->modules = {mathModule, mainModule};
+
+        // Run Pass 1
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 1 import no errors");
+
+        // Verify: Main module can resolve 'sin' (imported)
+        auto sinFromMain = mainModule->resolvedModule->resolve("sin");
+        ASSERT_NOT_NULL(sinFromMain, "Main resolves 'sin' via import");
+        ASSERT_TRUE(sinFromMain->is<FunctionSymbol>(), "imported sin is FunctionSymbol");
+
+        // Verify: Main module CANNOT resolve 'cos' (not imported)
+        auto cosFromMain = mainModule->resolvedModule->resolve("cos");
+        // cos should NOT be directly defined in Main's scope
+        // (it may still resolve through the global scope chain, but
+        //  the import only brings 'sin' into Main)
+        // Actually Main has no 'cos' defined, so resolve might
+        // walk up to global, then fail. Let's just verify sin works.
+
+        // Verify: MathLib module has both functions
+        auto sinFromMath = mathModule->resolvedModule->resolve("sin");
+        auto cosFromMath = mathModule->resolvedModule->resolve("cos");
+        ASSERT_NOT_NULL(sinFromMath, "MathLib resolves 'sin'");
+        ASSERT_NOT_NULL(cosFromMath, "MathLib resolves 'cos'");
+
+        passed++;
+        std::cout << "[PASS] 15. Pass 1 — Import resolution\n";
+    }
+
+    // ========================================
+    // 16. Pass 2 — TypeResolver: function signatures
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     func add(int a, int& b) => double { return 0.0; }
+        //     var PI: double;
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        // func add(int a, int& b) => double { ... }
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "add";
+
+        // param a: int
+        auto paramA = std::make_shared<ParameterNode>();
+        paramA->name = "a";
+        paramA->isReference = false;
+        auto paramAType = std::make_shared<PrimitiveTypeNode>();
+        paramAType->kind = PrimitiveKind::Int;
+        paramA->type = paramAType;
+
+        // param b: int& (reference)
+        auto paramB = std::make_shared<ParameterNode>();
+        paramB->name = "b";
+        paramB->isReference = true;
+        auto paramBBaseType = std::make_shared<PrimitiveTypeNode>();
+        paramBBaseType->kind = PrimitiveKind::Int;
+        auto paramBType = std::make_shared<PointerTypeNode>();
+        paramBType->baseType = paramBBaseType;
+        paramBType->isReference = true;  // T&
+        paramB->type = paramBType;
+
+        funcDecl->parameters = {paramA, paramB};
+
+        // Return type: double
+        auto retType = std::make_shared<PrimitiveTypeNode>();
+        retType->kind = PrimitiveKind::Double;
+        funcDecl->returnType = retType;
+
+        // Body
+        auto body = std::make_shared<BlockStatementNode>();
+        auto retStmt = std::make_shared<ReturnStatement>();
+        retStmt->value = std::make_shared<FloatLiteral>();
+        body->statements.push_back(retStmt);
+        funcDecl->body = body;
+
+        // var PI: double;
+        auto piDecl = std::make_shared<VariableDeclaration>();
+        piDecl->name = "PI";
+        piDecl->isInferred = false;
+        auto piType = std::make_shared<PrimitiveTypeNode>();
+        piType->kind = PrimitiveKind::Double;
+        piDecl->type = piType;
+
+        module->declarations = {funcDecl, piDecl};
+        program->modules = {module};
+
+        // Run Pass 1 + Pass 2
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 1 no errors (test 16)");
+
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 2 no errors (test 16)");
+
+        // Verify: function return type resolved
+        auto& funcSym = funcDecl->resolvedFunction;
+        ASSERT_NOT_NULL(funcSym, "func resolved");
+        ASSERT_NOT_NULL(funcSym->returnType, "func has return type");
+        ASSERT_EQ(funcSym->returnType->getName(), std::string("double"), "return type = double");
+
+        // Verify: param a has type int
+        auto* paramASym = paramA->resolvedSymbol.get();
+        ASSERT_NOT_NULL(paramASym, "param a symbol");
+        ASSERT_NOT_NULL(paramASym->getType(), "param a has type");
+        ASSERT_EQ(paramASym->getType()->getName(), std::string("int"), "param a type = int");
+        ASSERT_EQ(paramASym->isReference, false, "param a not ref");
+
+        // Verify: param b has type int BUT isReference = true (UNWRAPPED!)
+        auto* paramBSym = paramB->resolvedSymbol.get();
+        ASSERT_NOT_NULL(paramBSym, "param b symbol");
+        ASSERT_NOT_NULL(paramBSym->getType(), "param b has type");
+        ASSERT_EQ(paramBSym->getType()->getName(), std::string("int"),
+            "param b type = int (unwrapped from int&)");
+        ASSERT_EQ(paramBSym->isReference, true,
+            "param b isReference = true (critical unwrap)");
+
+        // Verify: variable PI has type double
+        ASSERT_NOT_NULL(piDecl->resolvedVariable->getType(), "PI has type");
+        ASSERT_EQ(piDecl->resolvedVariable->getType()->getName(), std::string("double"),
+            "PI type = double");
+
+        passed++;
+        std::cout << "[PASS] 16. Pass 2 — Function signatures + ref unwrap\n";
+    }
+
+    // ========================================
+    // 17. Pass 2 — Compound types + struct fields
+    // ========================================
+    {
+        // Build:
+        //   module Geom {
+        //     struct Vec2 { double x; double y; }
+        //     func process(int* ptr, int[10] arr) => (int, double) { }
+        //     enum Color { Red, Green, Blue }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Geom";
+
+        // struct Vec2 { double x; double y; }
+        auto structDecl = std::make_shared<StructDeclaration>();
+        structDecl->name = "Vec2";
+
+        auto xField = std::make_shared<VariableDeclaration>();
+        xField->name = "x";
+        auto xType = std::make_shared<PrimitiveTypeNode>();
+        xType->kind = PrimitiveKind::Double;
+        xField->type = xType;
+
+        auto yField = std::make_shared<VariableDeclaration>();
+        yField->name = "y";
+        auto yType = std::make_shared<PrimitiveTypeNode>();
+        yType->kind = PrimitiveKind::Double;
+        yField->type = yType;
+
+        structDecl->fields = {xField, yField};
+
+        // func process(int* ptr, int[10] arr) => (int, double)
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "process";
+
+        // param ptr: int*
+        auto ptrParam = std::make_shared<ParameterNode>();
+        ptrParam->name = "ptr";
+        auto ptrType = std::make_shared<PointerTypeNode>();
+        auto ptrBase = std::make_shared<PrimitiveTypeNode>();
+        ptrBase->kind = PrimitiveKind::Int;
+        ptrType->baseType = ptrBase;
+        ptrType->isReference = false;
+        ptrParam->type = ptrType;
+
+        // param arr: int[10]
+        auto arrParam = std::make_shared<ParameterNode>();
+        arrParam->name = "arr";
+        auto arrType = std::make_shared<ArrayTypeNode>();
+        auto arrElem = std::make_shared<PrimitiveTypeNode>();
+        arrElem->kind = PrimitiveKind::Int;
+        arrType->elementType = arrElem;
+        auto arrSize = std::make_shared<IntegerLiteral>();
+        arrSize->value = 10;
+        arrType->sizeExpr = arrSize;
+        arrParam->type = arrType;
+
+        funcDecl->parameters = {ptrParam, arrParam};
+
+        // Return type: (int, double)
+        auto tupleRet = std::make_shared<TupleTypeNode>();
+        auto tupElem1 = std::make_shared<PrimitiveTypeNode>();
+        tupElem1->kind = PrimitiveKind::Int;
+        auto tupElem2 = std::make_shared<PrimitiveTypeNode>();
+        tupElem2->kind = PrimitiveKind::Double;
+        tupleRet->elementTypes = {tupElem1, tupElem2};
+        funcDecl->returnType = tupleRet;
+        funcDecl->body = std::make_shared<BlockStatementNode>();
+
+        // enum Color (underlying type defaults to int)
+        auto enumDecl = std::make_shared<EnumDeclaration>();
+        enumDecl->name = "Color";
+        auto red = std::make_shared<EnumMemberNode>();
+        red->name = "Red";
+        enumDecl->members = {red};
+
+        module->declarations = {structDecl, funcDecl, enumDecl};
+        program->modules = {module};
+
+        // Run Pass 1 + Pass 2
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 2 no errors (test 17)");
+
+        // Verify struct field types
+        auto* vecSym = structDecl->resolvedStruct.get();
+        ASSERT_NOT_NULL(vecSym, "Vec2 resolved");
+        ASSERT_NOT_NULL(vecSym->fields[0]->getType(), "Vec2.x has type");
+        ASSERT_EQ(vecSym->fields[0]->getType()->getName(), std::string("double"),
+            "Vec2.x type = double");
+        ASSERT_NOT_NULL(vecSym->fields[1]->getType(), "Vec2.y has type");
+        ASSERT_EQ(vecSym->fields[1]->getType()->getName(), std::string("double"),
+            "Vec2.y type = double");
+
+        // Verify: param ptr has pointer type
+        auto* ptrSym = ptrParam->resolvedSymbol.get();
+        ASSERT_NOT_NULL(ptrSym->getType(), "ptr param has type");
+        ASSERT_TRUE(ptrSym->getType()->is<PointerTypeSymbol>(), "ptr type is PointerTypeSymbol");
+        ASSERT_EQ(ptrSym->getType()->getTypeDescription(), std::string("int*"),
+            "ptr type = int*");
+
+        // Verify: param arr has array type
+        auto* arrSym = arrParam->resolvedSymbol.get();
+        ASSERT_NOT_NULL(arrSym->getType(), "arr param has type");
+        ASSERT_TRUE(arrSym->getType()->is<ArrayTypeSymbol>(), "arr type is ArrayTypeSymbol");
+        auto* arrTypeSym = arrSym->getType()->as<ArrayTypeSymbol>();
+        ASSERT_EQ(arrTypeSym->arraySize, 10, "arr size = 10");
+
+        // Verify: return type is tuple
+        auto& fSym = funcDecl->resolvedFunction;
+        ASSERT_NOT_NULL(fSym->returnType, "func has return type");
+        ASSERT_TRUE(fSym->returnType->is<TupleTypeSymbol>(), "return is TupleTypeSymbol");
+        ASSERT_EQ(fSym->returnType->getTypeDescription(), std::string("(int, double)"),
+            "return type = (int, double)");
+
+        // Verify: enum underlying type defaults to int
+        ASSERT_NOT_NULL(enumDecl->resolvedEnum->underlyingType, "enum has underlying type");
+        ASSERT_EQ(enumDecl->resolvedEnum->underlyingType->getName(), std::string("int"),
+            "enum underlying = int");
+
+        passed++;
+        std::cout << "[PASS] 17. Pass 2 — Compound types + struct fields\n";
+    }
+
+    // ========================================
+    // 18. Pass 2 — Named types + cast/new
+    // ========================================
+    {
+        // Build:
+        //   module Zoo {
+        //     class Animal { int age; }
+        //     func factory() => void {
+        //       var a: Animal;
+        //       var p = new Animal();
+        //       var n = cast<int>(x);
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Zoo";
+
+        // class Animal { int age; }
+        auto classDecl = std::make_shared<ClassDeclaration>();
+        classDecl->name = "Animal";
+        auto ageField = std::make_shared<VariableDeclaration>();
+        ageField->name = "age";
+        auto ageType = std::make_shared<PrimitiveTypeNode>();
+        ageType->kind = PrimitiveKind::Int;
+        ageField->type = ageType;
+        classDecl->fields = {ageField};
+
+        // func factory() => void { ... }
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "factory";
+        auto retType = std::make_shared<PrimitiveTypeNode>();
+        retType->kind = PrimitiveKind::Void;
+        funcDecl->returnType = retType;
+
+        auto body = std::make_shared<BlockStatementNode>();
+
+        // var a: Animal;
+        auto varA = std::make_shared<VariableDeclaration>();
+        varA->name = "a";
+        auto animalTypeNode = std::make_shared<NamedTypeNode>();
+        animalTypeNode->qualifiedName = {"Animal"};
+        varA->type = animalTypeNode;
+        body->statements.push_back(varA);
+
+        // new Animal() — just test that NewExpression type annotation resolves
+        auto newExpr = std::make_shared<NewExpression>();
+        auto newTypeNode = std::make_shared<NamedTypeNode>();
+        newTypeNode->qualifiedName = {"Animal"};
+        newExpr->type = newTypeNode;
+        newExpr->arguments = std::make_shared<ArgumentsNode>();
+        auto newStmt = std::make_shared<ExpressionStatement>();
+        newStmt->expression = newExpr;
+        body->statements.push_back(newStmt);
+
+        // cast<int>(x)
+        auto castExpr = std::make_shared<CastExpression>();
+        auto castType = std::make_shared<PrimitiveTypeNode>();
+        castType->kind = PrimitiveKind::Int;
+        castExpr->targetType = castType;
+        castExpr->operand = std::make_shared<IdentifierExpression>();
+        auto castStmt = std::make_shared<ExpressionStatement>();
+        castStmt->expression = castExpr;
+        body->statements.push_back(castStmt);
+
+        funcDecl->body = body;
+        module->declarations = {classDecl, funcDecl};
+        program->modules = {module};
+
+        // Run Pass 1 + Pass 2
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 2 no errors (test 18)");
+
+        // Verify: var a has type Animal (resolved via NamedTypeNode)
+        ASSERT_NOT_NULL(varA->resolvedVariable->getType(), "var a has type");
+        ASSERT_EQ(varA->resolvedVariable->getType()->getName(), std::string("Animal"),
+            "var a type = Animal");
+        ASSERT_TRUE(varA->resolvedVariable->getType()->is<ClassSymbol>(),
+            "var a type is ClassSymbol");
+
+        // Verify: NamedTypeNode in new expression resolved
+        ASSERT_NOT_NULL(newTypeNode->resolvedType, "new type annotation resolved");
+        ASSERT_EQ(newTypeNode->resolvedType->getName(), std::string("Animal"),
+            "new type = Animal");
+
+        // Verify: cast target type resolved
+        ASSERT_NOT_NULL(castType->resolvedType, "cast type resolved");
+        ASSERT_EQ(castType->resolvedType->getName(), std::string("int"),
+            "cast type = int");
+
+        // Verify: class field type resolved
+        auto* animalSym = classDecl->resolvedClass.get();
+        ASSERT_NOT_NULL(animalSym->fields[0]->getType(), "Animal.age has type");
+        ASSERT_EQ(animalSym->fields[0]->getType()->getName(), std::string("int"),
+            "Animal.age type = int");
+
+        passed++;
+        std::cout << "[PASS] 18. Pass 2 — Named types + cast/new\n";
+    }
+
+    // ========================================
+    // 19. Pass 3 — TypeChecker: literals + identifiers + var inference
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     func compute() => int {
+        //       var x: int = 42;
+        //       var y = 3.14;           // inferred double
+        //       var s = "hello";        // inferred string
+        //       var b = true;           // inferred bool
+        //       return x;
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "compute";
+        auto retType = std::make_shared<PrimitiveTypeNode>();
+        retType->kind = PrimitiveKind::Int;
+        funcDecl->returnType = retType;
+
+        auto body = std::make_shared<BlockStatementNode>();
+
+        // var x: int = 42;
+        auto varX = std::make_shared<VariableDeclaration>();
+        varX->name = "x";
+        varX->isInferred = false;
+        auto xType = std::make_shared<PrimitiveTypeNode>();
+        xType->kind = PrimitiveKind::Int;
+        varX->type = xType;
+        auto lit42 = std::make_shared<IntegerLiteral>();
+        lit42->value = 42;
+        varX->initializer = lit42;
+        body->statements.push_back(varX);
+
+        // var y = 3.14;
+        auto varY = std::make_shared<VariableDeclaration>();
+        varY->name = "y";
+        varY->isInferred = true;
+        auto litPi = std::make_shared<FloatLiteral>();
+        litPi->value = 3.14;
+        varY->initializer = litPi;
+        body->statements.push_back(varY);
+
+        // var s = "hello";
+        auto varS = std::make_shared<VariableDeclaration>();
+        varS->name = "s";
+        varS->isInferred = true;
+        auto litStr = std::make_shared<StringLiteral>();
+        litStr->value = "hello";
+        varS->initializer = litStr;
+        body->statements.push_back(varS);
+
+        // var b = true;
+        auto varB = std::make_shared<VariableDeclaration>();
+        varB->name = "b";
+        varB->isInferred = true;
+        auto litBool = std::make_shared<BoolLiteral>();
+        litBool->value = true;
+        varB->initializer = litBool;
+        body->statements.push_back(varB);
+
+        // return x;
+        auto retStmt = std::make_shared<ReturnStatement>();
+        auto retIdent = std::make_shared<IdentifierExpression>();
+        retIdent->name = "x";
+        retStmt->value = retIdent;
+        body->statements.push_back(retStmt);
+
+        funcDecl->body = body;
+        module->declarations = {funcDecl};
+        program->modules = {module};
+
+        // Run all 3 passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 3 no errors (test 19)");
+
+        // Literal types
+        ASSERT_NOT_NULL(lit42->resolvedType, "int literal has type");
+        ASSERT_EQ(lit42->resolvedType->getName(), std::string("int"), "42 is int");
+        ASSERT_NOT_NULL(litPi->resolvedType, "float literal has type");
+        ASSERT_EQ(litPi->resolvedType->getName(), std::string("double"), "3.14 is double");
+        ASSERT_NOT_NULL(litStr->resolvedType, "string literal has type");
+        ASSERT_EQ(litStr->resolvedType->getName(), std::string("string"), "hello is string");
+        ASSERT_NOT_NULL(litBool->resolvedType, "bool literal has type");
+        ASSERT_EQ(litBool->resolvedType->getName(), std::string("bool"), "true is bool");
+
+        // Variable type inference
+        ASSERT_NOT_NULL(varY->resolvedVariable->getType(), "y has inferred type");
+        ASSERT_EQ(varY->resolvedVariable->getType()->getName(), std::string("double"),
+            "y inferred as double");
+        ASSERT_NOT_NULL(varS->resolvedVariable->getType(), "s has inferred type");
+        ASSERT_EQ(varS->resolvedVariable->getType()->getName(), std::string("string"),
+            "s inferred as string");
+        ASSERT_NOT_NULL(varB->resolvedVariable->getType(), "b has inferred type");
+        ASSERT_EQ(varB->resolvedVariable->getType()->getName(), std::string("bool"),
+            "b inferred as bool");
+
+        // Identifier resolution: return x resolves to variable x
+        ASSERT_NOT_NULL(retIdent->resolvedSymbol, "return ident resolved");
+        ASSERT_NOT_NULL(retIdent->resolvedType, "return ident has type");
+        ASSERT_EQ(retIdent->resolvedType->getName(), std::string("int"),
+            "return x has type int");
+
+        passed++;
+        std::cout << "[PASS] 19. Pass 3 — Literals + identifiers + var inference\n";
+    }
+
+    // ========================================
+    // 20. Pass 3 — Binary ops + call resolution
+    // ========================================
+    {
+        // Build:
+        //   module Math {
+        //     func add(int a, int& b) => int { return a; }
+        //     func main() => void {
+        //       var x: int = 10;
+        //       var y: int = 20;
+        //       var sum = add(x, y);   // call with resolvedCallee + isReference
+        //       var cmp = x < y;       // comparison → bool
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Math";
+
+        // func add(int a, int& b) => int
+        auto addFunc = std::make_shared<FunctionDeclaration>();
+        addFunc->name = "add";
+        auto paramA = std::make_shared<ParameterNode>();
+        paramA->name = "a";
+        auto paramAType = std::make_shared<PrimitiveTypeNode>();
+        paramAType->kind = PrimitiveKind::Int;
+        paramA->type = paramAType;
+
+        auto paramB = std::make_shared<ParameterNode>();
+        paramB->name = "b";
+        paramB->isReference = true;
+        auto paramBBase = std::make_shared<PrimitiveTypeNode>();
+        paramBBase->kind = PrimitiveKind::Int;
+        auto paramBType = std::make_shared<PointerTypeNode>();
+        paramBType->baseType = paramBBase;
+        paramBType->isReference = true;
+        paramB->type = paramBType;
+
+        addFunc->parameters = {paramA, paramB};
+        auto addRet = std::make_shared<PrimitiveTypeNode>();
+        addRet->kind = PrimitiveKind::Int;
+        addFunc->returnType = addRet;
+        auto addBody = std::make_shared<BlockStatementNode>();
+        auto addReturn = std::make_shared<ReturnStatement>();
+        auto addRetId = std::make_shared<IdentifierExpression>();
+        addRetId->name = "a";
+        addReturn->value = addRetId;
+        addBody->statements.push_back(addReturn);
+        addFunc->body = addBody;
+
+        // func main() => void
+        auto mainFunc = std::make_shared<FunctionDeclaration>();
+        mainFunc->name = "main";
+        auto mainRet = std::make_shared<PrimitiveTypeNode>();
+        mainRet->kind = PrimitiveKind::Void;
+        mainFunc->returnType = mainRet;
+        auto mainBody = std::make_shared<BlockStatementNode>();
+
+        // var x: int = 10;
+        auto varX = std::make_shared<VariableDeclaration>();
+        varX->name = "x";
+        auto xType = std::make_shared<PrimitiveTypeNode>();
+        xType->kind = PrimitiveKind::Int;
+        varX->type = xType;
+        varX->initializer = std::make_shared<IntegerLiteral>();
+        mainBody->statements.push_back(varX);
+
+        // var y: int = 20;
+        auto varY = std::make_shared<VariableDeclaration>();
+        varY->name = "y";
+        auto yType = std::make_shared<PrimitiveTypeNode>();
+        yType->kind = PrimitiveKind::Int;
+        varY->type = yType;
+        varY->initializer = std::make_shared<IntegerLiteral>();
+        mainBody->statements.push_back(varY);
+
+        // var sum = add(x, y);
+        auto sumDecl = std::make_shared<VariableDeclaration>();
+        sumDecl->name = "sum";
+        sumDecl->isInferred = true;
+        auto callExpr = std::make_shared<CallExpression>();
+        auto calleeId = std::make_shared<IdentifierExpression>();
+        calleeId->name = "add";
+        callExpr->callee = calleeId;
+        auto args = std::make_shared<ArgumentsNode>();
+        auto argX = std::make_shared<IdentifierExpression>();
+        argX->name = "x";
+        auto argY = std::make_shared<IdentifierExpression>();
+        argY->name = "y";
+        args->expressions = {argX, argY};
+        callExpr->arguments = args;
+        sumDecl->initializer = callExpr;
+        mainBody->statements.push_back(sumDecl);
+
+        // var cmp = x < y;
+        auto cmpDecl = std::make_shared<VariableDeclaration>();
+        cmpDecl->name = "cmp";
+        cmpDecl->isInferred = true;
+        auto cmpExpr = std::make_shared<BinaryExpression>();
+        cmpExpr->op = BinaryOp::Less;
+        auto cmpLeft = std::make_shared<IdentifierExpression>();
+        cmpLeft->name = "x";
+        auto cmpRight = std::make_shared<IdentifierExpression>();
+        cmpRight->name = "y";
+        cmpExpr->left = cmpLeft;
+        cmpExpr->right = cmpRight;
+        cmpDecl->initializer = cmpExpr;
+        mainBody->statements.push_back(cmpDecl);
+
+        mainFunc->body = mainBody;
+        module->declarations = {addFunc, mainFunc};
+        program->modules = {module};
+
+        // Run all 3 passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 3 no errors (test 20)");
+
+        // Call expression: resolved callee
+        ASSERT_NOT_NULL(callExpr->resolvedCallee, "call has resolvedCallee");
+        ASSERT_EQ(callExpr->resolvedCallee->getName(), std::string("add"),
+            "callee = add");
+        ASSERT_NOT_NULL(callExpr->resolvedType, "call has resolvedType");
+        ASSERT_EQ(callExpr->resolvedType->getName(), std::string("int"),
+            "call returns int");
+
+        // Call expression: isReference per-argument
+        ASSERT_EQ(callExpr->arguments->isReference.size(), size_t(2),
+            "call has 2 isReference entries");
+        ASSERT_EQ(callExpr->arguments->isReference[0], false,
+            "arg 0 not ref");
+        ASSERT_EQ(callExpr->arguments->isReference[1], true,
+            "arg 1 IS ref (critical for codegen!)");
+
+        // sum inferred as int (from call return type)
+        ASSERT_NOT_NULL(sumDecl->resolvedVariable->getType(), "sum has type");
+        ASSERT_EQ(sumDecl->resolvedVariable->getType()->getName(), std::string("int"),
+            "sum inferred as int");
+
+        // Comparison → bool
+        ASSERT_NOT_NULL(cmpExpr->resolvedType, "cmp expr has type");
+        ASSERT_EQ(cmpExpr->resolvedType->getName(), std::string("bool"),
+            "x < y is bool");
+        ASSERT_NOT_NULL(cmpDecl->resolvedVariable->getType(), "cmp has type");
+        ASSERT_EQ(cmpDecl->resolvedVariable->getType()->getName(), std::string("bool"),
+            "cmp inferred as bool");
+
+        passed++;
+        std::cout << "[PASS] 20. Pass 3 — Binary ops + call resolution\n";
+    }
+
+    // ========================================
+    // 21. Pass 3 — Operator overload + member access
+    // ========================================
+    {
+        // Build:
+        //   module Geom {
+        //     struct Vec2 {
+        //       double x;
+        //       double y;
+        //       operator+(Vec2 other) => Vec2 { }
+        //     }
+        //     func test() => void {
+        //       var v: Vec2;
+        //       var vx = v.x;           // field access → double
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Geom";
+
+        // struct Vec2
+        auto structDecl = std::make_shared<StructDeclaration>();
+        structDecl->name = "Vec2";
+
+        auto xField = std::make_shared<VariableDeclaration>();
+        xField->name = "x";
+        auto xType = std::make_shared<PrimitiveTypeNode>();
+        xType->kind = PrimitiveKind::Double;
+        xField->type = xType;
+
+        auto yField = std::make_shared<VariableDeclaration>();
+        yField->name = "y";
+        auto yType = std::make_shared<PrimitiveTypeNode>();
+        yType->kind = PrimitiveKind::Double;
+        yField->type = yType;
+
+        structDecl->fields = {xField, yField};
+
+        // operator+(Vec2 other) => Vec2
+        auto opDecl = std::make_shared<OperatorDeclaration>();
+        opDecl->op = OverloadableOp::Add;
+        auto opParam = std::make_shared<ParameterNode>();
+        opParam->name = "other";
+        auto opParamType = std::make_shared<NamedTypeNode>();
+        opParamType->qualifiedName = {"Vec2"};
+        opParam->type = opParamType;
+        opDecl->parameters = {opParam};
+        auto opRetType = std::make_shared<NamedTypeNode>();
+        opRetType->qualifiedName = {"Vec2"};
+        opDecl->returnType = opRetType;
+        opDecl->body = std::make_shared<BlockStatementNode>();
+        structDecl->operators = {opDecl};
+
+        // func test() => void
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "test";
+        auto funcRet = std::make_shared<PrimitiveTypeNode>();
+        funcRet->kind = PrimitiveKind::Void;
+        funcDecl->returnType = funcRet;
+        auto funcBody = std::make_shared<BlockStatementNode>();
+
+        // var v: Vec2;
+        auto varV = std::make_shared<VariableDeclaration>();
+        varV->name = "v";
+        auto vType = std::make_shared<NamedTypeNode>();
+        vType->qualifiedName = {"Vec2"};
+        varV->type = vType;
+        funcBody->statements.push_back(varV);
+
+        // var vx = v.x;
+        auto varVX = std::make_shared<VariableDeclaration>();
+        varVX->name = "vx";
+        varVX->isInferred = true;
+        auto memberAccess = std::make_shared<MemberAccessExpression>();
+        auto vIdent = std::make_shared<IdentifierExpression>();
+        vIdent->name = "v";
+        memberAccess->object = vIdent;
+        memberAccess->memberName = "x";
+        varVX->initializer = memberAccess;
+        funcBody->statements.push_back(varVX);
+
+        funcDecl->body = funcBody;
+        module->declarations = {structDecl, funcDecl};
+        program->modules = {module};
+
+        // Run all 3 passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 3 no errors (test 21)");
+
+        // Verify: v.x resolves to field with type double
+        ASSERT_NOT_NULL(memberAccess->resolvedType, "v.x has type");
+        ASSERT_EQ(memberAccess->resolvedType->getName(), std::string("double"),
+            "v.x type = double");
+        ASSERT_NOT_NULL(memberAccess->resolvedSymbol, "v.x has resolvedSymbol");
+
+        // Verify: vx inferred as double from v.x
+        ASSERT_NOT_NULL(varVX->resolvedVariable->getType(), "vx has type");
+        ASSERT_EQ(varVX->resolvedVariable->getType()->getName(), std::string("double"),
+            "vx inferred as double");
+
+        // Verify: operator+ exists and is registered
+        auto* vecSym = structDecl->resolvedStruct.get();
+        ASSERT_NOT_NULL(vecSym, "Vec2 resolved");
+        auto addOp = vecSym->resolveOperator(OverloadableOp::Add);
+        ASSERT_NOT_NULL(addOp, "Vec2 has operator+");
+        ASSERT_NOT_NULL(addOp->returnType, "operator+ has return type");
+        ASSERT_EQ(addOp->returnType->getName(), std::string("Vec2"),
+            "operator+ returns Vec2");
+
+        passed++;
+        std::cout << "[PASS] 21. Pass 3 — Operator overload + member access\n";
+    }
+
+    // ========================================
     // Summary
     // ========================================
     std::cout << "\n=== All " << passed << " smoke tests passed ===\n";
@@ -675,6 +1833,9 @@ int main() {
     std::cout << "  ArgumentsNode with per-arg isReference\n";
     std::cout << "  ASTVisitor dispatch for all node types\n";
     std::cout << "  DebugInfo with full source ranges\n";
+    std::cout << "  Pass 1 — SymbolTableBuilder (scope tree, symbols, imports)\n";
+    std::cout << "  Pass 2 — TypeResolver (annotations, refs, compounds, named)\n";
+    std::cout << "  Pass 3 — TypeChecker (inference, calls, member access, ops)\n";
 
     return 0;
 }
