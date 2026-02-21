@@ -4,7 +4,7 @@
 // V2 carries isReference in FunctionTypeSymbol::ParameterInfo.
 
 module Test32 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     // Higher-order function that passes a ref through a closure

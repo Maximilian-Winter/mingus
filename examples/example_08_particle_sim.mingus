@@ -4,7 +4,7 @@
 
 module ParticleSim
 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
     extern func malloc(int size) => byte*;
     extern func free(byte* ptr) => void;

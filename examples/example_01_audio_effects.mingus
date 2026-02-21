@@ -4,7 +4,7 @@
 
 module AudioEffects
 {
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
     extern func sin(double x) => double;
 

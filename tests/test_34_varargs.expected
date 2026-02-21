@@ -1,0 +1,9 @@
+=== Test 34: Varargs ===
+int: 42
+two ints: 10 20
+double: 3.140000
+mixed: 1 2.718000 3
+string: hello
+no args
+three: 100 200 300
+=== Test 34 complete ===

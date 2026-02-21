@@ -4,7 +4,7 @@
 // V2 uses mapParamType() which returns ptr for structs.
 
 module Test31 {
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     struct Vec2 {

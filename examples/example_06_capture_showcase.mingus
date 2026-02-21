@@ -4,7 +4,7 @@
 
 module CaptureShowcase
 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     func apply((int) => int f, int x) => int

@@ -1,7 +1,7 @@
 // Test 2: Structs, methods, operator overloading
 module Test02
 {
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
     extern func sqrt(double x) => double;
 

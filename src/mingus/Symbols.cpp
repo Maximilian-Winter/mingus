@@ -40,7 +40,7 @@ std::shared_ptr<FunctionTypeSymbol> FunctionSymbol::buildFunctionType() const {
         paramInfos.push_back(std::move(info));
     }
     return std::make_shared<FunctionTypeSymbol>(
-        std::move(paramInfos), returnType, /*isVariadic=*/false);
+        std::move(paramInfos), returnType, isVariadic);
 }
 
 std::string FunctionSymbol::getQualifiedName() const {

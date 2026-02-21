@@ -1,0 +1,45 @@
+module Test35
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        printf("=== Test 35: For Multi-Init ===\n");
+
+        // Two typed declarations
+        var sum = 0;
+        for (int i = 0, int j = 10; i < j; i = i + 1, j = j - 1)
+        {
+            sum = sum + i + j;
+        }
+        printf("converge sum = %d (expect 50)\n", sum);
+
+        // Two inferred declarations
+        var product = 1;
+        for (var a = 1, var b = 5; a <= b; a = a + 1, b = b - 1)
+        {
+            product = product * a;
+        }
+        printf("product = %d (expect 6)\n", product);
+
+        // Mixed: typed + inferred
+        var total = 0;
+        for (int x = 0, var y = 100; x < 5; x = x + 1)
+        {
+            total = total + y;
+            y = y - 10;
+        }
+        printf("total = %d (expect 400)\n", total);
+
+        // Single init (regression test — still works)
+        var count = 0;
+        for (int k = 0; k < 10; k = k + 1)
+        {
+            count = count + 1;
+        }
+        printf("count = %d (expect 10)\n", count);
+
+        printf("=== Test 35 complete ===\n");
+        return 0;
+    }
+}

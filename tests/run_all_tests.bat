@@ -67,6 +67,9 @@ call :run_test test_30_capture_writeback Test30_main "Capture Write-Back"
 call :run_test test_31_closure_struct_params Test31_main "Closure + Struct Params"
 call :run_test test_32_closure_ref_params Test32_main "Closure + Ref Params"
 call :run_test test_33_interface_params Test33_main "Interface Params"
+call :run_test test_34_varargs           Test34_main  "Varargs"
+call :run_test test_35_for_multi_init   Test35_main  "For Multi-Init"
+call :run_test test_36_const            Test36_main  "Const Variables"
 
 echo.
 echo ============================================================

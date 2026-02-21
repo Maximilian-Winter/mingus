@@ -82,6 +82,8 @@ public:
 
     virtual std::any visitVariableDeclaration(MingusParser::VariableDeclarationContext *context) = 0;
 
+    virtual std::any visitConstVariableDeclaration(MingusParser::ConstVariableDeclarationContext *context) = 0;
+
     virtual std::any visitTypedVariableDeclaration(MingusParser::TypedVariableDeclarationContext *context) = 0;
 
     virtual std::any visitInferredVariableDeclaration(MingusParser::InferredVariableDeclarationContext *context) = 0;

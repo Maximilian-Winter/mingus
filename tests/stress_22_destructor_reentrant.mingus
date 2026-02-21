@@ -7,7 +7,7 @@
 module Stress22
 {
     extern func puts(string s) => int;
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
 
     class Trigger
     {

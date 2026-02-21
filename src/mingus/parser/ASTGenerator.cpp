@@ -814,15 +814,14 @@ std::any ASTGenerator::visitExternFunctionDeclaration(
     ext->debugInfo = makeDebugInfo(ctx);
     ext->name = ctx->Identifier()->getText();
 
-    if (ctx->definitionParameters() &&
-        ctx->definitionParameters()->parameterList()) {
-        for (auto* paramCtx :
-             ctx->definitionParameters()->parameterList()->parameter()) {
+    if (ctx->parameterList()) {
+        for (auto* paramCtx : ctx->parameterList()->parameter()) {
             auto param = anyToNode<ParameterNode>(visitParameter(paramCtx));
             if (param) ext->parameters.push_back(param);
         }
     }
 
+    ext->isVariadic = (ctx->Ellipsis() != nullptr);
     ext->returnType = anyToNode<TypeNode>(visitReturnType(ctx->returnType()));
 
     return std::any(std::static_pointer_cast<DeclarationBaseNode>(ext));
@@ -860,6 +859,8 @@ std::any ASTGenerator::visitVariableDeclaration(
     } else if (ctx->inferredVariableDeclaration()) {
         return visitInferredVariableDeclaration(
             ctx->inferredVariableDeclaration());
+    } else if (ctx->constVariableDeclaration()) {
+        return visitConstVariableDeclaration(ctx->constVariableDeclaration());
     } else if (ctx->tupleDestructuring()) {
         return visitTupleDestructuring(ctx->tupleDestructuring());
     }
@@ -925,6 +926,38 @@ std::any ASTGenerator::visitInferredVariableDeclaration(
     var->debugInfo = makeDebugInfo(ctx);
     var->name = ctx->Identifier()->getText();
     var->isInferred = true;
+
+    auto* parent = dynamic_cast<MingusParser::VariableDeclarationContext*>(
+        ctx->parent);
+    var->accessModifier = parseAccessModifier(
+        parent ? parent->accessModifier() : nullptr);
+    var->isStatic = parent && parent->staticModifier() != nullptr;
+
+    if (ctx->exprStatement() && ctx->exprStatement()->expression()) {
+        var->initializer = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->exprStatement()->expression()));
+    }
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(var));
+}
+
+std::any ASTGenerator::visitConstVariableDeclaration(
+    MingusParser::ConstVariableDeclarationContext* ctx)
+{
+    auto var = std::make_shared<VariableDeclaration>();
+    var->debugInfo = makeDebugInfo(ctx);
+    var->isConst = true;
+
+    if (ctx->typeIdentifier()) {
+        // const int x = expr;
+        var->name = ctx->Identifier()->getText();
+        var->isInferred = false;
+        var->type = anyToNode<TypeNode>(visitTypeIdentifier(ctx->typeIdentifier()));
+    } else {
+        // const x = expr;  (inferred)
+        var->name = ctx->Identifier()->getText();
+        var->isInferred = true;
+    }
 
     auto* parent = dynamic_cast<MingusParser::VariableDeclarationContext*>(
         ctx->parent);
@@ -1154,7 +1187,15 @@ std::any ASTGenerator::visitForStatement(
                 varDecl->debugInfo = makeDebugInfo(localVarCtx);
                 varDecl->name = localVarCtx->Identifier()->getText();
 
-                if (localVarCtx->DeclareVariable()) {
+                if (localVarCtx->DeclareConst()) {
+                    varDecl->isConst = true;
+                    if (localVarCtx->typeIdentifier()) {
+                        varDecl->type = anyToNode<TypeNode>(
+                            visitTypeIdentifier(localVarCtx->typeIdentifier()));
+                    } else {
+                        varDecl->isInferred = true;
+                    }
+                } else if (localVarCtx->DeclareVariable()) {
                     varDecl->isInferred = true;
                 } else {
                     varDecl->type = anyToNode<TypeNode>(
@@ -1166,8 +1207,7 @@ std::any ASTGenerator::visitForStatement(
                         visitExpression(localVarCtx->expression()));
                 }
 
-                stmt->initDeclaration = varDecl;
-                break;  // Only first declaration
+                stmt->initDeclarations.push_back(varDecl);
             }
         } else if (!initCtx->expression().empty()) {
             for (auto* exprCtx : initCtx->expression()) {
@@ -1358,9 +1398,66 @@ std::any ASTGenerator::visitPipe(MingusParser::PipeContext* ctx) {
     for (auto* targetCtx : ctx->pipeTarget()) {
         PipeStage stage;
 
-        auto funcExpr = std::make_shared<QualifiedNameExpression>();
-        funcExpr->debugInfo = makeDebugInfo(targetCtx->qualifiedName());
-        funcExpr->parts = parseQualifiedName(targetCtx->qualifiedName());
+        // Build base expression from qualifiedName
+        auto baseExpr = std::make_shared<QualifiedNameExpression>();
+        baseExpr->debugInfo = makeDebugInfo(targetCtx->qualifiedName());
+        baseExpr->parts = parseQualifiedName(targetCtx->qualifiedName());
+        std::shared_ptr<ExpressionBaseNode> funcExpr = baseExpr;
+
+        // Chain member accesses: qualifiedName.method or qualifiedName->method
+        // Walk children to pair each operator (. or ->) with its Identifier
+        bool nextIsArrow = false;
+        for (auto* child : targetCtx->children) {
+            auto* termNode = dynamic_cast<antlr4::tree::TerminalNode*>(child);
+            if (!termNode) continue;
+            auto tokenType = termNode->getSymbol()->getType();
+            if (tokenType == MingusParser::DotOperator) {
+                nextIsArrow = false;
+            } else if (tokenType == MingusParser::ReferenceAccessOperator) {
+                nextIsArrow = true;
+            } else if (tokenType == MingusParser::Identifier) {
+                // Only process identifiers that follow a dot/arrow operator
+                // (not the one inside qualifiedName)
+                // qualifiedName comes first, then (op Identifier)* pattern
+                // We detect this by checking if we've seen any dot/arrow
+                // Actually simpler: check position relative to qualifiedName
+            }
+        }
+        // Cleaner: use DotOperator() + ReferenceAccessOperator() counts
+        // and Identifier() list (which excludes qualifiedName's Identifier)
+        {
+            auto dotTokens = targetCtx->DotOperator();
+            auto arrowTokens = targetCtx->ReferenceAccessOperator();
+            auto memberIds = targetCtx->Identifier();
+
+            // Pair operators with identifiers by walking children in order
+            size_t memberIdx = 0;
+            bool isArrow = false;
+            for (auto* child : targetCtx->children) {
+                auto* termNode = dynamic_cast<antlr4::tree::TerminalNode*>(child);
+                if (!termNode) continue;
+                auto tokenType = termNode->getSymbol()->getType();
+                if (tokenType == MingusParser::DotOperator) {
+                    isArrow = false;
+                } else if (tokenType == MingusParser::ReferenceAccessOperator) {
+                    isArrow = true;
+                } else if (tokenType == MingusParser::Identifier) {
+                    // Check if this is one of our member identifiers (not qualifiedName)
+                    bool isMember = false;
+                    for (auto* id : memberIds) {
+                        if (id == termNode) { isMember = true; break; }
+                    }
+                    if (isMember) {
+                        auto memberAccess = std::make_shared<MemberAccessExpression>();
+                        memberAccess->debugInfo = makeDebugInfo(targetCtx);
+                        memberAccess->object = funcExpr;
+                        memberAccess->memberName = termNode->getText();
+                        memberAccess->isArrow = isArrow;
+                        funcExpr = memberAccess;
+                    }
+                }
+            }
+        }
         stage.function = funcExpr;
 
         if (targetCtx->callArguments() &&

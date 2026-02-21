@@ -97,6 +97,7 @@ public:
     bool isStatic = false;
     bool isAbstract = false;
     bool isVirtual = false;
+    bool isVariadic = false;
     bool hasThisParam = false;
 
     // Virtual dispatch index (-1 = not virtual)

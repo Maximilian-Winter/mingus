@@ -1,7 +1,7 @@
 // Test 1: Basic types, arithmetic, control flow, loops
 module Test01
 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     func main() => int

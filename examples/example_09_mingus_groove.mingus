@@ -21,7 +21,7 @@ module MingusGroove
     extern func fopen(string path, string mode) => byte*;
     extern func fclose(byte* f) => int;
     extern func puts(string s) => int;
-    extern func printf(string fmt, int v) => int;
+    extern func printf(string fmt, ...) => int;
 
     // ---- Import reusable DSP building blocks ----
     // Classes, utilities, WAV writer, AND shared externs (sin, pow, lround)

@@ -11,7 +11,7 @@
 
 module HexTest
 {
-    extern func printf(string fmt, int a, int b, int c) => int;
+    extern func printf(string fmt, ...) => int;
 
     func main() => int
     {

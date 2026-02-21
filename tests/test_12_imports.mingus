@@ -3,7 +3,7 @@
 
 module Test12
 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     // Selective import: bring in specific symbols from MathLib

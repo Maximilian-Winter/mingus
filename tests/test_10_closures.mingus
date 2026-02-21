@@ -1,7 +1,7 @@
 // Test 10: Closures (lambdas with captures) via fat pointer { fnPtr, envPtr }
 module Test10
 {
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     // Returns a closure that multiplies by 'factor'

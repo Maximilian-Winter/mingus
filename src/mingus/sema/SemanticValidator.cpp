@@ -668,7 +668,9 @@ void SemanticValidator::visit(ForStatement& node) {
         // For loop may create its own scope
     }
 
-    if (node.initDeclaration) node.initDeclaration->accept(*this);
+    for (auto& initDecl : node.initDeclarations) {
+        if (initDecl) initDecl->accept(*this);
+    }
     for (auto& initExpr : node.initExpressions) {
         if (initExpr) initExpr->accept(*this);
     }

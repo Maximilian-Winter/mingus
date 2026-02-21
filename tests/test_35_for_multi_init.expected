@@ -1,0 +1,6 @@
+=== Test 35: For Multi-Init ===
+converge sum = 50 (expect 50)
+product = 6 (expect 6)
+total = 400 (expect 400)
+count = 10 (expect 10)
+=== Test 35 complete ===

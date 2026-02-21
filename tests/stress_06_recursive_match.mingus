@@ -3,7 +3,7 @@
 
 module Stress06
 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
 
     func fib(int n) => int
     {

@@ -1,7 +1,7 @@
 // Mingus v1 — First compilable test program
 module Hello
 {
-    extern func printf(string format) => int;
+    extern func printf(string fmt, ...) => int;
 
     func run() => int
     {

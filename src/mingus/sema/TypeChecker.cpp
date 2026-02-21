@@ -421,7 +421,9 @@ void TypeChecker::visit(IfStatement& node) {
 }
 
 void TypeChecker::visit(ForStatement& node) {
-    if (node.initDeclaration) node.initDeclaration->accept(*this);
+    for (auto& initDecl : node.initDeclarations) {
+        if (initDecl) initDecl->accept(*this);
+    }
     for (auto& initExpr : node.initExpressions) {
         if (initExpr) initExpr->accept(*this);
     }
@@ -855,6 +857,16 @@ void TypeChecker::visit(AssignmentExpression& node) {
         errors_.error("assignment to non-lvalue", node.debugInfo);
     }
 
+    // Validate mutability (const enforcement)
+    if (node.target && node.target->resolvedSymbol) {
+        if (auto* varSym = node.target->resolvedSymbol->as<VariableSymbol>()) {
+            if (!varSym->isMutable) {
+                errors_.error("assignment to const variable '" + varSym->getName() + "'",
+                    node.debugInfo);
+            }
+        }
+    }
+
     // Check compatibility
     if (node.op == AssignOp::Assign) {
         checkAssignability(valueType.get(), targetType.get(),
@@ -1054,7 +1066,12 @@ void TypeChecker::visit(CallExpression& node) {
     // Check argument count
     size_t argCount = node.arguments ? node.arguments->expressions.size() : 0;
     size_t paramCount = funcType->parameters.size();
-    if (argCount != paramCount && !funcType->isVariadic) {
+    if (funcType->isVariadic) {
+        if (argCount < paramCount) {
+            errors_.error("expected at least " + std::to_string(paramCount) + " arguments, got "
+                + std::to_string(argCount), node.debugInfo);
+        }
+    } else if (argCount != paramCount) {
         errors_.error("expected " + std::to_string(paramCount) + " arguments, got "
             + std::to_string(argCount), node.debugInfo);
     }

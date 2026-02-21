@@ -4,7 +4,7 @@
 // Codegen must wrap class pointer to interface fat pointer at call site.
 
 module Test33 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     interface Printable {

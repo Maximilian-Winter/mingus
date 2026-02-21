@@ -1,0 +1,85 @@
+module Test37
+{
+    extern func printf(string fmt, ...) => int;
+
+    struct Vec2 {
+        double x;
+        double y;
+    }
+
+    class Transform
+    {
+        double scaleX;
+        double scaleY;
+        double offsetX;
+        double offsetY;
+
+        constructor(double sx, double sy, double ox, double oy)
+        {
+            scaleX = sx;
+            scaleY = sy;
+            offsetX = ox;
+            offsetY = oy;
+        }
+
+        func scale(double val) => double
+        {
+            return val * scaleX;
+        }
+
+        func offset(double val) => double
+        {
+            return val + offsetX;
+        }
+
+        func apply(double val, double extra) => double
+        {
+            return val * scaleX + extra;
+        }
+    }
+
+    func double_it(double x) => double
+    {
+        return x * 2.0;
+    }
+
+    func add_ten(double x) => double
+    {
+        return x + 10.0;
+    }
+
+    func main() => int
+    {
+        printf("=== Test 37: Pipe Methods ===\n");
+
+        // Basic pipe with free functions (regression test)
+        var result1 = 5.0 |> double_it |> add_ten;
+        printf("5 |> double |> add10 = %f (expect 20.0)\n", result1);
+
+        // Pipe into method call
+        Transform* t = new Transform(2.0, 1.0, 100.0, 0.0);
+
+        var result2 = 3.0 |> t->scale;
+        printf("3 |> t->scale = %f (expect 6.0)\n", result2);
+
+        var result3 = 5.0 |> t->offset;
+        printf("5 |> t->offset = %f (expect 105.0)\n", result3);
+
+        // Chained pipe with methods
+        var result4 = 5.0 |> t->scale |> t->offset;
+        printf("5 |> scale |> offset = %f (expect 110.0)\n", result4);
+
+        // Mixed: free function then method
+        var result5 = 5.0 |> double_it |> t->offset;
+        printf("5 |> double |> offset = %f (expect 110.0)\n", result5);
+
+        // Method with extra args
+        var result6 = 3.0 |> t->apply(7.0);
+        printf("3 |> t->apply(7) = %f (expect 13.0)\n", result6);
+
+        delete t;
+
+        printf("=== Test 37 complete ===\n");
+        return 0;
+    }
+}

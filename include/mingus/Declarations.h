@@ -32,6 +32,7 @@ public:
     std::string name;
     AccessModifier accessModifier = AccessModifier::Public;
     bool isStatic = false;
+    bool isConst = false;
     std::shared_ptr<TypeNode> type;  // nullptr if inferred
     bool isInferred = false;
     std::shared_ptr<ExpressionBaseNode> initializer;  // required if inferred
@@ -122,6 +123,7 @@ public:
     std::string name;
     std::vector<std::shared_ptr<ParameterNode>> parameters;
     std::shared_ptr<TypeNode> returnType;
+    bool isVariadic = false;
 
     // Resolved in Pass 1
     std::shared_ptr<FunctionSymbol> resolvedFunction;

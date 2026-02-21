@@ -110,7 +110,9 @@ externBody
     ;
 
 externFunctionDeclaration
-    : DeclareFunction Identifier definitionParameters ArrowOperator returnType SemicolonSeparator
+    : DeclareFunction Identifier
+      OpeningRoundBracket parameterList? ( CommaSeparator Ellipsis )? ClosingRoundBracket
+      ArrowOperator returnType SemicolonSeparator
     ;
 
 // ============================================================================
@@ -256,7 +258,13 @@ parameter
 variableDeclaration
     : accessModifier? staticModifier? typedVariableDeclaration
     | accessModifier? staticModifier? inferredVariableDeclaration
+    | accessModifier? staticModifier? constVariableDeclaration
     | accessModifier? staticModifier? tupleDestructuring
+    ;
+
+constVariableDeclaration
+    : DeclareConst typeIdentifier Identifier AssignOperator exprStatement
+    | DeclareConst Identifier AssignOperator exprStatement
     ;
 
 typedVariableDeclaration
@@ -443,6 +451,8 @@ localVarInitializer
 localVarDeclaration
     : typeIdentifier Identifier ( AssignOperator expression )?
     | DeclareVariable Identifier AssignOperator expression
+    | DeclareConst typeIdentifier Identifier AssignOperator expression
+    | DeclareConst Identifier AssignOperator expression
     ;
 
 forIterator
@@ -543,7 +553,7 @@ pipe
     ;
 
 pipeTarget
-    : qualifiedName callArguments?
+    : qualifiedName ( ( DotOperator | ReferenceAccessOperator ) Identifier )* callArguments?
     ;
 
 // ============================================================================

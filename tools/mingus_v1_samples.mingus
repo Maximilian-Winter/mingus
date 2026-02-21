@@ -11,7 +11,7 @@
 module Core
 {
     // Single extern declarations
-    extern func printf(string fmt) => int;
+    extern func printf(string fmt, ...) => int;
     extern func malloc(int size) => byte*;
     extern func free(byte* ptr) => void;
     extern func memcpy(byte* dest, byte* src, int n) => byte*;
@@ -434,7 +434,7 @@ module Functional
 
 module Compiler
 {
-    extern func printf(string fmt) => int;
+    extern func printf(string fmt, ...) => int;
 
     enum TokenKind : int
     {

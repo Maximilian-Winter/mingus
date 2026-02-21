@@ -2,7 +2,7 @@
 // Weaves together: structs + operators, enums + match, closures, pipes, math
 module Test11
 {
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
     extern func sin(double x) => double;
     extern func sqrt(double x) => double;

@@ -105,7 +105,7 @@ void SymbolTableBuilder::visit(VariableDeclaration& node) {
     auto varSym = std::make_shared<VariableSymbol>(node.name, nullptr);
     varSym->role = inTypeScope_ ? VariableRole::Field : VariableRole::Local;
     varSym->isInferred = node.isInferred;
-    varSym->isMutable = true;
+    varSym->isMutable = !node.isConst;
     varSym->accessLevel = node.accessModifier;
     symbolTable_.defineSymbol(varSym);
     node.resolvedVariable = varSym;
@@ -246,6 +246,7 @@ void SymbolTableBuilder::visit(ExternFunctionDeclaration& node) {
 
     auto funcSym = std::make_shared<FunctionSymbol>(node.name);
     funcSym->isExtern = true;
+    funcSym->isVariadic = node.isVariadic;
     symbolTable_.defineSymbol(funcSym);
     node.resolvedFunction = funcSym;
 
@@ -672,7 +673,9 @@ void SymbolTableBuilder::visit(ForStatement& node) {
     // For loop gets its own block scope (init var visible in body)
     pushBlockScope(node);
 
-    if (node.initDeclaration) node.initDeclaration->accept(*this);
+    for (auto& initDecl : node.initDeclarations) {
+        if (initDecl) initDecl->accept(*this);
+    }
     for (auto& initExpr : node.initExpressions) {
         if (initExpr) initExpr->accept(*this);
     }

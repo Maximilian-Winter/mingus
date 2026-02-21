@@ -1,7 +1,7 @@
 // Test 13: Inheritance, virtual dispatch, super constructor, destructor chaining
 module Test13
 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
     extern func malloc(int size) => byte*;
     extern func free(byte* ptr) => void;

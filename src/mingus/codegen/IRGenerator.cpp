@@ -513,8 +513,8 @@ void IRGenerator::declareExternFunctions(ProgramNode& program) {
             if (functionCache_.count(funcSym)) continue;
 
             auto* fnTy = buildFunctionType(funcSym);
-            // Handle vararg functions (printf, snprintf)
-            bool isVarArg = (funcSym->getName() == "printf" || funcSym->getName() == "snprintf");
+            // Handle vararg functions (declared with ... in extern)
+            bool isVarArg = funcSym->isVariadic;
             if (isVarArg) {
                 std::vector<llvm::Type*> paramTypes;
                 for (auto& param : funcSym->parameters) {
@@ -1646,8 +1646,8 @@ void IRGenerator::visit(SwitchStatement& node) {
 }
 
 void IRGenerator::visit(ForStatement& node) {
-    if (node.initDeclaration) {
-        node.initDeclaration->accept(*this);
+    for (auto& initDecl : node.initDeclarations) {
+        if (initDecl) initDecl->accept(*this);
     }
     for (auto& expr : node.initExpressions) {
         expr->accept(*this);
@@ -2919,6 +2919,24 @@ void IRGenerator::visit(CallExpression& node) {
                     }
                 }
 
+                // Varargs promotion: small ints → i32, float → double
+                // (C calling convention requires promotion for variadic args)
+                bool isVariadicArg = false;
+                if (calleeFuncSym && calleeFuncSym->isVariadic) {
+                    size_t fixedCount = calleeFuncSym->parameters.size();
+                    isVariadicArg = (argI >= fixedCount);
+                }
+                if (isVariadicArg && lastValue_) {
+                    auto* ty = lastValue_->getType();
+                    if (ty->isIntegerTy() && ty->getIntegerBitWidth() < 32) {
+                        lastValue_ = builder_.CreateSExt(lastValue_,
+                            llvm::Type::getInt32Ty(context_), "vararg.promote");
+                    } else if (ty->isFloatTy()) {
+                        lastValue_ = builder_.CreateFPExt(lastValue_,
+                            llvm::Type::getDoubleTy(context_), "vararg.fpromote");
+                    }
+                }
+
                 // RAII-wrap temporary closure arguments
                 if (arg->resolvedType && arg->resolvedType->is<FunctionTypeSymbol>() &&
                     arg->is<LambdaExpression>()) {
@@ -3187,8 +3205,13 @@ void IRGenerator::visit(PipeExpression& node) {
     for (auto& stage : node.stages) {
         llvm::Function* stageFn = nullptr;
         llvm::Value* stageVal = nullptr;
+        bool isMethodPipe = false;
 
-        if (stage.function && stage.function->resolvedSymbol) {
+        // Check for member access pipe: x |> obj.method(args)
+        auto* memAccess = stage.function ? stage.function->as<MemberAccessExpression>() : nullptr;
+        if (memAccess) {
+            isMethodPipe = true;
+        } else if (stage.function && stage.function->resolvedSymbol) {
             if (auto* funcSym = stage.function->resolvedSymbol->as<FunctionSymbol>()) {
                 auto it = functionCache_.find(funcSym);
                 if (it != functionCache_.end()) stageFn = it->second;
@@ -3202,35 +3225,82 @@ void IRGenerator::visit(PipeExpression& node) {
             }
         }
 
-        std::vector<llvm::Value*> pipeArgs;
-        pipeArgs.push_back(currentVal);
-        for (auto& extra : stage.extraArguments) {
-            extra->accept(*this);
-            if (lastValue_) pipeArgs.push_back(lastValue_);
-        }
+        if (isMethodPipe && memAccess) {
+            // Method call pipe: x |> obj.method(args) → obj.method(x, args)
+            memAccess->object->accept(*this);
+            llvm::Value* objPtr = lastValue_;
+            if (!objPtr) { lastValue_ = nullptr; return; }
 
-        if (stageFn) {
-            currentVal = builder_.CreateCall(stageFn, pipeArgs, "pipe.result");
-        } else if (stageVal) {
-            TypeSymbol* stageType = stage.function && stage.function->resolvedType ?
-                stage.function->resolvedType->as<TypeSymbol>() : nullptr;
-            if (auto* fnType = stageType ? stageType->as<FunctionTypeSymbol>() : nullptr) {
-                llvm::Type* retTy = mapType(fnType->returnType);
-                std::vector<llvm::Type*> paramTypes;
-                for (auto& pi : fnType->parameters) {
-                    paramTypes.push_back(mapParamType(pi.type.get(), pi.isReference));
+            auto* methodSym = memAccess->resolvedSymbol ?
+                memAccess->resolvedSymbol->as<FunctionSymbol>() : nullptr;
+            if (!methodSym) { lastValue_ = nullptr; return; }
+
+            // Get class symbol for virtual dispatch
+            TypeSymbol* objType = memAccess->object->resolvedType ?
+                memAccess->object->resolvedType->as<TypeSymbol>() : nullptr;
+            if (auto* ptrTy = objType ? objType->as<PointerTypeSymbol>() : nullptr) {
+                objType = ptrTy->baseType ? ptrTy->baseType->as<TypeSymbol>() : nullptr;
+            }
+            auto* classSym = objType ? objType->as<ClassSymbol>() : nullptr;
+
+            // Build args: (this, pipedValue, extraArgs...)
+            std::vector<llvm::Value*> methodArgs;
+            methodArgs.push_back(objPtr);      // this
+            methodArgs.push_back(currentVal);   // piped value as first real arg
+            for (auto& extra : stage.extraArguments) {
+                extra->accept(*this);
+                if (lastValue_) methodArgs.push_back(lastValue_);
+            }
+
+            // Virtual dispatch or direct call
+            if (classSym && methodSym->vtableIndex >= 0 && classSym->hasVtable()) {
+                auto* structTy = getStructType(classSym);
+                auto* ptrTy = llvm::PointerType::getUnqual(context_);
+                auto* vtablePtrPtr = builder_.CreateStructGEP(structTy, objPtr, 0, "pipe.vtable.ptr");
+                auto* vtable = builder_.CreateLoad(ptrTy, vtablePtrPtr, "pipe.vtable");
+                auto* methodSlot = builder_.CreateGEP(ptrTy, vtable,
+                    builder_.getInt32(methodSym->vtableIndex), "pipe.method.slot");
+                auto* methodFn = builder_.CreateLoad(ptrTy, methodSlot, "pipe.method.fn");
+                auto* fnTy = buildFunctionType(methodSym);
+                currentVal = builder_.CreateCall(fnTy, methodFn, methodArgs, "pipe.result");
+            } else {
+                auto it = functionCache_.find(methodSym);
+                if (it != functionCache_.end()) {
+                    currentVal = builder_.CreateCall(it->second, methodArgs, "pipe.result");
                 }
+            }
+        } else {
+            // Regular function or closure pipe
+            std::vector<llvm::Value*> pipeArgs;
+            pipeArgs.push_back(currentVal);
+            for (auto& extra : stage.extraArguments) {
+                extra->accept(*this);
+                if (lastValue_) pipeArgs.push_back(lastValue_);
+            }
 
-                if (stageVal->getType()->isStructTy()) {
-                    llvm::Value* fnPtr = builder_.CreateExtractValue(stageVal, {0}, "pipe.fn.ptr");
-                    llvm::Value* envPtr = builder_.CreateExtractValue(stageVal, {1}, "pipe.env.ptr");
-                    paramTypes.push_back(llvm::PointerType::getUnqual(context_));
-                    auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
-                    pipeArgs.push_back(envPtr);
-                    currentVal = builder_.CreateCall(fnTy, fnPtr, pipeArgs, "pipe.result");
-                } else {
-                    auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
-                    currentVal = builder_.CreateCall(fnTy, stageVal, pipeArgs, "pipe.result");
+            if (stageFn) {
+                currentVal = builder_.CreateCall(stageFn, pipeArgs, "pipe.result");
+            } else if (stageVal) {
+                TypeSymbol* stageType = stage.function && stage.function->resolvedType ?
+                    stage.function->resolvedType->as<TypeSymbol>() : nullptr;
+                if (auto* fnType = stageType ? stageType->as<FunctionTypeSymbol>() : nullptr) {
+                    llvm::Type* retTy = mapType(fnType->returnType);
+                    std::vector<llvm::Type*> paramTypes;
+                    for (auto& pi : fnType->parameters) {
+                        paramTypes.push_back(mapParamType(pi.type.get(), pi.isReference));
+                    }
+
+                    if (stageVal->getType()->isStructTy()) {
+                        llvm::Value* fnPtr = builder_.CreateExtractValue(stageVal, {0}, "pipe.fn.ptr");
+                        llvm::Value* envPtr = builder_.CreateExtractValue(stageVal, {1}, "pipe.env.ptr");
+                        paramTypes.push_back(llvm::PointerType::getUnqual(context_));
+                        auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
+                        pipeArgs.push_back(envPtr);
+                        currentVal = builder_.CreateCall(fnTy, fnPtr, pipeArgs, "pipe.result");
+                    } else {
+                        auto* fnTy = llvm::FunctionType::get(retTy, paramTypes, false);
+                        currentVal = builder_.CreateCall(fnTy, stageVal, pipeArgs, "pipe.result");
+                    }
                 }
             }
         }

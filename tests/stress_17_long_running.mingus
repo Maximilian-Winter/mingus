@@ -6,7 +6,7 @@
 module Stress17
 {
     extern func puts(string s) => int;
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
 
     interface Transformer
     {

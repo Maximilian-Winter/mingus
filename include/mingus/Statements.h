@@ -63,7 +63,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 
     // Initialization: one of these (or neither)
-    std::shared_ptr<DeclarationBaseNode> initDeclaration;
+    std::vector<std::shared_ptr<DeclarationBaseNode>> initDeclarations;
     std::vector<std::shared_ptr<ExpressionBaseNode>> initExpressions;
 
     // Condition (nullptr = infinite loop)

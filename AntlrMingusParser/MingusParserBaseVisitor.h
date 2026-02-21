@@ -141,6 +141,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitConstVariableDeclaration(MingusParser::ConstVariableDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitTypedVariableDeclaration(MingusParser::TypedVariableDeclarationContext *ctx) override {
     return visitChildren(ctx);
   }

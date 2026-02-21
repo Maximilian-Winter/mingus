@@ -1,7 +1,7 @@
 // Test 7: Floating point, math functions, type widening
 module Test07
 {
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
     extern func sin(double x) => double;
     extern func cos(double x) => double;

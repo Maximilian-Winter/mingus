@@ -1,0 +1,35 @@
+module Test34
+{
+    // Varargs extern declarations — using the new ... syntax
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        printf("=== Test 34: Varargs ===\n");
+
+        // Basic varargs: one int arg
+        printf("int: %d\n", 42);
+
+        // Two int args
+        printf("two ints: %d %d\n", 10, 20);
+
+        // Double arg
+        printf("double: %f\n", 3.14);
+
+        // Mixed types
+        printf("mixed: %d %f %d\n", 1, 2.718, 3);
+
+        // String arg
+        printf("string: %s\n", "hello");
+
+        // No extra args (just format string)
+        printf("no args\n");
+
+        // Three ints
+        printf("three: %d %d %d\n", 100, 200, 300);
+
+        printf("=== Test 34 complete ===\n");
+
+        return 0;
+    }
+}

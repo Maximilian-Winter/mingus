@@ -5,7 +5,7 @@
 module Test20
 {
     extern func puts(string s) => int;
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func sqrt(double x) => double;
 
     struct Complex

@@ -5,7 +5,7 @@
 module Test27
 {
     extern func puts(string s) => int;
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
 
     func add(int a, int b) => int
     {

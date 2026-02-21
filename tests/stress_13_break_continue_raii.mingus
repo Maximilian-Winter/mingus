@@ -5,7 +5,7 @@
 
 module Stress13
 {
-    extern func printf(string fmt, int val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     class Guard

@@ -1,0 +1,44 @@
+module Test36
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        printf("=== Test 36: Const ===\n");
+
+        // Typed const
+        const int x = 42;
+        printf("const int x = %d (expect 42)\n", x);
+
+        // Inferred const
+        const pi = 3.14;
+        printf("const pi = %f (expect 3.14)\n", pi);
+
+        // Const in expressions
+        const int a = 10;
+        const int b = 20;
+        var sum = a + b;
+        printf("a + b = %d (expect 30)\n", sum);
+
+        // Const string
+        const greeting = "hello";
+        printf("greeting = %s\n", greeting);
+
+        // Const in for-loop (loop counter itself is mutable, but we can have const inside)
+        var total = 0;
+        for (int i = 0; i < 5; i = i + 1)
+        {
+            const int factor = 2;
+            total = total + i * factor;
+        }
+        printf("total = %d (expect 20)\n", total);
+
+        // Mutable var can still be reassigned (regression test)
+        var mutable_val = 100;
+        mutable_val = 200;
+        printf("mutable = %d (expect 200)\n", mutable_val);
+
+        printf("=== Test 36 complete ===\n");
+        return 0;
+    }
+}

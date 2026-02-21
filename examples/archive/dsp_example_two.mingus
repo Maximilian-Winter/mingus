@@ -15,7 +15,7 @@ module MingusGroove2
     extern func fputc(int c, byte* f) => int;
     extern func fclose(byte* f) => int;
     extern func puts(string s) => int;
-    extern func printf(string fmt, int v) => int;
+    extern func printf(string fmt, ...) => int;
     extern func lround(double x) => int;
     extern func sin(double x) => double;
     extern func pow(double base, double exp) => double;

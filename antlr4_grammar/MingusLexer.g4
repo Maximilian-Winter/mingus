@@ -57,6 +57,7 @@ Continue:            'continue';
 // ============================================================================
 
 DeclareVariable:     'var';
+DeclareConst:        'const';
 NewKeyword:          'new';
 DeleteKeyword:       'delete';
 NullReference:       'null';
@@ -167,6 +168,7 @@ PipeOperator:           '|>';
 ArrowOperator:          '=>';
 ReferenceAccessOperator: '->';
 DotOperator:            '.';
+Ellipsis:               '...';
 DotDotOperator:         '..';
 QuestionMarkOperator:   '?';
 ColonOperator:          ':';

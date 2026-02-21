@@ -1,7 +1,7 @@
 // Minimal struct debug test
 module Debug
 {
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
 
     struct Vec3
     {

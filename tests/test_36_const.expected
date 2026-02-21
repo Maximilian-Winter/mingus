@@ -1,0 +1,8 @@
+=== Test 36: Const ===
+const int x = 42 (expect 42)
+const pi = 3.140000 (expect 3.14)
+a + b = 30 (expect 30)
+greeting = hello
+total = 20 (expect 20)
+mutable = 200 (expect 200)
+=== Test 36 complete ===

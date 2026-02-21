@@ -3,7 +3,7 @@
 //       which is planned for a future update.
 module Test06
 {
-    extern func printf(string fmt, double val) => int;
+    extern func printf(string fmt, ...) => int;
     extern func puts(string s) => int;
 
     func apply(double x, (double) => double transform) => double
