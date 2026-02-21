@@ -71,6 +71,7 @@ call :run_test test_34_varargs           Test34_main  "Varargs"
 call :run_test test_35_for_multi_init   Test35_main  "For Multi-Init"
 call :run_test test_36_const            Test36_main  "Const Variables"
 call :run_test test_37_pipe_methods    Test37_main  "Pipe Methods"
+call :run_test test_38_bare_fields    Test38_main  "Bare Field Access"
 
 echo.
 echo ============================================================

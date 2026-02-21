@@ -244,6 +244,10 @@ private:
     // Emit an expression as an lvalue (returns pointer, not loaded value)
     llvm::Value* emitLValue(ExpressionBaseNode& expr);
 
+    // Emit a GEP to a class/struct field via currentThisPtr_
+    // Returns nullptr if not in a method context or symbol is not a field
+    llvm::Value* emitFieldGEP(VariableSymbol* fieldSym);
+
     //==========================================================================
     // RAII helpers
     //==========================================================================

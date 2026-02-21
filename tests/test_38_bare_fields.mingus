@@ -1,0 +1,107 @@
+// Test 38: Bare Field Access (without this. prefix)
+// Verifies that class/struct fields can be accessed by name alone in methods.
+
+module Test38
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Class with bare field access ---
+    class Counter
+    {
+        int count;
+        double factor;
+
+        constructor(int c, double f)
+        {
+            // Bare field write in constructor
+            count = c;
+            factor = f;
+        }
+
+        func increment() => void
+        {
+            // Bare field read + write
+            count = count + 1;
+        }
+
+        func scaled() => double
+        {
+            // Bare field read in expression
+            return count * factor;
+        }
+
+        func getCount() => int
+        {
+            return count;
+        }
+    }
+
+    // --- Inheritance: bare access to inherited field ---
+    class NamedCounter : Counter
+    {
+        int bonus;
+
+        constructor(int c, double f, int b) : super(c, f)
+        {
+            bonus = b;
+        }
+
+        func total() => int
+        {
+            // Bare access to inherited field 'count' and own field 'bonus'
+            return count + bonus;
+        }
+    }
+
+    // --- Shadowing: local var shadows field ---
+    class ShadowTest
+    {
+        int value;
+
+        constructor(int v)
+        {
+            value = v;
+        }
+
+        func shadowed() => int
+        {
+            // Local shadows the field — should use local, not field
+            int value = 999;
+            return value;
+        }
+
+        func unshadowed() => int
+        {
+            // No local — should use field
+            return value;
+        }
+    }
+
+    func main() => int
+    {
+        printf("=== Test 38: Bare Field Access ===\n");
+
+        // Basic bare field read/write
+        Counter* c = new Counter(10, 2.5);
+        printf("initial count = %d (expect 10)\n", c->getCount());
+        c->increment();
+        c->increment();
+        printf("after 2 increments = %d (expect 12)\n", c->getCount());
+        printf("scaled = %f (expect 30.0)\n", c->scaled());
+        delete c;
+
+        // Inherited field bare access
+        NamedCounter* nc = new NamedCounter(5, 1.0, 100);
+        printf("total = %d (expect 105)\n", nc->total());
+        delete nc;
+
+        // Shadowing
+        ShadowTest* st = new ShadowTest(42);
+        printf("shadowed = %d (expect 999)\n", st->shadowed());
+        printf("unshadowed = %d (expect 42)\n", st->unshadowed());
+        delete st;
+
+        printf("=== Test 38 complete ===\n");
+        return 0;
+    }
+}

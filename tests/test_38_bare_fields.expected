@@ -1,0 +1,8 @@
+=== Test 38: Bare Field Access ===
+initial count = 10 (expect 10)
+after 2 increments = 12 (expect 12)
+scaled = 30.000000 (expect 30.0)
+total = 105 (expect 105)
+shadowed = 999 (expect 999)
+unshadowed = 42 (expect 42)
+=== Test 38 complete ===

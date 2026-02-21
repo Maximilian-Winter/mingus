@@ -674,11 +674,17 @@ llvm::FunctionType* IRGenerator::buildOperatorType(OperatorSymbol* sym) {
 // LValue emission — returns a pointer, does NOT load
 //================================================================================
 llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
-    // IdentifierExpression -> alloca from namedValues_
+    // IdentifierExpression -> alloca from namedValues_ (locals/params)
     if (auto* ident = expr.as<IdentifierExpression>()) {
         if (ident->resolvedSymbol) {
             auto it = namedValues_.find(ident->resolvedSymbol.get());
             if (it != namedValues_.end()) return it->second;
+
+            // Field fallback: bare field name → GEP via this pointer
+            if (auto* varSym = ident->resolvedSymbol->as<VariableSymbol>()) {
+                llvm::Value* fieldPtr = emitFieldGEP(varSym);
+                if (fieldPtr) return fieldPtr;
+            }
         }
         return nullptr;
     }
@@ -780,6 +786,35 @@ llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
                 return builder_.CreateGEP(elemTy, arrPtr, indexVal, "elem_ptr");
             }
         }
+    }
+
+    return nullptr;
+}
+
+//================================================================================
+// Field GEP helper — bare field access via this pointer
+//================================================================================
+llvm::Value* IRGenerator::emitFieldGEP(VariableSymbol* fieldSym) {
+    if (!fieldSym || !currentThisPtr_) return nullptr;
+    if (fieldSym->role != VariableRole::Field) return nullptr;
+
+    // Class field: use getFieldGEPIndex (vtable + inheritance aware)
+    if (currentClassSym_) {
+        auto* structTy = getStructType(currentClassSym_);
+        if (!structTy) return nullptr;
+        int gepIdx = getFieldGEPIndex(currentClassSym_, fieldSym);
+        if (gepIdx < 0) return nullptr;
+        return builder_.CreateStructGEP(structTy, currentThisPtr_,
+                                         gepIdx, fieldSym->getName() + "_ptr");
+    }
+
+    // Struct field: direct fieldIndex (no vtable)
+    if (currentStructSym_) {
+        auto* structTy = getStructType(currentStructSym_);
+        if (!structTy) return nullptr;
+        if (fieldSym->fieldIndex < 0) return nullptr;
+        return builder_.CreateStructGEP(structTy, currentThisPtr_,
+                                         fieldSym->fieldIndex, fieldSym->getName() + "_ptr");
     }
 
     return nullptr;
@@ -2041,7 +2076,7 @@ void IRGenerator::visit(IdentifierExpression& node) {
         }
     }
 
-    // Variable symbol -> load from alloca
+    // Variable symbol -> load from alloca (locals and params)
     auto it = namedValues_.find(node.resolvedSymbol.get());
     if (it != namedValues_.end()) {
         llvm::Type* loadTy = mapType(node.resolvedType);
@@ -2051,6 +2086,22 @@ void IRGenerator::visit(IdentifierExpression& node) {
         }
         lastValue_ = builder_.CreateLoad(loadTy, it->second, node.name);
         return;
+    }
+
+    // Field fallback: bare field name resolved by sema → access via this pointer
+    if (auto* varSym = node.resolvedSymbol->as<VariableSymbol>()) {
+        llvm::Value* fieldPtr = emitFieldGEP(varSym);
+        if (fieldPtr) {
+            // Closure-typed field: load as fat pointer
+            if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
+                lastValue_ = builder_.CreateLoad(getFatPtrType(), fieldPtr, node.name);
+                return;
+            }
+            llvm::Type* loadTy = mapType(node.resolvedType);
+            if (loadTy->isVoidTy()) { lastValue_ = nullptr; return; }
+            lastValue_ = builder_.CreateLoad(loadTy, fieldPtr, node.name);
+            return;
+        }
     }
 
     lastValue_ = nullptr;
@@ -2487,9 +2538,20 @@ void IRGenerator::visit(AssignmentExpression& node) {
             builder_.CreateStore(lastValue_, targetPtr);
 
             // Retain new closure envPtr when storing into a field
-            if (isFunctionKind(targetType) && node.target->as<MemberAccessExpression>()) {
-                auto* newEnv = builder_.CreateExtractValue(lastValue_, {1}, "new.env");
-                builder_.CreateCall(getOrCreateClosureRetainFn(), {newEnv});
+            if (isFunctionKind(targetType)) {
+                bool isFieldStore = (node.target->as<MemberAccessExpression>() != nullptr);
+                if (!isFieldStore) {
+                    if (auto* ident = node.target->as<IdentifierExpression>()) {
+                        if (auto* vs = ident->resolvedSymbol ?
+                                ident->resolvedSymbol->as<VariableSymbol>() : nullptr) {
+                            isFieldStore = (vs->role == VariableRole::Field);
+                        }
+                    }
+                }
+                if (isFieldStore) {
+                    auto* newEnv = builder_.CreateExtractValue(lastValue_, {1}, "new.env");
+                    builder_.CreateCall(getOrCreateClosureRetainFn(), {newEnv});
+                }
             }
         }
     } else {
