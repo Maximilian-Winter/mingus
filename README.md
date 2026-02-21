@@ -2,7 +2,7 @@
 
 A compiled systems programming language that combines low-level control with expressive high-level abstractions. Named after Charles Mingus — bold, structured, uncompromising.
 
-Mingus compiles to native code via LLVM. It has pipes for data flow, pattern matching with guards, RAII resource management, closures, operator overloading, interfaces, inheritance with virtual dispatch, and raw blocks for when you need to get close to the metal.
+Mingus compiles to native code via LLVM. It has pipes for data flow, pattern matching with guards, RAII resource management, closures with C++ capture semantics, operator overloading, interfaces, inheritance with virtual dispatch, move semantics, and raw blocks for when you need to get close to the metal.
 
 Status: Very early development — syntax and features are evolving rapidly. ⚠️
 
@@ -105,6 +105,51 @@ Destructors run automatically at scope exit. No garbage collector, no manual fre
 }
 ```
 
+### Inheritance, abstract classes, and virtual dispatch
+
+```
+abstract class AudioEffect
+{
+    double param;
+    constructor(double p) { this.param = p; }
+    func paramValue() => double { return this.param; }
+}
+
+class GainEffect : AudioEffect, Effect, Named
+{
+    constructor(double g) : super(g) { }
+    func process(double s) => double { return s * this.param; }
+    func name() => string { return "Gain"; }
+}
+```
+
+Virtual destructors chain correctly through the entire hierarchy — deleting a `Leaf` through a `Base*` calls `~Leaf`, `~Middle`, `~Base` in order.
+
+### Copy and move constructors
+
+```
+class Resource
+{
+    public int value;
+
+    constructor(int v) { this.value = v; }
+
+    constructor(Resource& other)          // copy
+    {
+        this.value = other.value;
+    }
+
+    constructor(Resource&& other)         // move
+    {
+        this.value = other.value;
+        other.value = 0;
+    }
+}
+
+var a = new Resource(42);
+var b = new Resource(move(a));   // a.value is now 0, b.value is 42
+```
+
 ### Closures and higher-order functions
 
 ```
@@ -142,6 +187,16 @@ var mixed = [=, &total](int x) => {
     total = total + x * scale;  // scale frozen, total mutable
     return total;
 };
+```
+
+Self-capturing closures enable recursive lambdas:
+
+```
+(int) => int fib = [=](int n) => {
+    if (n <= 1) { return n; }
+    return fib(n - 1) + fib(n - 2);
+};
+printf("fib(10) = %d\n", fib(10));   // 55
 ```
 
 ### Reference parameters
@@ -207,6 +262,91 @@ func oscillator(int wave, double phase) => double
             : 3.0 - phase * 4.0,
         _ => phase * 2.0 - 1.0,
     };
+}
+```
+
+Enums support `int`, `byte`, and `string` underlying types:
+
+```
+enum HttpMethod : string
+{
+    Get    = "GET",
+    Post   = "POST",
+    Delete = "DELETE",
+}
+```
+
+### Function overloading
+
+```
+func add(int a, int b) => int => a + b;
+func add(int a, int b, int c) => int => a + b + c;
+
+func describe(int x) => int    { printf("int: %d\n", x); return 1; }
+func describe(double x) => int { printf("double: %.1f\n", x); return 2; }
+func describe(string x) => int { printf("string: %s\n", x); return 3; }
+```
+
+### Tuples and destructuring
+
+```
+func divmod(int a, int b) => (int, int)
+{
+    return (a / b, a % b);
+}
+
+(var quot, var rem) = divmod(17, 5);
+```
+
+### Pipes — including into methods
+
+```
+var result = 5.0 |> double_it |> add_ten;
+
+Transform* t = new Transform(2.0, 1.0, 100.0, 0.0);
+var scaled = 3.0 |> t->scale;
+var chained = 5.0 |> t->scale |> t->offset;
+var mixed = 5.0 |> double_it |> t->offset;
+var withArg = 3.0 |> t->apply(7.0);
+```
+
+### Type aliases, const, and labeled loops
+
+```
+typedef int Count;
+typedef double Temperature;
+
+const int MAX_SIZE = 1024;
+
+outer: for (int i = 0; i < 10; i++)
+{
+    for (int j = 0; j < 10; j++)
+    {
+        if (j == 5) { break outer; }
+        if (j == 3) { continue outer; }
+    }
+}
+```
+
+### Static methods and access modifiers
+
+```
+class MathUtils
+{
+    static func factorial(int n) => int
+    {
+        if (n <= 1) { return 1; }
+        return n * MathUtils.factorial(n - 1);
+    }
+}
+
+class Animal
+{
+    private int secret;
+    protected int health;
+    public int age;
+
+    // private/protected enforced at compile time
 }
 ```
 
@@ -286,7 +426,7 @@ clang hello.ll -o hello.exe -O2
 ### Running the test suite
 
 ```bash
-# Full suite (30 feature tests + 21 stress tests)
+# Full suite (45 feature tests + stress tests)
 run_tests.bat           # Windows — from project root
 
 # Or individually:
@@ -295,7 +435,7 @@ run_all_tests.bat       # Feature tests only
 run_stress_tests.bat    # Stress tests only
 ```
 
-All 51 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to see program output, or `--code` to display Mingus source.
+All tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to see program output, or `--code` to display Mingus source.
 
 ## Feature Summary
 
@@ -303,41 +443,58 @@ All 51 tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to
 |---------|--------|
 | Integer and float arithmetic | ✓ |
 | Type inference (`var x = 42`) | ✓ |
-| Control flow (if/else, for, while, switch) | ✓ |
+| Const variables (`const int x = 42`) | ✓ |
+| Control flow (if/else, for, while, do-while, switch) | ✓ |
+| For loop multi-init (`for (int i = 0, int j = 10; ...)`) | ✓ |
+| Labeled break/continue (`outer: for ... break outer`) | ✓ |
 | Functions with typed parameters and returns | ✓ |
+| Expression-bodied functions (`func f() => int => expr`) | ✓ |
+| Function overloading (by parameter count and type) | ✓ |
 | Structs with methods and operator overloading | ✓ |
 | Classes with constructors and destructors (auto-generated if omitted) | ✓ |
+| Copy constructors (`constructor(T& other)`) | ✓ |
+| Move constructors (`constructor(T&& other)`, `move()`) | ✓ |
 | RAII (automatic destructor calls at scope exit) | ✓ |
 | Heap allocation (`new` / `delete`) | ✓ |
 | Inheritance with virtual dispatch | ✓ |
+| Virtual destructors with chaining (3+ levels) | ✓ |
+| Covariant return types | ✓ |
+| Abstract classes | ✓ |
+| Static methods (`ClassName.method()`) | ✓ |
+| Access modifiers (public, private, protected) | ✓ |
+| Bare field access (without `this.` prefix in methods) | ✓ |
 | Interfaces with multiple implementation | ✓ |
-| Pipe operator (`\|>`) | ✓ |
+| Interface parameters (auto-wrapping class ptr to fat ptr) | ✓ |
+| Pipe operator (`\|>`) with functions, methods, and extra args | ✓ |
 | Pattern matching with guards | ✓ |
-| Enums with underlying types | ✓ |
+| Enums with underlying types (`int`, `byte`, `string`) | ✓ |
 | Lambdas with C++ capture lists (`[=]`, `[&]`, `[x, &y]`) | ✓ |
 | By-reference captures — writes persist to outer scope | ✓ |
+| Self-capturing recursive closures | ✓ |
+| Closures with struct and reference parameters | ✓ |
+| Escape analysis for temporary closures | ✓ |
+| Nullable closures / fat pointer null comparison | ✓ |
 | Reference parameters (`func swap(int& a, int& b)`) | ✓ |
 | Higher-order functions and composition | ✓ |
-| Nullable closures (`(int) => int f = null;`) | ✓ |
-| Lambda literal assignment (`f = [=](int x) => { ... };`) | ✓ |
+| Tuples and destructuring | ✓ |
+| Typedef / type aliases | ✓ |
 | Pointers and raw blocks | ✓ |
 | Fixed-size arrays | ✓ |
+| Hex, binary, octal integer literals (`0xFF`, `0b1010`, `0o777`) | ✓ |
 | String operations (concat, compare, length, substring) | ✓ |
 | String interpolation (`"value=${x}"`) | ✓ |
 | C interop via `extern` declarations | ✓ |
+| Varargs (`extern func printf(string fmt, ...) => int`) | ✓ |
 | Multi-module imports | ✓ |
-| Tuples and destructuring | ✓ |
-| DynamicArray.map with lambda+pipe | ✓ |
-| Complex number operator arithmetic | ✓ |
-| Hex, binary, octal integer literals | ✓ |
+| Debug info generation (`--debug` flag) | ✓ |
 
 ## Architecture
 
 ```
 Source (.mingus)
   → ANTLR4 Lexer/Parser
-  → AST (62 node types)
-  → Semantic Analysis (4 passes)
+  → AST
+  → Semantic Analysis (multi-pass)
       Pass 1: Symbol table building (+ auto-generated constructors/destructors)
       Pass 2: Type resolution
       Pass 3: Type checking + overload resolution
@@ -352,11 +509,8 @@ Source (.mingus)
 - **Strings are heap-allocated** — no small string optimization.
 - **Single compilation unit** — each `.mingus` file compiles independently. Cross-file linking uses `import`.
 - **Error recovery is minimal** — the first parse or semantic error often stops compilation. Error messages lack detailed context.
-- **Temporary closure leak** — closures passed directly as function arguments without variable storage leak one refcount.
 - **Reference lifetime** — `[&x]` captures that escape their scope produce dangling references (programmer responsibility, same as C++).
-- **Closures with struct/ref params** — closures that take struct-typed or reference (`int&`) parameters have a calling convention mismatch at the IR level. Pass scalar fields instead, or use a non-closure function.
 - **Duplicate cross-module externs** — two modules declaring the same `extern func` causes linker errors. Declare externs in one module only and `import` them in others.
-
 
 # Detailed Current Status
 Under docs/MINGUS_STATUS.md is a detailed report about the current limitations and issues, with short- and long-term goals.
