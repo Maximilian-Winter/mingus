@@ -1,0 +1,7 @@
+=== Test 32: Closure + Ref Params ===
+after inc: 11
+after HOF inc: 12
+after addStep: 17
+after double: 34
+a after swap: 200
+b after swap: 100

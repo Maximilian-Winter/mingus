@@ -1,0 +1,57 @@
+// Test 31: Closures with Struct Parameters
+// Verifies closure calling convention handles struct params correctly.
+// V1 had ABI mismatch (mapType returned struct LLVM type, not ptr).
+// V2 uses mapParamType() which returns ptr for structs.
+
+module Test31 {
+    extern func printf(string fmt, double val) => int;
+    extern func puts(string s) => int;
+
+    struct Vec2 {
+        double x;
+        double y;
+    }
+
+    // Higher-order function that passes a struct to a closure
+    func applyToVec(Vec2 v, (Vec2) => double f) => double {
+        return f(v);
+    }
+
+    // Regular function taking struct for comparison
+    func magnitudeSq(Vec2 v) => double {
+        return v.x * v.x + v.y * v.y;
+    }
+
+    func main() => int {
+        puts("=== Test 31: Closure + Struct Params ===");
+
+        var p = Vec2();
+        p.x = 3.0;
+        p.y = 4.0;
+
+        // Test 1: Regular function with struct param (baseline)
+        var base = magnitudeSq(p);
+        printf("regular: %f\n", base);
+
+        // Test 2: Closure with struct param — direct call
+        var dist = [=](Vec2 v) => { return v.x * v.x + v.y * v.y; };
+        var r1 = dist(p);
+        printf("closure direct: %f\n", r1);
+
+        // Test 3: Closure with struct param — through higher-order function
+        var r2 = applyToVec(p, dist);
+        printf("closure HOF: %f\n", r2);
+
+        // Test 4: Lambda literal with struct param — passed directly as arg
+        var r3 = applyToVec(p, [](Vec2 v) => { return v.x + v.y; });
+        printf("lambda literal: %f\n", r3);
+
+        // Test 5: Closure capturing a value and taking struct param
+        var scale = 2.0;
+        var scaled = [=](Vec2 v) => { return (v.x + v.y) * scale; };
+        var r4 = scaled(p);
+        printf("capturing closure: %f\n", r4);
+
+        return 0;
+    }
+}

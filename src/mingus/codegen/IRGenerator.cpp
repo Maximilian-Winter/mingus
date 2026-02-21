@@ -2701,6 +2701,23 @@ void IRGenerator::visit(CallExpression& node) {
                                     llvm::Value* argPtr = emitLValue(*arg);
                                     if (argPtr) { ifaceArgs.push_back(argPtr); continue; }
                                 }
+                                // Interface parameter wrapping for interface dispatch args
+                                if (arg->resolvedType && i < methodSym->parameters.size()) {
+                                    auto* pType = methodSym->parameters[i]->getType().get();
+                                    auto* pPtr = pType ? pType->as<PointerTypeSymbol>() : nullptr;
+                                    if (pPtr && pPtr->baseType) {
+                                        auto* iSym = pPtr->baseType->as<InterfaceSymbol>();
+                                        if (iSym) {
+                                            auto* aPtrType = arg->resolvedType->as<PointerTypeSymbol>();
+                                            if (aPtrType && aPtrType->baseType) {
+                                                auto* cSym = aPtrType->baseType->as<ClassSymbol>();
+                                                if (cSym) {
+                                                    lastValue_ = emitWrapToInterfacePtr(lastValue_, cSym, iSym);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 ifaceArgs.push_back(lastValue_);
                             }
                         }
@@ -2803,6 +2820,14 @@ void IRGenerator::visit(CallExpression& node) {
                 lastValue_ = llvm::Constant::getNullValue(mapType(structSym));
                 return;
             }
+            else if (auto* funcSym = ident->resolvedSymbol->as<FunctionSymbol>()) {
+                // Regular function call — extract FunctionSymbol directly
+                calleeFuncSym = funcSym;
+                auto it = functionCache_.find(funcSym);
+                if (it != functionCache_.end()) {
+                    calleeFn = it->second;
+                }
+            }
             else if (!calleeFn && calleeFuncSym) {
                 auto it = functionCache_.find(calleeFuncSym);
                 if (it != functionCache_.end()) {
@@ -2819,6 +2844,25 @@ void IRGenerator::visit(CallExpression& node) {
     else {
         node.callee->accept(*this);
         calleeVal = lastValue_;
+    }
+
+    // Collect expected parameter types for interface wrapping
+    // From direct callee (FunctionSymbol) or closure type (FunctionTypeSymbol)
+    const std::vector<FunctionTypeSymbol::ParameterInfo>* expectedFuncParams = nullptr;
+    std::vector<std::shared_ptr<VariableSymbol>>* expectedFuncSymParams = nullptr;
+    if (calleeFuncSym) {
+        expectedFuncSymParams = &calleeFuncSym->parameters;
+        fprintf(stderr, "[DEBUG] calleeFuncSym=%s params=%zu\n",
+            calleeFuncSym->getName().c_str(), calleeFuncSym->parameters.size());
+    } else if (node.callee && node.callee->resolvedType) {
+        if (auto* fts = node.callee->resolvedType->as<FunctionTypeSymbol>()) {
+            expectedFuncParams = &fts->parameters;
+            fprintf(stderr, "[DEBUG] FunctionTypeSymbol params=%zu\n", fts->parameters.size());
+        } else {
+            fprintf(stderr, "[DEBUG] resolvedType is NOT FunctionTypeSymbol\n");
+        }
+    } else {
+        fprintf(stderr, "[DEBUG] no calleeFuncSym and no resolvedType\n");
     }
 
     // Emit arguments — V2 uses ArgumentsNode::isReference
@@ -2856,6 +2900,48 @@ void IRGenerator::visit(CallExpression& node) {
                         continue;
                     }
                 }
+
+                // Interface parameter wrapping: class* → interface fat pointer
+                // When expected param is Drawable* (interface) but arg is Dog* (class),
+                // wrap using emitWrapToInterfacePtr to create {objPtr, itablePtr} fat ptr.
+                TypeSymbol* expectedParamType = nullptr;
+                if (expectedFuncSymParams && argI < expectedFuncSymParams->size()) {
+                    expectedParamType = (*expectedFuncSymParams)[argI]->getType().get();
+                    fprintf(stderr, "[DEBUG]   arg%zu: expectedParam from FuncSym = %s\n",
+                        argI, expectedParamType ? expectedParamType->getTypeDescription().c_str() : "null");
+                } else if (expectedFuncParams && argI < expectedFuncParams->size()) {
+                    expectedParamType = (*expectedFuncParams)[argI].type.get();
+                    fprintf(stderr, "[DEBUG]   arg%zu: expectedParam from FuncType = %s\n",
+                        argI, expectedParamType ? expectedParamType->getTypeDescription().c_str() : "null");
+                } else {
+                    fprintf(stderr, "[DEBUG]   arg%zu: NO expected param info\n", argI);
+                }
+                if (expectedParamType && arg->resolvedType) {
+                    fprintf(stderr, "[DEBUG]   arg%zu: argType = %s\n",
+                        argI, arg->resolvedType->getTypeDescription().c_str());
+                    auto* ptrParam = expectedParamType->as<PointerTypeSymbol>();
+                    fprintf(stderr, "[DEBUG]   arg%zu: ptrParam = %p\n", argI, (void*)ptrParam);
+                    if (ptrParam && ptrParam->baseType) {
+                        auto* ifaceSym = ptrParam->baseType->as<InterfaceSymbol>();
+                        fprintf(stderr, "[DEBUG]   arg%zu: ifaceSym = %p (%s)\n",
+                            argI, (void*)ifaceSym,
+                            ptrParam->baseType->getTypeDescription().c_str());
+                        if (ifaceSym) {
+                            auto* argPtrType = arg->resolvedType->as<PointerTypeSymbol>();
+                            fprintf(stderr, "[DEBUG]   arg%zu: argPtrType = %p\n", argI, (void*)argPtrType);
+                            if (argPtrType && argPtrType->baseType) {
+                                auto* classSym = argPtrType->baseType->as<ClassSymbol>();
+                                fprintf(stderr, "[DEBUG]   arg%zu: classSym = %p\n", argI, (void*)classSym);
+                                if (classSym) {
+                                    fprintf(stderr, "[DEBUG]   WRAPPING %s -> %s\n",
+                                        classSym->getName().c_str(), ifaceSym->getName().c_str());
+                                    lastValue_ = emitWrapToInterfacePtr(lastValue_, classSym, ifaceSym);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // RAII-wrap temporary closure arguments
                 if (arg->resolvedType && arg->resolvedType->is<FunctionTypeSymbol>() &&
                     arg->is<LambdaExpression>()) {

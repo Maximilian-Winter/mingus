@@ -1,0 +1,6 @@
+=== Test 31: Closure + Struct Params ===
+regular: 25.000000
+closure direct: 25.000000
+closure HOF: 25.000000
+lambda literal: 7.000000
+capturing closure: 14.000000

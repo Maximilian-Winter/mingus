@@ -1,0 +1,67 @@
+// Test 33: Interface Parameters
+// Verifies passing class pointers as interface-typed function parameters.
+// The caller has Dog* (raw ptr), function expects Drawable* (fat ptr {obj, itable}).
+// Codegen must wrap class pointer to interface fat pointer at call site.
+
+module Test33 {
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    interface Printable {
+        func print() => void;
+    }
+
+    class Dog : Printable {
+        int id;
+        constructor(int i) {
+            this.id = i;
+        }
+        func print() => void {
+            printf("Dog #%d says Woof!\n", this.id);
+        }
+    }
+
+    class Cat : Printable {
+        int id;
+        constructor(int i) {
+            this.id = i;
+        }
+        func print() => void {
+            printf("Cat #%d says Meow!\n", this.id);
+        }
+    }
+
+    // Function taking interface parameter — this is the bug trigger
+    func printAnimal(Printable* p) => void {
+        p->print();
+    }
+
+    // Function taking two interface parameters
+    func printBoth(Printable* a, Printable* b) => void {
+        a->print();
+        b->print();
+    }
+
+    func main() => int {
+        puts("=== Test 33: Interface Params ===");
+
+        var dog = new Dog(1);
+        var cat = new Cat(2);
+
+        // Test 1: Pass class pointer where interface expected
+        printAnimal(dog);
+        printAnimal(cat);
+
+        // Test 2: Pass two different class pointers as interface params
+        printBoth(dog, cat);
+
+        // Test 3: Pass through an interface variable (should already work)
+        var p = dog;
+        printAnimal(p);
+
+        delete dog;
+        delete cat;
+
+        return 0;
+    }
+}

@@ -1,0 +1,57 @@
+[DEBUG] calleeFuncSym=printf params=2
+[DEBUG]   arg0: expectedParam from FuncSym = string
+[DEBUG]   arg0: argType = string
+[DEBUG]   arg0: ptrParam = 0000000000000000
+[DEBUG]   arg1: expectedParam from FuncSym = int
+[DEBUG]   arg1: argType = int
+[DEBUG]   arg1: ptrParam = 0000000000000000
+[DEBUG] calleeFuncSym=printf params=2
+[DEBUG]   arg0: expectedParam from FuncSym = string
+[DEBUG]   arg0: argType = string
+[DEBUG]   arg0: ptrParam = 0000000000000000
+[DEBUG]   arg1: expectedParam from FuncSym = int
+[DEBUG]   arg1: argType = int
+[DEBUG]   arg1: ptrParam = 0000000000000000
+[DEBUG] calleeFuncSym=puts params=1
+[DEBUG]   arg0: expectedParam from FuncSym = string
+[DEBUG]   arg0: argType = string
+[DEBUG]   arg0: ptrParam = 0000000000000000
+[DEBUG] calleeFuncSym=printAnimal params=1
+[DEBUG]   arg0: expectedParam from FuncSym = Printable*
+[DEBUG]   arg0: argType = Dog*
+[DEBUG]   arg0: ptrParam = 0000023A1F1F0B10
+[DEBUG]   arg0: ifaceSym = 0000023A1F1F09C0 (Printable)
+[DEBUG]   arg0: argPtrType = 0000023A1F1F0C60
+[DEBUG]   arg0: classSym = 0000023A1F500090
+[DEBUG]   WRAPPING Dog -> Printable
+[DEBUG] calleeFuncSym=printAnimal params=1
+[DEBUG]   arg0: expectedParam from FuncSym = Printable*
+[DEBUG]   arg0: argType = Cat*
+[DEBUG]   arg0: ptrParam = 0000023A1F1F0B10
+[DEBUG]   arg0: ifaceSym = 0000023A1F1F09C0 (Printable)
+[DEBUG]   arg0: argPtrType = 0000023A1F1F0DB0
+[DEBUG]   arg0: classSym = 0000023A1F500280
+[DEBUG]   WRAPPING Cat -> Printable
+[DEBUG] calleeFuncSym=printBoth params=2
+[DEBUG]   arg0: expectedParam from FuncSym = Printable*
+[DEBUG]   arg0: argType = Dog*
+[DEBUG]   arg0: ptrParam = 0000023A1F1F0B10
+[DEBUG]   arg0: ifaceSym = 0000023A1F1F09C0 (Printable)
+[DEBUG]   arg0: argPtrType = 0000023A1F1F0C60
+[DEBUG]   arg0: classSym = 0000023A1F500090
+[DEBUG]   WRAPPING Dog -> Printable
+[DEBUG]   arg1: expectedParam from FuncSym = Printable*
+[DEBUG]   arg1: argType = Cat*
+[DEBUG]   arg1: ptrParam = 0000023A1F1F0B10
+[DEBUG]   arg1: ifaceSym = 0000023A1F1F09C0 (Printable)
+[DEBUG]   arg1: argPtrType = 0000023A1F1F0DB0
+[DEBUG]   arg1: classSym = 0000023A1F500280
+[DEBUG]   WRAPPING Cat -> Printable
+[DEBUG] calleeFuncSym=printAnimal params=1
+[DEBUG]   arg0: expectedParam from FuncSym = Printable*
+[DEBUG]   arg0: argType = Dog*
+[DEBUG]   arg0: ptrParam = 0000023A1F1F0B10
+[DEBUG]   arg0: ifaceSym = 0000023A1F1F09C0 (Printable)
+[DEBUG]   arg0: argPtrType = 0000023A1F1F0C60
+[DEBUG]   arg0: classSym = 0000023A1F500090
+[DEBUG]   WRAPPING Dog -> Printable

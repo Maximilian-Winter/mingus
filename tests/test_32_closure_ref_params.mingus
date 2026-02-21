@@ -1,0 +1,52 @@
+// Test 32: Closures with Reference Parameters
+// Verifies closure calling convention handles ref params correctly.
+// V1 had ABI mismatch (FunctionType lacked isReference).
+// V2 carries isReference in FunctionTypeSymbol::ParameterInfo.
+
+module Test32 {
+    extern func printf(string fmt, int val) => int;
+    extern func puts(string s) => int;
+
+    // Higher-order function that passes a ref through a closure
+    func applyRef((int&) => void f, int& val) => void {
+        f(val);
+    }
+
+    func main() => int {
+        puts("=== Test 32: Closure + Ref Params ===");
+
+        // Test 1: Closure with ref param — direct call
+        var x = 10;
+        var inc = [](int& n) => { n = n + 1; };
+        inc(x);
+        printf("after inc: %d\n", x);
+
+        // Test 2: Closure with ref param — through HOF
+        applyRef(inc, x);
+        printf("after HOF inc: %d\n", x);
+
+        // Test 3: Closure capturing a value + ref param
+        var step = 5;
+        var addStep = [=](int& n) => { n = n + step; };
+        addStep(x);
+        printf("after addStep: %d\n", x);
+
+        // Test 4: Lambda literal with ref param — passed directly
+        applyRef([](int& n) => { n = n * 2; }, x);
+        printf("after double: %d\n", x);
+
+        // Test 5: Multiple ref params in closure
+        var swap = [](int& a, int& b) => {
+            var tmp = a;
+            a = b;
+            b = tmp;
+        };
+        var a = 100;
+        var b = 200;
+        swap(a, b);
+        printf("a after swap: %d\n", a);
+        printf("b after swap: %d\n", b);
+
+        return 0;
+    }
+}
