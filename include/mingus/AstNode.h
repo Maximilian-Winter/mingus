@@ -401,6 +401,7 @@ public:
     virtual void visit(ClassDeclaration& node) {}
     virtual void visit(InterfaceDeclaration& node) {}
     virtual void visit(ImportDeclaration& node) {}
+    virtual void visit(TypedefDeclaration& node) {}
 };
 
 } // namespace mingus

@@ -265,6 +265,22 @@ public:
 };
 
 // ============================================================================
+// TypeAliasSymbol — Type alias declarations (typedef)
+//
+// Not a TypeSymbol — a typedef is not a new type, just an alias.
+// During type resolution, encountering this symbol unwraps immediately
+// to the underlying aliasedType.
+// ============================================================================
+
+class TypeAliasSymbol : public BaseSymbol {
+public:
+    explicit TypeAliasSymbol(const std::string& name);
+
+    // The type this alias refers to (resolved in Pass 2)
+    TypeSymbolPtr aliasedType;
+};
+
+// ============================================================================
 // ModuleSymbol — Module declarations
 //
 // IS the module scope. All module-level functions, types, externs are

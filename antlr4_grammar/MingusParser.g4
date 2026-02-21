@@ -80,7 +80,16 @@ moduleDeclaration
     | functionDeclaration
     | externDeclaration
     | variableDeclaration
+    | typedefDeclaration
     | importDefinition
+    ;
+
+// ============================================================================
+// Typedef / Type Alias
+// ============================================================================
+
+typedefDeclaration
+    : DeclareTypedef typeIdentifier Identifier SemicolonSeparator
     ;
 
 // ============================================================================
@@ -304,6 +313,7 @@ statement
     | switchStatement
     | matchStatement
     | returnStatement
+    | labeledStatement
     | breakStatement
     | continueStatement
     | deleteStatement
@@ -478,12 +488,16 @@ returnStatement
     : FunctionReturn expression? SemicolonSeparator
     ;
 
+labeledStatement
+    : Identifier ColonOperator ( forStatement | whileStatement | doWhileStatement )
+    ;
+
 breakStatement
-    : Break SemicolonSeparator
+    : Break Identifier? SemicolonSeparator
     ;
 
 continueStatement
-    : Continue SemicolonSeparator
+    : Continue Identifier? SemicolonSeparator
     ;
 
 deleteStatement

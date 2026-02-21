@@ -1147,6 +1147,7 @@ void IRGenerator::visit(ModuleNode& node) {
 }
 
 void IRGenerator::visit(ImportDeclaration& /*node*/) {}
+void IRGenerator::visit(TypedefDeclaration& /*node*/) {}
 
 //================================================================================
 // Declaration visitors

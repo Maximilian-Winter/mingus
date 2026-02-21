@@ -72,6 +72,7 @@ public:
     std::any visitConstVariableDeclaration(MingusParser::ConstVariableDeclarationContext* ctx) override;
     std::any visitTupleDestructuring(MingusParser::TupleDestructuringContext* ctx) override;
     std::any visitTupleDestructureElement(MingusParser::TupleDestructureElementContext* ctx) override;
+    std::any visitTypedefDeclaration(MingusParser::TypedefDeclarationContext* ctx) override;
 
     // Visitor overrides — Statements
     std::any visitBlock(MingusParser::BlockContext* ctx) override;

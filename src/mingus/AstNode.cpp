@@ -84,5 +84,6 @@ void StructDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void ClassDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void InterfaceDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void ImportDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
+void TypedefDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 
 } // namespace mingus

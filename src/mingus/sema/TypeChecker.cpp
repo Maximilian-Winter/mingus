@@ -367,6 +367,7 @@ void TypeChecker::visit(InterfaceDeclaration& node) {
 }
 
 void TypeChecker::visit(ImportDeclaration& node) {}
+void TypeChecker::visit(TypedefDeclaration& node) {}
 
 // ============================================================================
 // Statements

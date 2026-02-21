@@ -269,6 +269,11 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
                 auto var = anyToNode<VariableDeclaration>(
                     visitVariableDeclaration(declCtx->variableDeclaration()));
                 if (var) mod->declarations.push_back(var);
+
+            } else if (declCtx->typedefDeclaration()) {
+                auto td = anyToNode<TypedefDeclaration>(
+                    visitTypedefDeclaration(declCtx->typedefDeclaration()));
+                if (td) mod->declarations.push_back(td);
             }
         }
     }
@@ -311,6 +316,28 @@ std::any ASTGenerator::visitImportDefinition(
 
 std::any ASTGenerator::visitImportTarget(MingusParser::ImportTargetContext* ctx) {
     return visitChildren(ctx);
+}
+
+//================================================================================
+// Typedef Declaration
+//================================================================================
+
+std::any ASTGenerator::visitTypedefDeclaration(
+    MingusParser::TypedefDeclarationContext* ctx)
+{
+    auto node = std::make_shared<TypedefDeclaration>();
+    node->debugInfo = makeDebugInfo(ctx);
+
+    // Grammar: DeclareTypedef typeIdentifier Identifier SemicolonSeparator
+    if (ctx->typeIdentifier()) {
+        node->underlyingType = anyToNode<TypeNode>(
+            visitTypeIdentifier(ctx->typeIdentifier()));
+    }
+    if (ctx->Identifier()) {
+        node->aliasName = ctx->Identifier()->getText();
+    }
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(node));
 }
 
 //================================================================================

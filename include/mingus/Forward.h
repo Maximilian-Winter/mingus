@@ -47,6 +47,7 @@ class ClassSymbol;
 class StructSymbol;
 class EnumSymbol;
 class InterfaceSymbol;
+class TypeAliasSymbol;
 class ModuleSymbol;
 
 // ---- Infrastructure ----
@@ -100,6 +101,7 @@ class IfStatement;
 class ForStatement;
 class WhileStatement;
 class DoWhileStatement;
+class LabeledStatement;
 class BreakStatement;
 class ContinueStatement;
 class DeleteStatement;
@@ -118,6 +120,7 @@ class StructDeclaration;
 class ClassDeclaration;
 class InterfaceDeclaration;
 class ImportDeclaration;
+class TypedefDeclaration;
 class EnumMemberNode;
 
 // ---- AST pattern nodes (for match expressions) ----

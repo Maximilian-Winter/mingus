@@ -28,6 +28,8 @@ public:
 
     virtual std::any visitModuleDeclaration(MingusParser::ModuleDeclarationContext *context) = 0;
 
+    virtual std::any visitTypedefDeclaration(MingusParser::TypedefDeclarationContext *context) = 0;
+
     virtual std::any visitImportDefinition(MingusParser::ImportDefinitionContext *context) = 0;
 
     virtual std::any visitImportTarget(MingusParser::ImportTargetContext *context) = 0;

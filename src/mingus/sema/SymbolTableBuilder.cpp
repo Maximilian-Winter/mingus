@@ -899,4 +899,12 @@ void SymbolTableBuilder::visit(ImportDeclaration& node) {
     setScope(node);
 }
 
+void SymbolTableBuilder::visit(TypedefDeclaration& node) {
+    setScope(node);
+
+    auto aliasSym = std::make_shared<TypeAliasSymbol>(node.aliasName);
+    symbolTable_.defineSymbol(aliasSym);
+    node.resolvedTypeAlias = aliasSym;
+}
+
 } // namespace mingus

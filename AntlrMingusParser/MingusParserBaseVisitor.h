@@ -33,6 +33,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitTypedefDeclaration(MingusParser::TypedefDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitImportDefinition(MingusParser::ImportDefinitionContext *ctx) override {
     return visitChildren(ctx);
   }

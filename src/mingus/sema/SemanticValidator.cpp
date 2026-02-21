@@ -679,6 +679,7 @@ void SemanticValidator::visit(InterfaceDeclaration& node) {
 }
 
 void SemanticValidator::visit(ImportDeclaration& node) {}
+void SemanticValidator::visit(TypedefDeclaration& node) {}
 
 // ============================================================================
 // Statements

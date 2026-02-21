@@ -17,74 +17,74 @@ public:
     DeclareFunction = 5, DeclareConstructor = 6, DeclareDestructor = 7, 
     SuperKeyword = 8, DeclareOperator = 9, DeclareForLoop = 10, DeclareWhileLoop = 11, 
     DeclareDoLoop = 12, DeclareStatic = 13, DeclareAbstract = 14, DeclareInterface = 15, 
-    DeclarePublic = 16, DeclarePrivate = 17, DeclareProtected = 18, ExternKeyword = 19, 
-    RawKeyword = 20, ControlFlowIf = 21, ControlFlowElse = 22, ControlFlowSwitch = 23, 
-    ControlFlowCase = 24, ControlFlowDefault = 25, ControlFlowMatch = 26, 
-    FunctionReturn = 27, Break = 28, Continue = 29, DeclareVariable = 30, 
-    DeclareConst = 31, NewKeyword = 32, DeleteKeyword = 33, NullReference = 34, 
-    ThisReference = 35, ImportDirective = 36, FromDirective = 37, AsKeyword = 38, 
-    SizeOfKeyword = 39, AlignOfKeyword = 40, IntegerType = 41, DoubleType = 42, 
-    FloatType = 43, ByteType = 44, StringType = 45, CharType = 46, BoolType = 47, 
-    VoidType = 48, BooleanLiteral = 49, AssignOperator = 50, PlusAssignOperator = 51, 
-    MinusAssignOperator = 52, MultiplyAssignOperator = 53, DivideAssignOperator = 54, 
-    ModuloAssignOperator = 55, BitwiseAndAssignOperator = 56, BitwiseOrAssignOperator = 57, 
-    BitwiseXorAssignOperator = 58, BitwiseLeftShiftAssignOperator = 59, 
-    BitwiseRightShiftAssignOperator = 60, LogicalOrOperator = 61, LogicalAndOperator = 62, 
-    UnequalOperator = 63, EqualOperator = 64, GreaterEqualOperator = 65, 
-    SmallerEqualOperator = 66, GreaterOperator = 67, SmallerOperator = 68, 
-    ShiftLeftOperator = 69, ShiftRightOperator = 70, PlusPlusOperator = 71, 
-    MinusMinusOperator = 72, PlusOperator = 73, MinusOperator = 74, StarOperator = 75, 
-    DivideOperator = 76, ModuloOperator = 77, LogicalNegationOperator = 78, 
-    ComplimentOperator = 79, SingleAndOperator = 80, BitwiseXorOperator = 81, 
-    BitwiseOrOperator = 82, PipeOperator = 83, ArrowOperator = 84, ReferenceAccessOperator = 85, 
-    DotOperator = 86, Ellipsis = 87, DotDotOperator = 88, QuestionMarkOperator = 89, 
-    ColonOperator = 90, SemicolonSeparator = 91, CommaSeparator = 92, UnderscoreWildcard = 93, 
-    OpeningRoundBracket = 94, ClosingRoundBracket = 95, SquareBracketLeft = 96, 
-    SquareBracketRight = 97, FloatingLiteral = 98, IntegerLiteral = 99, 
-    CharLiteral = 100, Identifier = 101, BLOCK_COMMENT = 102, LINE_COMMENT = 103, 
-    WS = 104, DQUOTE = 105, CURLY_L = 106, CURLY_R = 107, TEXT = 108, BACKSLASH_PAREN = 109, 
-    ESCAPE_SEQUENCE = 110
+    DeclareTypedef = 16, DeclarePublic = 17, DeclarePrivate = 18, DeclareProtected = 19, 
+    ExternKeyword = 20, RawKeyword = 21, ControlFlowIf = 22, ControlFlowElse = 23, 
+    ControlFlowSwitch = 24, ControlFlowCase = 25, ControlFlowDefault = 26, 
+    ControlFlowMatch = 27, FunctionReturn = 28, Break = 29, Continue = 30, 
+    DeclareVariable = 31, DeclareConst = 32, NewKeyword = 33, DeleteKeyword = 34, 
+    NullReference = 35, ThisReference = 36, ImportDirective = 37, FromDirective = 38, 
+    AsKeyword = 39, SizeOfKeyword = 40, AlignOfKeyword = 41, IntegerType = 42, 
+    DoubleType = 43, FloatType = 44, ByteType = 45, StringType = 46, CharType = 47, 
+    BoolType = 48, VoidType = 49, BooleanLiteral = 50, AssignOperator = 51, 
+    PlusAssignOperator = 52, MinusAssignOperator = 53, MultiplyAssignOperator = 54, 
+    DivideAssignOperator = 55, ModuloAssignOperator = 56, BitwiseAndAssignOperator = 57, 
+    BitwiseOrAssignOperator = 58, BitwiseXorAssignOperator = 59, BitwiseLeftShiftAssignOperator = 60, 
+    BitwiseRightShiftAssignOperator = 61, LogicalOrOperator = 62, LogicalAndOperator = 63, 
+    UnequalOperator = 64, EqualOperator = 65, GreaterEqualOperator = 66, 
+    SmallerEqualOperator = 67, GreaterOperator = 68, SmallerOperator = 69, 
+    ShiftLeftOperator = 70, ShiftRightOperator = 71, PlusPlusOperator = 72, 
+    MinusMinusOperator = 73, PlusOperator = 74, MinusOperator = 75, StarOperator = 76, 
+    DivideOperator = 77, ModuloOperator = 78, LogicalNegationOperator = 79, 
+    ComplimentOperator = 80, SingleAndOperator = 81, BitwiseXorOperator = 82, 
+    BitwiseOrOperator = 83, PipeOperator = 84, ArrowOperator = 85, ReferenceAccessOperator = 86, 
+    DotOperator = 87, Ellipsis = 88, DotDotOperator = 89, QuestionMarkOperator = 90, 
+    ColonOperator = 91, SemicolonSeparator = 92, CommaSeparator = 93, UnderscoreWildcard = 94, 
+    OpeningRoundBracket = 95, ClosingRoundBracket = 96, SquareBracketLeft = 97, 
+    SquareBracketRight = 98, FloatingLiteral = 99, IntegerLiteral = 100, 
+    CharLiteral = 101, Identifier = 102, BLOCK_COMMENT = 103, LINE_COMMENT = 104, 
+    WS = 105, DQUOTE = 106, CURLY_L = 107, CURLY_R = 108, TEXT = 109, BACKSLASH_PAREN = 110, 
+    ESCAPE_SEQUENCE = 111
   };
 
   enum {
     RuleProgram = 0, RuleModule = 1, RuleModuleBlock = 2, RuleModuleDeclaration = 3, 
-    RuleImportDefinition = 4, RuleImportTarget = 5, RuleExternDeclaration = 6, 
-    RuleExternBody = 7, RuleExternFunctionDeclaration = 8, RuleClassDeclaration = 9, 
-    RuleClassBlock = 10, RuleClassMember = 11, RuleConstructorDeclaration = 12, 
-    RuleDestructorDeclaration = 13, RuleOperatorDeclaration = 14, RuleOverloadableOperator = 15, 
-    RuleInheritance = 16, RuleInterfaceDeclaration = 17, RuleInterfaceBlock = 18, 
-    RuleInterfaceMember = 19, RuleStructDeclaration = 20, RuleStructBlock = 21, 
-    RuleStructMember = 22, RuleEnumDeclaration = 23, RuleEnumMember = 24, 
-    RuleFunctionDeclaration = 25, RuleReturnType = 26, RuleDefinitionParameters = 27, 
-    RuleParameterList = 28, RuleParameter = 29, RuleVariableDeclaration = 30, 
-    RuleConstVariableDeclaration = 31, RuleTypedVariableDeclaration = 32, 
-    RuleInferredVariableDeclaration = 33, RuleTupleDestructuring = 34, RuleTupleDestructureElement = 35, 
-    RuleStatement = 36, RuleBlock = 37, RuleExprStatement = 38, RuleRawBlock = 39, 
-    RuleIfStatement = 40, RuleElseIfClause = 41, RuleElseClause = 42, RuleSwitchStatement = 43, 
-    RuleSwitchCase = 44, RuleSwitchDefault = 45, RuleMatchStatement = 46, 
-    RuleMatchExpression = 47, RuleMatchArm = 48, RuleMatchBody = 49, RulePattern = 50, 
-    RuleGuardedPattern = 51, RuleBasePattern = 52, RuleLiteralPattern = 53, 
-    RuleRangePattern = 54, RuleWildcardPattern = 55, RuleBindingPattern = 56, 
-    RuleTuplePattern = 57, RuleForStatement = 58, RuleForInitializer = 59, 
-    RuleLocalVarInitializer = 60, RuleLocalVarDeclaration = 61, RuleForIterator = 62, 
-    RuleWhileStatement = 63, RuleDoWhileStatement = 64, RuleReturnStatement = 65, 
-    RuleBreakStatement = 66, RuleContinueStatement = 67, RuleDeleteStatement = 68, 
-    RuleExpression = 69, RuleAssignment = 70, RuleAssignmentOperator = 71, 
-    RuleLambdaExpression = 72, RuleCaptureList = 73, RuleCaptureDefault = 74, 
-    RuleCaptureItem = 75, RuleLambdaParameterList = 76, RuleLambdaParameter = 77, 
-    RulePipe = 78, RulePipeTarget = 79, RuleTernary = 80, RuleLogicOr = 81, 
-    RuleLogicAnd = 82, RuleBitwiseOr = 83, RuleBitwiseXor = 84, RuleBitwiseAnd = 85, 
-    RuleEquality = 86, RuleRelational = 87, RuleShift = 88, RuleAdditive = 89, 
-    RuleMultiplicative = 90, RuleCastExpression = 91, RuleUnaryExpression = 92, 
-    RulePostfixExpression = 93, RulePrimaryExpression = 94, RulePostfixOperation = 95, 
-    RuleNewExpression = 96, RuleCallArguments = 97, RuleArgumentList = 98, 
-    RuleElementAccess = 99, RuleMemberAccess = 100, RuleTupleExpression = 101, 
-    RuleTypeIdentifier = 102, RulePrimitiveType = 103, RuleFunctionType = 104, 
-    RuleTypeList = 105, RuleTupleType = 106, RuleTypeModifier = 107, RuleReferenceLevel = 108, 
-    RuleArrayDimension = 109, RulePointerLevel = 110, RuleAccessModifier = 111, 
-    RuleStaticModifier = 112, RuleAbstractModifier = 113, RuleQualifiedName = 114, 
-    RulePrefixOperator = 115, RuleIncrementDecrementOperator = 116, RuleTypeSizeOrAlign = 117, 
-    RuleString = 118, RuleStringPart = 119
+    RuleTypedefDeclaration = 4, RuleImportDefinition = 5, RuleImportTarget = 6, 
+    RuleExternDeclaration = 7, RuleExternBody = 8, RuleExternFunctionDeclaration = 9, 
+    RuleClassDeclaration = 10, RuleClassBlock = 11, RuleClassMember = 12, 
+    RuleConstructorDeclaration = 13, RuleDestructorDeclaration = 14, RuleOperatorDeclaration = 15, 
+    RuleOverloadableOperator = 16, RuleInheritance = 17, RuleInterfaceDeclaration = 18, 
+    RuleInterfaceBlock = 19, RuleInterfaceMember = 20, RuleStructDeclaration = 21, 
+    RuleStructBlock = 22, RuleStructMember = 23, RuleEnumDeclaration = 24, 
+    RuleEnumMember = 25, RuleFunctionDeclaration = 26, RuleReturnType = 27, 
+    RuleDefinitionParameters = 28, RuleParameterList = 29, RuleParameter = 30, 
+    RuleVariableDeclaration = 31, RuleConstVariableDeclaration = 32, RuleTypedVariableDeclaration = 33, 
+    RuleInferredVariableDeclaration = 34, RuleTupleDestructuring = 35, RuleTupleDestructureElement = 36, 
+    RuleStatement = 37, RuleBlock = 38, RuleExprStatement = 39, RuleRawBlock = 40, 
+    RuleIfStatement = 41, RuleElseIfClause = 42, RuleElseClause = 43, RuleSwitchStatement = 44, 
+    RuleSwitchCase = 45, RuleSwitchDefault = 46, RuleMatchStatement = 47, 
+    RuleMatchExpression = 48, RuleMatchArm = 49, RuleMatchBody = 50, RulePattern = 51, 
+    RuleGuardedPattern = 52, RuleBasePattern = 53, RuleLiteralPattern = 54, 
+    RuleRangePattern = 55, RuleWildcardPattern = 56, RuleBindingPattern = 57, 
+    RuleTuplePattern = 58, RuleForStatement = 59, RuleForInitializer = 60, 
+    RuleLocalVarInitializer = 61, RuleLocalVarDeclaration = 62, RuleForIterator = 63, 
+    RuleWhileStatement = 64, RuleDoWhileStatement = 65, RuleReturnStatement = 66, 
+    RuleBreakStatement = 67, RuleContinueStatement = 68, RuleDeleteStatement = 69, 
+    RuleExpression = 70, RuleAssignment = 71, RuleAssignmentOperator = 72, 
+    RuleLambdaExpression = 73, RuleCaptureList = 74, RuleCaptureDefault = 75, 
+    RuleCaptureItem = 76, RuleLambdaParameterList = 77, RuleLambdaParameter = 78, 
+    RulePipe = 79, RulePipeTarget = 80, RuleTernary = 81, RuleLogicOr = 82, 
+    RuleLogicAnd = 83, RuleBitwiseOr = 84, RuleBitwiseXor = 85, RuleBitwiseAnd = 86, 
+    RuleEquality = 87, RuleRelational = 88, RuleShift = 89, RuleAdditive = 90, 
+    RuleMultiplicative = 91, RuleCastExpression = 92, RuleUnaryExpression = 93, 
+    RulePostfixExpression = 94, RulePrimaryExpression = 95, RulePostfixOperation = 96, 
+    RuleNewExpression = 97, RuleCallArguments = 98, RuleArgumentList = 99, 
+    RuleElementAccess = 100, RuleMemberAccess = 101, RuleTupleExpression = 102, 
+    RuleTypeIdentifier = 103, RulePrimitiveType = 104, RuleFunctionType = 105, 
+    RuleTypeList = 106, RuleTupleType = 107, RuleTypeModifier = 108, RuleReferenceLevel = 109, 
+    RuleArrayDimension = 110, RulePointerLevel = 111, RuleAccessModifier = 112, 
+    RuleStaticModifier = 113, RuleAbstractModifier = 114, RuleQualifiedName = 115, 
+    RulePrefixOperator = 116, RuleIncrementDecrementOperator = 117, RuleTypeSizeOrAlign = 118, 
+    RuleString = 119, RuleStringPart = 120
   };
 
   explicit MingusParser(antlr4::TokenStream *input);
@@ -108,6 +108,7 @@ public:
   class ModuleContext;
   class ModuleBlockContext;
   class ModuleDeclarationContext;
+  class TypedefDeclarationContext;
   class ImportDefinitionContext;
   class ImportTargetContext;
   class ExternDeclarationContext;
@@ -282,6 +283,7 @@ public:
     FunctionDeclarationContext *functionDeclaration();
     ExternDeclarationContext *externDeclaration();
     VariableDeclarationContext *variableDeclaration();
+    TypedefDeclarationContext *typedefDeclaration();
     ImportDefinitionContext *importDefinition();
 
 
@@ -290,6 +292,22 @@ public:
   };
 
   ModuleDeclarationContext* moduleDeclaration();
+
+  class  TypedefDeclarationContext : public antlr4::ParserRuleContext {
+  public:
+    TypedefDeclarationContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *DeclareTypedef();
+    TypeIdentifierContext *typeIdentifier();
+    antlr4::tree::TerminalNode *Identifier();
+    antlr4::tree::TerminalNode *SemicolonSeparator();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  TypedefDeclarationContext* typedefDeclaration();
 
   class  ImportDefinitionContext : public antlr4::ParserRuleContext {
   public:

@@ -1,0 +1,66 @@
+// Test 41: typedef / Type Alias
+// Verifies typedef declarations that create named aliases for types.
+
+module Test41
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Primitive typedef ---
+    typedef int Count;
+    typedef double Temperature;
+    typedef bool Flag;
+
+    // --- Struct with typedef fields ---
+    struct Point
+    {
+        Temperature x;
+        Temperature y;
+    }
+
+    // --- Function using typedef ---
+    func addCounts(Count a, Count b) => Count
+    {
+        return a + b;
+    }
+
+    func toFahrenheit(Temperature celsius) => Temperature
+    {
+        return celsius * 1.8 + 32.0;
+    }
+
+    func main() => int
+    {
+        // --- 1. Primitive typedef ---
+        Count items = 42;
+        printf("items: %d\n", items);
+
+        Temperature temp = 100.0;
+        printf("temp: %.1f\n", temp);
+
+        Flag active = true;
+        if (active) {
+            printf("active: yes\n");
+        }
+
+        // --- 2. Typedef in function params and return ---
+        Count total = addCounts(10, 20);
+        printf("total: %d\n", total);
+
+        Temperature f = toFahrenheit(100.0);
+        printf("100C = %.1fF\n", f);
+
+        // --- 3. Typedef in struct fields ---
+        Point p;
+        p.x = 3.14;
+        p.y = 2.71;
+        printf("point: %.2f, %.2f\n", p.x, p.y);
+
+        // --- 4. Typedef mixed with original type ---
+        int original = 5;
+        Count aliased = original;
+        printf("original=%d aliased=%d\n", original, aliased);
+
+        printf("done\n");
+        return 0;
+    }
+}

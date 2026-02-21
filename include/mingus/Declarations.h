@@ -244,4 +244,19 @@ public:
     bool isWholeModule = false;
 };
 
+// ============================================================================
+// TypedefDeclaration — typedef BaseType AliasName;
+// ============================================================================
+
+class TypedefDeclaration : public DeclarationBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string aliasName;                   // The new name being defined
+    std::shared_ptr<TypeNode> underlyingType; // The type being aliased
+
+    // Resolved in Pass 1
+    std::shared_ptr<TypeAliasSymbol> resolvedTypeAlias;
+};
+
 } // namespace mingus

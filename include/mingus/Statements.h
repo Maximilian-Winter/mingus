@@ -101,21 +101,34 @@ public:
 };
 
 // ============================================================================
-// BreakStatement — break;
+// LabeledStatement — label: for/while/do-while
+// ============================================================================
+
+class LabeledStatement : public StatementBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::string label;
+    std::shared_ptr<StatementBaseNode> statement;  // must be a loop
+};
+
+// ============================================================================
+// BreakStatement — break; or break label;
 // ============================================================================
 
 class BreakStatement : public StatementBaseNode {
 public:
     void accept(ASTVisitor& visitor) override;
+    std::string label;  // empty for unlabeled
 };
 
 // ============================================================================
-// ContinueStatement — continue;
+// ContinueStatement — continue; or continue label;
 // ============================================================================
 
 class ContinueStatement : public StatementBaseNode {
 public:
     void accept(ASTVisitor& visitor) override;
+    std::string label;  // empty for unlabeled
 };
 
 // ============================================================================

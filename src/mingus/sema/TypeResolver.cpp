@@ -158,6 +158,12 @@ TypeSymbolPtr TypeResolver::resolveNamedType(
         if (scope) {
             auto sym = scope->resolve(name);
             if (sym) {
+                // Typedef: unwrap to the aliased type
+                if (auto* aliasSym = sym->as<TypeAliasSymbol>()) {
+                    if (aliasSym->aliasedType) return aliasSym->aliasedType;
+                    errors_.error("typedef '" + name + "' has unresolved type", loc);
+                    return symbolTable_.getErrorType();
+                }
                 if (auto* typeSym = sym->as<TypeSymbol>()) {
                     return std::dynamic_pointer_cast<TypeSymbol>(sym);
                 }
@@ -463,6 +469,27 @@ void TypeResolver::visit(InterfaceDeclaration& node) {
 
 void TypeResolver::visit(ImportDeclaration& node) {
     // Nothing to resolve — imports handled in Pass 1
+}
+
+void TypeResolver::visit(TypedefDeclaration& node) {
+    if (!node.resolvedTypeAlias) return;
+
+    // Resolve the underlying type
+    if (node.underlyingType) {
+        auto resolved = resolveTypeNode(node.underlyingType);
+        node.resolvedTypeAlias->aliasedType = resolved
+            ? resolved : symbolTable_.getErrorType();
+    } else {
+        errors_.error("typedef missing underlying type", node.debugInfo);
+        node.resolvedTypeAlias->aliasedType = symbolTable_.getErrorType();
+    }
+
+    // Register the alias name in the type registry so resolveType(name) works
+    if (node.resolvedTypeAlias->aliasedType &&
+        !node.resolvedTypeAlias->aliasedType->is<ErrorTypeSymbol>()) {
+        symbolTable_.registerType(node.aliasName,
+                                   node.resolvedTypeAlias->aliasedType);
+    }
 }
 
 // ============================================================================

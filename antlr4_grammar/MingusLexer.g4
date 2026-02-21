@@ -33,6 +33,7 @@ DeclareDoLoop:       'do';
 DeclareStatic:       'static';
 DeclareAbstract:     'abstract';
 DeclareInterface:    'interface';
+DeclareTypedef:      'typedef';
 DeclarePublic:       'public';
 DeclarePrivate:      'private';
 DeclareProtected:    'protected';
