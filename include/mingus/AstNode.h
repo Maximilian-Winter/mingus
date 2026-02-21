@@ -381,6 +381,7 @@ public:
     virtual void visit(IfStatement& node) {}
     virtual void visit(ForStatement& node) {}
     virtual void visit(WhileStatement& node) {}
+    virtual void visit(DoWhileStatement& node) {}
     virtual void visit(BreakStatement& node) {}
     virtual void visit(ContinueStatement& node) {}
     virtual void visit(DeleteStatement& node) {}

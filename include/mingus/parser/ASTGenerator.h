@@ -86,6 +86,7 @@ public:
     std::any visitSwitchDefault(MingusParser::SwitchDefaultContext* ctx) override;
     std::any visitForStatement(MingusParser::ForStatementContext* ctx) override;
     std::any visitWhileStatement(MingusParser::WhileStatementContext* ctx) override;
+    std::any visitDoWhileStatement(MingusParser::DoWhileStatementContext* ctx) override;
     std::any visitBreakStatement(MingusParser::BreakStatementContext* ctx) override;
     std::any visitContinueStatement(MingusParser::ContinueStatementContext* ctx) override;
     std::any visitDeleteStatement(MingusParser::DeleteStatementContext* ctx) override;

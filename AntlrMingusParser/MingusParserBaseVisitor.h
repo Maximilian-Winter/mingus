@@ -273,6 +273,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitDoWhileStatement(MingusParser::DoWhileStatementContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitReturnStatement(MingusParser::ReturnStatementContext *ctx) override {
     return visitChildren(ctx);
   }

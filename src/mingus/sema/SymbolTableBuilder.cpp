@@ -694,6 +694,12 @@ void SymbolTableBuilder::visit(WhileStatement& node) {
     if (node.body) node.body->accept(*this);
 }
 
+void SymbolTableBuilder::visit(DoWhileStatement& node) {
+    setScope(node);
+    if (node.body) node.body->accept(*this);
+    if (node.condition) node.condition->accept(*this);
+}
+
 void SymbolTableBuilder::visit(BreakStatement& node) { setScope(node); }
 void SymbolTableBuilder::visit(ContinueStatement& node) { setScope(node); }
 

@@ -506,6 +506,11 @@ void TypeResolver::visit(WhileStatement& node) {
     if (node.body) node.body->accept(*this);
 }
 
+void TypeResolver::visit(DoWhileStatement& node) {
+    if (node.body) node.body->accept(*this);
+    if (node.condition) node.condition->accept(*this);
+}
+
 void TypeResolver::visit(BreakStatement& node) {}
 void TypeResolver::visit(ContinueStatement& node) {}
 

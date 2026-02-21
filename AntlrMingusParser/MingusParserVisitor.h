@@ -148,6 +148,8 @@ public:
 
     virtual std::any visitWhileStatement(MingusParser::WhileStatementContext *context) = 0;
 
+    virtual std::any visitDoWhileStatement(MingusParser::DoWhileStatementContext *context) = 0;
+
     virtual std::any visitReturnStatement(MingusParser::ReturnStatementContext *context) = 0;
 
     virtual std::any visitBreakStatement(MingusParser::BreakStatementContext *context) = 0;

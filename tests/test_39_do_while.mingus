@@ -1,0 +1,75 @@
+// Test 39: do-while Loop
+// Verifies do-while loop semantics:
+//   - Body executes at least once (even when condition is false)
+//   - Normal looping with condition
+//   - Break inside do-while
+//   - Continue inside do-while
+//   - Nested do-while
+
+module Test39
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        // --- 1. Basic do-while: count to 5 ---
+        var i = 0;
+        do {
+            i++;
+        } while (i < 5);
+        printf("count to 5: %d\n", i);
+
+        // --- 2. Body executes once even when condition is false ---
+        var once = 0;
+        do {
+            once = 42;
+        } while (false);
+        printf("once: %d\n", once);
+
+        // --- 3. Countdown with do-while ---
+        var n = 3;
+        do {
+            printf("n=%d\n", n);
+            n--;
+        } while (n > 0);
+
+        // --- 4. Break inside do-while ---
+        var sum = 0;
+        var j = 0;
+        do {
+            j++;
+            if (j == 4) {
+                break;
+            }
+            sum = sum + j;
+        } while (j < 10);
+        printf("break sum: %d\n", sum);
+
+        // --- 5. Continue inside do-while ---
+        var total = 0;
+        var k = 0;
+        do {
+            k++;
+            if (k == 3) {
+                continue;
+            }
+            total = total + k;
+        } while (k < 5);
+        printf("continue total: %d\n", total);
+
+        // --- 6. Nested do-while ---
+        var outer = 0;
+        var inner_sum = 0;
+        do {
+            outer++;
+            var inner = 0;
+            do {
+                inner++;
+                inner_sum = inner_sum + 1;
+            } while (inner < 3);
+        } while (outer < 2);
+        printf("nested: outer=%d inner_sum=%d\n", outer, inner_sum);
+
+        return 0;
+    }
+}

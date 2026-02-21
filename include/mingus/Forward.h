@@ -99,6 +99,7 @@ class ReturnStatement;
 class IfStatement;
 class ForStatement;
 class WhileStatement;
+class DoWhileStatement;
 class BreakStatement;
 class ContinueStatement;
 class DeleteStatement;

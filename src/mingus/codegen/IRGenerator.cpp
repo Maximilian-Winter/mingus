@@ -1772,6 +1772,45 @@ void IRGenerator::visit(WhileStatement& node) {
     builder_.SetInsertPoint(exitBB);
 }
 
+void IRGenerator::visit(DoWhileStatement& node) {
+    auto* bodyBB = llvm::BasicBlock::Create(context_, "dowhile.body", currentFunction_);
+    auto* condBB = llvm::BasicBlock::Create(context_, "dowhile.cond", currentFunction_);
+    auto* exitBB = llvm::BasicBlock::Create(context_, "dowhile.exit", currentFunction_);
+
+    // Body executes first — the essence of do-while
+    builder_.CreateBr(bodyBB);
+
+    builder_.SetInsertPoint(bodyBB);
+    auto* prevExitBlock = loopExitBlock_;
+    auto* prevIterBlock = loopIterBlock_;
+    auto prevLoopRAIIDepth = loopRAIIScopeDepth_;
+    loopExitBlock_ = exitBB;
+    loopIterBlock_ = condBB;
+    loopRAIIScopeDepth_ = raiiScopeStack_.size();
+
+    node.body->accept(*this);
+
+    loopExitBlock_ = prevExitBlock;
+    loopIterBlock_ = prevIterBlock;
+    loopRAIIScopeDepth_ = prevLoopRAIIDepth;
+
+    if (!builder_.GetInsertBlock()->getTerminator())
+        builder_.CreateBr(condBB);
+
+    // Condition evaluated after body
+    builder_.SetInsertPoint(condBB);
+    node.condition->accept(*this);
+    llvm::Value* condVal = lastValue_;
+    if (!condVal) condVal = llvm::ConstantInt::getFalse(context_);
+    if (!condVal->getType()->isIntegerTy(1)) {
+        condVal = builder_.CreateICmpNE(condVal,
+            llvm::ConstantInt::get(condVal->getType(), 0), "dowhilecond");
+    }
+    builder_.CreateCondBr(condVal, bodyBB, exitBB);
+
+    builder_.SetInsertPoint(exitBB);
+}
+
 void IRGenerator::visit(BreakStatement& /*node*/) {
     emitBreakDestructors();
     if (loopExitBlock_) {

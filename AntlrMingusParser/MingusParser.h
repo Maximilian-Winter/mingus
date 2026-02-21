@@ -16,34 +16,34 @@ public:
     DeclareModule = 1, DeclareClass = 2, DeclareStruct = 3, DeclareEnum = 4, 
     DeclareFunction = 5, DeclareConstructor = 6, DeclareDestructor = 7, 
     SuperKeyword = 8, DeclareOperator = 9, DeclareForLoop = 10, DeclareWhileLoop = 11, 
-    DeclareStatic = 12, DeclareAbstract = 13, DeclareInterface = 14, DeclarePublic = 15, 
-    DeclarePrivate = 16, DeclareProtected = 17, ExternKeyword = 18, RawKeyword = 19, 
-    ControlFlowIf = 20, ControlFlowElse = 21, ControlFlowSwitch = 22, ControlFlowCase = 23, 
-    ControlFlowDefault = 24, ControlFlowMatch = 25, FunctionReturn = 26, 
-    Break = 27, Continue = 28, DeclareVariable = 29, DeclareConst = 30, 
-    NewKeyword = 31, DeleteKeyword = 32, NullReference = 33, ThisReference = 34, 
-    ImportDirective = 35, FromDirective = 36, AsKeyword = 37, SizeOfKeyword = 38, 
-    AlignOfKeyword = 39, IntegerType = 40, DoubleType = 41, FloatType = 42, 
-    ByteType = 43, StringType = 44, CharType = 45, BoolType = 46, VoidType = 47, 
-    BooleanLiteral = 48, AssignOperator = 49, PlusAssignOperator = 50, MinusAssignOperator = 51, 
-    MultiplyAssignOperator = 52, DivideAssignOperator = 53, ModuloAssignOperator = 54, 
-    BitwiseAndAssignOperator = 55, BitwiseOrAssignOperator = 56, BitwiseXorAssignOperator = 57, 
-    BitwiseLeftShiftAssignOperator = 58, BitwiseRightShiftAssignOperator = 59, 
-    LogicalOrOperator = 60, LogicalAndOperator = 61, UnequalOperator = 62, 
-    EqualOperator = 63, GreaterEqualOperator = 64, SmallerEqualOperator = 65, 
-    GreaterOperator = 66, SmallerOperator = 67, ShiftLeftOperator = 68, 
-    ShiftRightOperator = 69, PlusPlusOperator = 70, MinusMinusOperator = 71, 
-    PlusOperator = 72, MinusOperator = 73, StarOperator = 74, DivideOperator = 75, 
-    ModuloOperator = 76, LogicalNegationOperator = 77, ComplimentOperator = 78, 
-    SingleAndOperator = 79, BitwiseXorOperator = 80, BitwiseOrOperator = 81, 
-    PipeOperator = 82, ArrowOperator = 83, ReferenceAccessOperator = 84, 
-    DotOperator = 85, Ellipsis = 86, DotDotOperator = 87, QuestionMarkOperator = 88, 
-    ColonOperator = 89, SemicolonSeparator = 90, CommaSeparator = 91, UnderscoreWildcard = 92, 
-    OpeningRoundBracket = 93, ClosingRoundBracket = 94, SquareBracketLeft = 95, 
-    SquareBracketRight = 96, FloatingLiteral = 97, IntegerLiteral = 98, 
-    CharLiteral = 99, Identifier = 100, BLOCK_COMMENT = 101, LINE_COMMENT = 102, 
-    WS = 103, DQUOTE = 104, CURLY_L = 105, CURLY_R = 106, TEXT = 107, BACKSLASH_PAREN = 108, 
-    ESCAPE_SEQUENCE = 109
+    DeclareDoLoop = 12, DeclareStatic = 13, DeclareAbstract = 14, DeclareInterface = 15, 
+    DeclarePublic = 16, DeclarePrivate = 17, DeclareProtected = 18, ExternKeyword = 19, 
+    RawKeyword = 20, ControlFlowIf = 21, ControlFlowElse = 22, ControlFlowSwitch = 23, 
+    ControlFlowCase = 24, ControlFlowDefault = 25, ControlFlowMatch = 26, 
+    FunctionReturn = 27, Break = 28, Continue = 29, DeclareVariable = 30, 
+    DeclareConst = 31, NewKeyword = 32, DeleteKeyword = 33, NullReference = 34, 
+    ThisReference = 35, ImportDirective = 36, FromDirective = 37, AsKeyword = 38, 
+    SizeOfKeyword = 39, AlignOfKeyword = 40, IntegerType = 41, DoubleType = 42, 
+    FloatType = 43, ByteType = 44, StringType = 45, CharType = 46, BoolType = 47, 
+    VoidType = 48, BooleanLiteral = 49, AssignOperator = 50, PlusAssignOperator = 51, 
+    MinusAssignOperator = 52, MultiplyAssignOperator = 53, DivideAssignOperator = 54, 
+    ModuloAssignOperator = 55, BitwiseAndAssignOperator = 56, BitwiseOrAssignOperator = 57, 
+    BitwiseXorAssignOperator = 58, BitwiseLeftShiftAssignOperator = 59, 
+    BitwiseRightShiftAssignOperator = 60, LogicalOrOperator = 61, LogicalAndOperator = 62, 
+    UnequalOperator = 63, EqualOperator = 64, GreaterEqualOperator = 65, 
+    SmallerEqualOperator = 66, GreaterOperator = 67, SmallerOperator = 68, 
+    ShiftLeftOperator = 69, ShiftRightOperator = 70, PlusPlusOperator = 71, 
+    MinusMinusOperator = 72, PlusOperator = 73, MinusOperator = 74, StarOperator = 75, 
+    DivideOperator = 76, ModuloOperator = 77, LogicalNegationOperator = 78, 
+    ComplimentOperator = 79, SingleAndOperator = 80, BitwiseXorOperator = 81, 
+    BitwiseOrOperator = 82, PipeOperator = 83, ArrowOperator = 84, ReferenceAccessOperator = 85, 
+    DotOperator = 86, Ellipsis = 87, DotDotOperator = 88, QuestionMarkOperator = 89, 
+    ColonOperator = 90, SemicolonSeparator = 91, CommaSeparator = 92, UnderscoreWildcard = 93, 
+    OpeningRoundBracket = 94, ClosingRoundBracket = 95, SquareBracketLeft = 96, 
+    SquareBracketRight = 97, FloatingLiteral = 98, IntegerLiteral = 99, 
+    CharLiteral = 100, Identifier = 101, BLOCK_COMMENT = 102, LINE_COMMENT = 103, 
+    WS = 104, DQUOTE = 105, CURLY_L = 106, CURLY_R = 107, TEXT = 108, BACKSLASH_PAREN = 109, 
+    ESCAPE_SEQUENCE = 110
   };
 
   enum {
@@ -67,24 +67,24 @@ public:
     RuleRangePattern = 54, RuleWildcardPattern = 55, RuleBindingPattern = 56, 
     RuleTuplePattern = 57, RuleForStatement = 58, RuleForInitializer = 59, 
     RuleLocalVarInitializer = 60, RuleLocalVarDeclaration = 61, RuleForIterator = 62, 
-    RuleWhileStatement = 63, RuleReturnStatement = 64, RuleBreakStatement = 65, 
-    RuleContinueStatement = 66, RuleDeleteStatement = 67, RuleExpression = 68, 
-    RuleAssignment = 69, RuleAssignmentOperator = 70, RuleLambdaExpression = 71, 
-    RuleCaptureList = 72, RuleCaptureDefault = 73, RuleCaptureItem = 74, 
-    RuleLambdaParameterList = 75, RuleLambdaParameter = 76, RulePipe = 77, 
-    RulePipeTarget = 78, RuleTernary = 79, RuleLogicOr = 80, RuleLogicAnd = 81, 
-    RuleBitwiseOr = 82, RuleBitwiseXor = 83, RuleBitwiseAnd = 84, RuleEquality = 85, 
-    RuleRelational = 86, RuleShift = 87, RuleAdditive = 88, RuleMultiplicative = 89, 
-    RuleCastExpression = 90, RuleUnaryExpression = 91, RulePostfixExpression = 92, 
-    RulePrimaryExpression = 93, RulePostfixOperation = 94, RuleNewExpression = 95, 
-    RuleCallArguments = 96, RuleArgumentList = 97, RuleElementAccess = 98, 
-    RuleMemberAccess = 99, RuleTupleExpression = 100, RuleTypeIdentifier = 101, 
-    RulePrimitiveType = 102, RuleFunctionType = 103, RuleTypeList = 104, 
-    RuleTupleType = 105, RuleTypeModifier = 106, RuleReferenceLevel = 107, 
-    RuleArrayDimension = 108, RulePointerLevel = 109, RuleAccessModifier = 110, 
-    RuleStaticModifier = 111, RuleAbstractModifier = 112, RuleQualifiedName = 113, 
-    RulePrefixOperator = 114, RuleIncrementDecrementOperator = 115, RuleTypeSizeOrAlign = 116, 
-    RuleString = 117, RuleStringPart = 118
+    RuleWhileStatement = 63, RuleDoWhileStatement = 64, RuleReturnStatement = 65, 
+    RuleBreakStatement = 66, RuleContinueStatement = 67, RuleDeleteStatement = 68, 
+    RuleExpression = 69, RuleAssignment = 70, RuleAssignmentOperator = 71, 
+    RuleLambdaExpression = 72, RuleCaptureList = 73, RuleCaptureDefault = 74, 
+    RuleCaptureItem = 75, RuleLambdaParameterList = 76, RuleLambdaParameter = 77, 
+    RulePipe = 78, RulePipeTarget = 79, RuleTernary = 80, RuleLogicOr = 81, 
+    RuleLogicAnd = 82, RuleBitwiseOr = 83, RuleBitwiseXor = 84, RuleBitwiseAnd = 85, 
+    RuleEquality = 86, RuleRelational = 87, RuleShift = 88, RuleAdditive = 89, 
+    RuleMultiplicative = 90, RuleCastExpression = 91, RuleUnaryExpression = 92, 
+    RulePostfixExpression = 93, RulePrimaryExpression = 94, RulePostfixOperation = 95, 
+    RuleNewExpression = 96, RuleCallArguments = 97, RuleArgumentList = 98, 
+    RuleElementAccess = 99, RuleMemberAccess = 100, RuleTupleExpression = 101, 
+    RuleTypeIdentifier = 102, RulePrimitiveType = 103, RuleFunctionType = 104, 
+    RuleTypeList = 105, RuleTupleType = 106, RuleTypeModifier = 107, RuleReferenceLevel = 108, 
+    RuleArrayDimension = 109, RulePointerLevel = 110, RuleAccessModifier = 111, 
+    RuleStaticModifier = 112, RuleAbstractModifier = 113, RuleQualifiedName = 114, 
+    RulePrefixOperator = 115, RuleIncrementDecrementOperator = 116, RuleTypeSizeOrAlign = 117, 
+    RuleString = 118, RuleStringPart = 119
   };
 
   explicit MingusParser(antlr4::TokenStream *input);
@@ -168,6 +168,7 @@ public:
   class LocalVarDeclarationContext;
   class ForIteratorContext;
   class WhileStatementContext;
+  class DoWhileStatementContext;
   class ReturnStatementContext;
   class BreakStatementContext;
   class ContinueStatementContext;
@@ -857,6 +858,7 @@ public:
     VariableDeclarationContext *variableDeclaration();
     ForStatementContext *forStatement();
     WhileStatementContext *whileStatement();
+    DoWhileStatementContext *doWhileStatement();
     IfStatementContext *ifStatement();
     SwitchStatementContext *switchStatement();
     MatchStatementContext *matchStatement();
@@ -1317,6 +1319,26 @@ public:
   };
 
   WhileStatementContext* whileStatement();
+
+  class  DoWhileStatementContext : public antlr4::ParserRuleContext {
+  public:
+    DoWhileStatementContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *DeclareDoLoop();
+    antlr4::tree::TerminalNode *DeclareWhileLoop();
+    antlr4::tree::TerminalNode *OpeningRoundBracket();
+    ExpressionContext *expression();
+    antlr4::tree::TerminalNode *ClosingRoundBracket();
+    antlr4::tree::TerminalNode *SemicolonSeparator();
+    BlockContext *block();
+    StatementContext *statement();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  DoWhileStatementContext* doWhileStatement();
 
   class  ReturnStatementContext : public antlr4::ParserRuleContext {
   public:

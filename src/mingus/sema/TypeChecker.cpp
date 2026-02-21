@@ -448,6 +448,18 @@ void TypeChecker::visit(WhileStatement& node) {
     if (node.body) node.body->accept(*this);
 }
 
+void TypeChecker::visit(DoWhileStatement& node) {
+    if (node.body) node.body->accept(*this);
+    if (node.condition) {
+        node.condition->accept(*this);
+        if (node.condition->resolvedType &&
+            !symbolTable_.isCompatible(node.condition->resolvedType.get(),
+                                        symbolTable_.getBoolType().get())) {
+            errors_.error("do-while condition must be bool", node.debugInfo);
+        }
+    }
+}
+
 void TypeChecker::visit(BreakStatement& node) {}
 void TypeChecker::visit(ContinueStatement& node) {}
 

@@ -1036,6 +1036,9 @@ std::any ASTGenerator::visitStatement(MingusParser::StatementContext* ctx) {
     } else if (ctx->whileStatement()) {
         return visitWhileStatement(ctx->whileStatement());
 
+    } else if (ctx->doWhileStatement()) {
+        return visitDoWhileStatement(ctx->doWhileStatement());
+
     } else if (ctx->ifStatement()) {
         return visitIfStatement(ctx->ifStatement());
 
@@ -1252,6 +1255,25 @@ std::any ASTGenerator::visitWhileStatement(
         stmt->body = anyToNode<StatementBaseNode>(
             visitStatement(ctx->statement()));
     }
+
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
+}
+
+std::any ASTGenerator::visitDoWhileStatement(
+    MingusParser::DoWhileStatementContext* ctx)
+{
+    auto stmt = std::make_shared<DoWhileStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+
+    if (ctx->block()) {
+        stmt->body = anyToNode<StatementBaseNode>(visitBlock(ctx->block()));
+    } else if (ctx->statement()) {
+        stmt->body = anyToNode<StatementBaseNode>(
+            visitStatement(ctx->statement()));
+    }
+
+    stmt->condition = anyToNode<ExpressionBaseNode>(
+        visitExpression(ctx->expression()));
 
     return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }

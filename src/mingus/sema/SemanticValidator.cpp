@@ -693,6 +693,15 @@ void SemanticValidator::visit(WhileStatement& node) {
     loopDepth_--;
 }
 
+void SemanticValidator::visit(DoWhileStatement& node) {
+    loopDepth_++;
+
+    if (node.body) node.body->accept(*this);
+    if (node.condition) node.condition->accept(*this);
+
+    loopDepth_--;
+}
+
 void SemanticValidator::visit(BreakStatement& node) {
     if (loopDepth_ == 0) {
         errors_.error("'break' statement outside of loop", node.debugInfo);

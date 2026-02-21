@@ -89,6 +89,18 @@ public:
 };
 
 // ============================================================================
+// DoWhileStatement — do body while (condition);
+// ============================================================================
+
+class DoWhileStatement : public StatementBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::shared_ptr<StatementBaseNode> body;
+    std::shared_ptr<ExpressionBaseNode> condition;
+};
+
+// ============================================================================
 // BreakStatement — break;
 // ============================================================================
 

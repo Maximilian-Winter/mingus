@@ -607,6 +607,11 @@ public:
         if (node.body) node.body->accept(*this);
     }
 
+    void visit(DoWhileStatement& node) override {
+        if (node.body) node.body->accept(*this);
+        if (node.condition) node.condition->accept(*this);
+    }
+
     void visit(BreakStatement&) override {}
     void visit(ContinueStatement&) override {}
 

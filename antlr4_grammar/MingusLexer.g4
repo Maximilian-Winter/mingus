@@ -29,6 +29,7 @@ SuperKeyword:        'super';
 DeclareOperator:     'operator';
 DeclareForLoop:      'for';
 DeclareWhileLoop:    'while';
+DeclareDoLoop:       'do';
 DeclareStatic:       'static';
 DeclareAbstract:     'abstract';
 DeclareInterface:    'interface';

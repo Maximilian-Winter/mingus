@@ -299,6 +299,7 @@ statement
     | variableDeclaration
     | forStatement
     | whileStatement
+    | doWhileStatement
     | ifStatement
     | switchStatement
     | matchStatement
@@ -462,6 +463,11 @@ forIterator
 whileStatement
     : DeclareWhileLoop OpeningRoundBracket expression ClosingRoundBracket
       ( block | statement )
+    ;
+
+doWhileStatement
+    : DeclareDoLoop ( block | statement ) DeclareWhileLoop
+      OpeningRoundBracket expression ClosingRoundBracket SemicolonSeparator
     ;
 
 // ============================================================================
