@@ -1005,6 +1005,13 @@ void TypeChecker::visit(CallExpression& node) {
         funcType = calleeType->as<FunctionTypeSymbol>();
     }
 
+    // Struct construction: StructName() → zero-initialized struct value
+    if (!funcType && calleeType->is<StructSymbol>()) {
+        node.resolvedType = std::dynamic_pointer_cast<TypeSymbol>(
+            symbolTable_.resolveType(calleeType->getName()));
+        return;
+    }
+
     // Constructor call: callee is a type name
     if (!funcType && calleeType->is<ClassSymbol>()) {
         auto* classSym = calleeType->as<ClassSymbol>();

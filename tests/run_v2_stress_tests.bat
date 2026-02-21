@@ -24,7 +24,7 @@ shift
 goto :parse_args
 :args_done
 
-set TOOL=.\mingus_ir_tool.exe
+set TOOL=.\mingus_v2_tool.exe
 
 set PASS=0
 set FAIL=0
