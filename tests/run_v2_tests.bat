@@ -64,6 +64,14 @@ call :run_test test_27_debug_info      Test27_main  "Debug Info"
 call :run_test test_28_explicit_captures Test28_main "Explicit Captures"
 call :run_test test_29_ref_params      Test29_main  "Reference Parameters"
 call :run_test test_30_capture_writeback Test30_main "Capture Write-Back"
+call :run_test test_31_closure_struct_params Test31_main "Closure + Struct Params"
+call :run_test test_32_closure_ref_params Test32_main "Closure + Ref Params"
+call :run_test test_33_interface_params Test33_main "Interface Params"
+call :run_test test_34_varargs           Test34_main  "Varargs"
+call :run_test test_35_for_multi_init   Test35_main  "For Multi-Init"
+call :run_test test_36_const            Test36_main  "Const Variables"
+call :run_test test_37_pipe_methods    Test37_main  "Pipe Methods"
+call :run_test test_38_bare_fields    Test38_main  "Bare Field Access"
 
 echo.
 echo ============================================================
