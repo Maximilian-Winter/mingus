@@ -44,14 +44,26 @@ std::shared_ptr<FunctionTypeSymbol> FunctionSymbol::buildFunctionType() const {
 }
 
 std::string FunctionSymbol::getQualifiedName() const {
-    // Walk up to find module name for mangling: Module_FuncName
+    // Walk up to build mangled name: Module_Class_FuncName
+    // Collects all intermediate scope names (class, struct) between
+    // the function and the module, so constructors/destructors get
+    // unique names: Module_ClassName_constructor instead of Module_constructor
+    std::vector<std::string> parts;
+    parts.push_back(getName());
+
     auto enclosing = getSymbolScope();
     while (enclosing) {
-        auto* modSym = dynamic_cast<ModuleSymbol*>(enclosing.get());
-        if (modSym) {
-            return modSym->getName() + "_" + getName();
+        if (auto* modSym = dynamic_cast<ModuleSymbol*>(enclosing.get())) {
+            parts.push_back(modSym->getName());
+            break;
         }
-        // Check if enclosing scope is a SymbolWithScope
+        // Include class/struct names in the mangled path
+        if (auto* classSym = dynamic_cast<ClassSymbol*>(enclosing.get())) {
+            parts.push_back(classSym->getName());
+        } else if (auto* structSym = dynamic_cast<StructSymbol*>(enclosing.get())) {
+            parts.push_back(structSym->getName());
+        }
+        // Walk up
         auto* symScope = dynamic_cast<SymbolWithScope*>(enclosing.get());
         if (symScope) {
             enclosing = symScope->getSymbolScope();
@@ -59,7 +71,14 @@ std::string FunctionSymbol::getQualifiedName() const {
             enclosing = enclosing->getEnclosingScope();
         }
     }
-    return getName();
+
+    // Reverse and join: Module_Class_FuncName
+    std::string result;
+    for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
+        if (!result.empty()) result += "_";
+        result += *it;
+    }
+    return result;
 }
 
 // ============================================================================

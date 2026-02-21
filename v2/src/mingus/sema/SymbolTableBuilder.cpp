@@ -209,6 +209,12 @@ void SymbolTableBuilder::visit(ConstructorDeclaration& node) {
         symbolTable_.pushScope(ctorSym);
         node.body->astScopeNode = ctorSym;
         createParameterSymbols(node.parameters, ctorSym);
+
+        // Set scope for super constructor arguments (they reference ctor params)
+        for (auto& arg : node.superArgs) {
+            if (arg) arg->astScopeNode = ctorSym;
+        }
+
         visitStatements(node.body->statements);
         symbolTable_.popScope();
     }
@@ -474,6 +480,13 @@ void SymbolTableBuilder::visit(InterfaceDeclaration& node) {
         }
     }
 
+    // Assign vtableIndex to each interface method (used for itable dispatch)
+    for (size_t i = 0; i < ifaceSym->methods.size(); i++) {
+        if (ifaceSym->methods[i]) {
+            ifaceSym->methods[i]->vtableIndex = static_cast<int>(i);
+        }
+    }
+
     inTypeScope_ = savedInType;
     symbolTable_.popScope();
 }
@@ -563,8 +576,9 @@ void SymbolTableBuilder::buildVtable(ClassSymbol* classSym) {
             }
         }
 
-        // New virtual method: append to vtable
-        if (!overridden && (funcSym->isVirtual || classSym->resolvedBaseClass)) {
+        // New method: append to vtable (all instance methods get vtable slots
+        // so derived classes can override them via virtual dispatch)
+        if (!overridden) {
             funcSym->vtableIndex = static_cast<int>(classSym->vtable.size());
             funcSym->isVirtual = true;
             classSym->vtable.push_back(std::dynamic_pointer_cast<FunctionSymbol>(sym));

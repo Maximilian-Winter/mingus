@@ -290,6 +290,12 @@ void TypeChecker::visit(FunctionDeclaration& node) {
 void TypeChecker::visit(ConstructorDeclaration& node) {
     if (node.body && node.resolvedConstructor) {
         auto funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.resolvedConstructor);
+
+        // Type-check super constructor arguments (they reference ctor params)
+        for (auto& arg : node.superArgs) {
+            if (arg) arg->accept(*this);
+        }
+
         visitFunctionBody(funcSym, *node.body);
     }
 }
