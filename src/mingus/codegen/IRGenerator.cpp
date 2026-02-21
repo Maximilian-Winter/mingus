@@ -304,18 +304,27 @@ std::string IRGenerator::mangleName(Symbol* sym) {
         return "operator_" + opToString(opSym->op);
     }
 
-    // Constructor: ClassName_constructor (or ClassName_copy_constructor)
+    // Constructor: ClassName_constructor (or ClassName_copy/move_constructor)
     if (auto* ctorSym = sym->as<ConstructorSymbol>()) {
         if (ctorSym->isCopyConstructor) {
             // Build mangled name: Module_Class_copy_constructor
             std::string qn = ctorSym->getQualifiedName();
-            // Replace trailing "constructor" with "copy_constructor"
             const std::string suffix = "_constructor";
             if (qn.size() > suffix.size() &&
                 qn.substr(qn.size() - suffix.size()) == suffix) {
                 return qn.substr(0, qn.size() - suffix.size()) + "_copy_constructor";
             }
             return qn + "_copy";
+        }
+        if (ctorSym->isMoveConstructor) {
+            // Build mangled name: Module_Class_move_constructor
+            std::string qn = ctorSym->getQualifiedName();
+            const std::string suffix = "_constructor";
+            if (qn.size() > suffix.size() &&
+                qn.substr(qn.size() - suffix.size()) == suffix) {
+                return qn.substr(0, qn.size() - suffix.size()) + "_move_constructor";
+            }
+            return qn + "_move";
         }
         return ctorSym->getQualifiedName();
     }
@@ -594,6 +603,10 @@ void IRGenerator::declareFunctions(ProgramNode& program) {
                 // Copy constructor
                 if (classSym->copyConstructor) {
                     declareFunctionSymbol(classSym->copyConstructor.get());
+                }
+                // Move constructor
+                if (classSym->moveConstructor) {
+                    declareFunctionSymbol(classSym->moveConstructor.get());
                 }
                 // Destructor
                 if (classSym->destructor) {
@@ -1520,6 +1533,9 @@ void IRGenerator::visit(ClassDeclaration& node) {
     }
     if (node.copyConstructor) {
         node.copyConstructor->accept(*this);
+    }
+    if (node.moveConstructor) {
+        node.moveConstructor->accept(*this);
     }
     if (node.destructor) {
         node.destructor->accept(*this);
@@ -2554,6 +2570,15 @@ void IRGenerator::visit(BinaryExpression& node) {
     lastValue_ = nullptr;
 }
 
+void IRGenerator::visit(MoveExpression& node) {
+    // move(x) — evaluate the operand and pass through its value.
+    // The move semantics dispatch happens in NewExpression, which checks
+    // whether the argument is a MoveExpression to select the move constructor.
+    if (node.operand) {
+        node.operand->accept(*this);
+    }
+}
+
 void IRGenerator::visit(UnaryExpression& node) {
     TypeSymbol* operandType = node.operand->resolvedType ?
         node.operand->resolvedType->as<TypeSymbol>() : nullptr;
@@ -3243,12 +3268,25 @@ void IRGenerator::visit(NewExpression& node) {
 
         if (auto* classSym = allocType->as<ClassSymbol>()) {
             // Determine which constructor to call:
-            // If there's a copy constructor and the single argument is a pointer
-            // to the same class, use the copy constructor.
+            // 1. If argument is move(x) and class has move constructor → move ctor
+            // 2. If argument is pointer-to-same-class and class has copy ctor → copy ctor
+            // 3. Otherwise → regular constructor
             ConstructorSymbol* targetCtor = nullptr;
             bool useCopyCtor = false;
+            bool useMoveCtor = false;
 
-            if (classSym->copyConstructor && node.arguments &&
+            // Check for move constructor: new ClassName(move(x))
+            if (classSym->moveConstructor && node.arguments &&
+                node.arguments->expressions.size() == 1) {
+                auto& arg = node.arguments->expressions[0];
+                if (arg->is<MoveExpression>()) {
+                    useMoveCtor = true;
+                    targetCtor = classSym->moveConstructor.get();
+                }
+            }
+
+            // Check for copy constructor: new ClassName(existingObj)
+            if (!targetCtor && classSym->copyConstructor && node.arguments &&
                 node.arguments->expressions.size() == 1) {
                 auto& arg = node.arguments->expressions[0];
                 if (arg->resolvedType) {
@@ -3275,11 +3313,11 @@ void IRGenerator::visit(NewExpression& node) {
                     if (node.arguments) {
                         for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
                             auto& arg = node.arguments->expressions[i];
-                            bool isRef = useCopyCtor ||
+                            bool isRef = useCopyCtor || useMoveCtor ||
                                          (i < node.arguments->isReference.size() &&
                                           node.arguments->isReference[i]);
                             if (isRef) {
-                                // For copy constructor, the argument is a pointer
+                                // For copy/move constructor, the argument is a pointer
                                 // that we pass directly as the reference
                                 arg->accept(*this);
                                 if (lastValue_) {

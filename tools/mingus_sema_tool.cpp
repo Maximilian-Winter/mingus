@@ -426,6 +426,7 @@ public:
 
         if (node.constructor) node.constructor->accept(*this);
         if (node.copyConstructor) node.copyConstructor->accept(*this);
+        if (node.moveConstructor) node.moveConstructor->accept(*this);
         if (node.destructor) node.destructor->accept(*this);
         for (auto& method : node.methods) {
             if (method) method->accept(*this);
@@ -674,6 +675,10 @@ public:
     }
 
     void visit(UnaryExpression& node) override {
+        if (node.operand) node.operand->accept(*this);
+    }
+
+    void visit(MoveExpression& node) override {
         if (node.operand) node.operand->accept(*this);
     }
 

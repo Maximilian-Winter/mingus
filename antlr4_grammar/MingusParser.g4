@@ -631,7 +631,8 @@ castExpression
     ;
 
 unaryExpression
-    : prefixOperator unaryExpression
+    : MoveKeyword OpeningRoundBracket expression ClosingRoundBracket
+    | prefixOperator unaryExpression
     | incrementDecrementOperator unaryExpression
     | typeSizeOrAlign OpeningRoundBracket typeIdentifier ClosingRoundBracket
     | postfixExpression
@@ -740,7 +741,12 @@ tupleType
 typeModifier
     : arrayDimension
     | pointerLevel
+    | rvalueReferenceLevel
     | referenceLevel
+    ;
+
+rvalueReferenceLevel
+    : LogicalAndOperator
     ;
 
 referenceLevel

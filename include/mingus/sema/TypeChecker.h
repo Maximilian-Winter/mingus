@@ -92,6 +92,7 @@ public:
     void visit(PipeExpression& node) override;
     void visit(LambdaExpression& node) override;
     void visit(VariableDeclarationExpression& node) override;
+    void visit(MoveExpression& node) override;
 
 private:
     SymbolTable& symbolTable_;

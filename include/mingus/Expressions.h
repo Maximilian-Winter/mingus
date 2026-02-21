@@ -318,4 +318,16 @@ public:
     std::shared_ptr<VariableSymbol> resolvedVariable;
 };
 
+// ============================================================================
+// Move Expression — move(x)
+//
+// Marks an lvalue as an rvalue reference for move constructor dispatch.
+// ============================================================================
+
+class MoveExpression : public ExpressionBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::shared_ptr<ExpressionBaseNode> operand;
+};
+
 } // namespace mingus

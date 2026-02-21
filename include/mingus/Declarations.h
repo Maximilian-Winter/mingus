@@ -94,6 +94,7 @@ public:
     std::vector<std::shared_ptr<ExpressionBaseNode>> superArgs;
     bool hasSuperCall = false;
     bool isCopyConstructor = false;  // set by ASTGenerator when param matches class ref
+    bool isMoveConstructor = false;  // set by ASTGenerator when param matches class rvalue ref
 
     // Resolved in Pass 1
     std::shared_ptr<ConstructorSymbol> resolvedConstructor;
@@ -209,6 +210,7 @@ public:
     std::vector<std::shared_ptr<OperatorDeclaration>> operators;
     std::shared_ptr<ConstructorDeclaration> constructor;       // nullptr if auto-generated
     std::shared_ptr<ConstructorDeclaration> copyConstructor;  // constructor(ClassName& other)
+    std::shared_ptr<ConstructorDeclaration> moveConstructor;  // constructor(ClassName&& other)
     std::shared_ptr<DestructorDeclaration> destructor;        // nullptr if auto-generated
 
     // Resolved in Pass 1

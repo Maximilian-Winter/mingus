@@ -1,0 +1,7 @@
+=== Move Constructor ===
+a before: 42
+a after:  0
+b value:  42
+a moved:  1
+=== No Move (Regular Ctor) ===
+c value: 99

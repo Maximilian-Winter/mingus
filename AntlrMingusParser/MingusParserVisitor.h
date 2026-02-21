@@ -240,6 +240,8 @@ public:
 
     virtual std::any visitTypeModifier(MingusParser::TypeModifierContext *context) = 0;
 
+    virtual std::any visitRvalueReferenceLevel(MingusParser::RvalueReferenceLevelContext *context) = 0;
+
     virtual std::any visitReferenceLevel(MingusParser::ReferenceLevelContext *context) = 0;
 
     virtual std::any visitArrayDimension(MingusParser::ArrayDimensionContext *context) = 0;

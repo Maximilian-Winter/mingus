@@ -126,6 +126,7 @@ public:
     void visit(TupleExpression& node) override;
     void visit(LambdaExpression& node) override;
     void visit(VariableDeclarationExpression& node) override;
+    void visit(MoveExpression& node) override;
 
 private:
     //==========================================================================

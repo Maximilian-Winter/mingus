@@ -390,6 +390,14 @@ std::any ASTGenerator::visitTypeIdentifier(
             ptrType->isReference = false;
             baseType = ptrType;
 
+        } else if (modifier->rvalueReferenceLevel()) {
+            auto refType = std::make_shared<PointerTypeNode>();
+            refType->debugInfo = makeDebugInfo(modifier);
+            refType->baseType = baseType;
+            refType->isReference = true;
+            refType->isRvalueReference = true;
+            baseType = refType;
+
         } else if (modifier->referenceLevel()) {
             auto refType = std::make_shared<PointerTypeNode>();
             refType->debugInfo = makeDebugInfo(modifier);
@@ -595,9 +603,11 @@ std::any ASTGenerator::visitClassDeclaration(
                 auto ctor = anyToNode<ConstructorDeclaration>(
                     visitConstructorDeclaration(
                         memberCtx->constructorDeclaration()));
-                // Detect copy constructor: exactly 1 ref param of same class type
-                // Reference params have type PointerTypeNode(baseType=NamedTypeNode)
+                // Detect copy/move constructor: exactly 1 ref param of same class type
+                // Copy: constructor(ClassName& other)  — isReference && !isRvalueReference
+                // Move: constructor(ClassName&& other) — isReference && isRvalueReference
                 bool isCopyCtor = false;
+                bool isMoveCtor = false;
                 if (ctor && ctor->parameters.size() == 1 &&
                     ctor->parameters[0]->isReference) {
                     auto* typeNode = ctor->parameters[0]->type.get();
@@ -608,11 +618,18 @@ std::any ASTGenerator::visitClassDeclaration(
                     if (auto* named = dynamic_cast<NamedTypeNode*>(typeNode)) {
                         if (!named->qualifiedName.empty() &&
                             named->qualifiedName.back() == cls->name) {
-                            isCopyCtor = true;
+                            if (ctor->parameters[0]->isRvalueReference) {
+                                isMoveCtor = true;
+                            } else {
+                                isCopyCtor = true;
+                            }
                         }
                     }
                 }
-                if (isCopyCtor) {
+                if (isMoveCtor) {
+                    ctor->isMoveConstructor = true;
+                    cls->moveConstructor = ctor;
+                } else if (isCopyCtor) {
                     ctor->isCopyConstructor = true;
                     cls->copyConstructor = ctor;
                 } else {
@@ -882,9 +899,13 @@ std::any ASTGenerator::visitParameter(MingusParser::ParameterContext* ctx) {
     param->debugInfo = makeDebugInfo(ctx);
     param->name = ctx->Identifier()->getText();
 
-    // Detect reference modifier (&) in type modifiers
+    // Detect reference modifier (&) or rvalue reference (&&) in type modifiers
     for (auto* modifier : ctx->typeIdentifier()->typeModifier()) {
-        if (modifier->referenceLevel()) {
+        if (modifier->rvalueReferenceLevel()) {
+            param->isReference = true;
+            param->isRvalueReference = true;
+            break;
+        } else if (modifier->referenceLevel()) {
             param->isReference = true;
             break;
         }
@@ -1829,6 +1850,15 @@ std::any ASTGenerator::visitCastExpression(
 std::any ASTGenerator::visitUnaryExpression(
     MingusParser::UnaryExpressionContext* ctx)
 {
+    // move(expr) — MoveExpression
+    if (ctx->MoveKeyword()) {
+        auto moveExpr = std::make_shared<MoveExpression>();
+        moveExpr->debugInfo = makeDebugInfo(ctx);
+        moveExpr->operand = anyToNode<ExpressionBaseNode>(
+            visitExpression(ctx->expression()));
+        return std::any(std::static_pointer_cast<ExpressionBaseNode>(moveExpr));
+    }
+
     if (ctx->prefixOperator()) {
         auto unary = std::make_shared<UnaryExpression>();
         unary->debugInfo = makeDebugInfo(ctx);

@@ -63,6 +63,9 @@ public:
     // For reference parameters (T&): pass-by-pointer semantics
     bool isReference = false;
 
+    // For rvalue reference parameters (T&&): move semantics
+    bool isRvalueReference = false;
+
     // For class fields: initial value expression (optional, for future use)
     // std::shared_ptr<ExpressionBaseNode> defaultValue;
 
@@ -136,6 +139,7 @@ public:
 
     // Always: isMethod = true, hasThisParam = true, name = "constructor"
     bool isCopyConstructor = false;  // Set by SymbolTableBuilder for copy ctors
+    bool isMoveConstructor = false;  // Set by SymbolTableBuilder for move ctors
 };
 
 // ============================================================================
@@ -189,6 +193,7 @@ public:
 
     std::shared_ptr<ConstructorSymbol> constructor;
     std::shared_ptr<ConstructorSymbol> copyConstructor;  // constructor(ClassName& other)
+    std::shared_ptr<ConstructorSymbol> moveConstructor;  // constructor(ClassName&& other)
     std::shared_ptr<DestructorSymbol> destructor;
 
     // ---- Virtual dispatch ----

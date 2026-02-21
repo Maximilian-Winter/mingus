@@ -354,6 +354,7 @@ void TypeChecker::visit(ClassDeclaration& node) {
 
     if (node.constructor) node.constructor->accept(*this);
     if (node.copyConstructor) node.copyConstructor->accept(*this);
+    if (node.moveConstructor) node.moveConstructor->accept(*this);
     if (node.destructor) node.destructor->accept(*this);
 
     for (auto& method : node.methods) {
@@ -855,6 +856,23 @@ void TypeChecker::visit(UnaryExpression& node) {
             node.resolvedType = opType;
             return;
     }
+}
+
+// ============================================================================
+// Move Expression — move(x) returns same type as operand
+// ============================================================================
+
+void TypeChecker::visit(MoveExpression& node) {
+    if (node.operand) node.operand->accept(*this);
+
+    auto opType = node.operand ? node.operand->resolvedType : nullptr;
+    if (!opType) {
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
+    }
+
+    // move(x) has the same type as x — the distinction is purely semantic
+    node.resolvedType = opType;
 }
 
 // ============================================================================

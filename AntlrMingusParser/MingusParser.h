@@ -22,28 +22,28 @@ public:
     ControlFlowSwitch = 24, ControlFlowCase = 25, ControlFlowDefault = 26, 
     ControlFlowMatch = 27, FunctionReturn = 28, Break = 29, Continue = 30, 
     DeclareVariable = 31, DeclareConst = 32, NewKeyword = 33, DeleteKeyword = 34, 
-    NullReference = 35, ThisReference = 36, ImportDirective = 37, FromDirective = 38, 
-    AsKeyword = 39, SizeOfKeyword = 40, AlignOfKeyword = 41, IntegerType = 42, 
-    DoubleType = 43, FloatType = 44, ByteType = 45, StringType = 46, CharType = 47, 
-    BoolType = 48, VoidType = 49, BooleanLiteral = 50, AssignOperator = 51, 
-    PlusAssignOperator = 52, MinusAssignOperator = 53, MultiplyAssignOperator = 54, 
-    DivideAssignOperator = 55, ModuloAssignOperator = 56, BitwiseAndAssignOperator = 57, 
-    BitwiseOrAssignOperator = 58, BitwiseXorAssignOperator = 59, BitwiseLeftShiftAssignOperator = 60, 
-    BitwiseRightShiftAssignOperator = 61, LogicalOrOperator = 62, LogicalAndOperator = 63, 
-    UnequalOperator = 64, EqualOperator = 65, GreaterEqualOperator = 66, 
-    SmallerEqualOperator = 67, GreaterOperator = 68, SmallerOperator = 69, 
-    ShiftLeftOperator = 70, ShiftRightOperator = 71, PlusPlusOperator = 72, 
-    MinusMinusOperator = 73, PlusOperator = 74, MinusOperator = 75, StarOperator = 76, 
-    DivideOperator = 77, ModuloOperator = 78, LogicalNegationOperator = 79, 
-    ComplimentOperator = 80, SingleAndOperator = 81, BitwiseXorOperator = 82, 
-    BitwiseOrOperator = 83, PipeOperator = 84, ArrowOperator = 85, ReferenceAccessOperator = 86, 
-    DotOperator = 87, Ellipsis = 88, DotDotOperator = 89, QuestionMarkOperator = 90, 
-    ColonOperator = 91, SemicolonSeparator = 92, CommaSeparator = 93, UnderscoreWildcard = 94, 
-    OpeningRoundBracket = 95, ClosingRoundBracket = 96, SquareBracketLeft = 97, 
-    SquareBracketRight = 98, FloatingLiteral = 99, IntegerLiteral = 100, 
-    CharLiteral = 101, Identifier = 102, BLOCK_COMMENT = 103, LINE_COMMENT = 104, 
-    WS = 105, DQUOTE = 106, CURLY_L = 107, CURLY_R = 108, TEXT = 109, BACKSLASH_PAREN = 110, 
-    ESCAPE_SEQUENCE = 111
+    NullReference = 35, ThisReference = 36, MoveKeyword = 37, ImportDirective = 38, 
+    FromDirective = 39, AsKeyword = 40, SizeOfKeyword = 41, AlignOfKeyword = 42, 
+    IntegerType = 43, DoubleType = 44, FloatType = 45, ByteType = 46, StringType = 47, 
+    CharType = 48, BoolType = 49, VoidType = 50, BooleanLiteral = 51, AssignOperator = 52, 
+    PlusAssignOperator = 53, MinusAssignOperator = 54, MultiplyAssignOperator = 55, 
+    DivideAssignOperator = 56, ModuloAssignOperator = 57, BitwiseAndAssignOperator = 58, 
+    BitwiseOrAssignOperator = 59, BitwiseXorAssignOperator = 60, BitwiseLeftShiftAssignOperator = 61, 
+    BitwiseRightShiftAssignOperator = 62, LogicalOrOperator = 63, LogicalAndOperator = 64, 
+    UnequalOperator = 65, EqualOperator = 66, GreaterEqualOperator = 67, 
+    SmallerEqualOperator = 68, GreaterOperator = 69, SmallerOperator = 70, 
+    ShiftLeftOperator = 71, ShiftRightOperator = 72, PlusPlusOperator = 73, 
+    MinusMinusOperator = 74, PlusOperator = 75, MinusOperator = 76, StarOperator = 77, 
+    DivideOperator = 78, ModuloOperator = 79, LogicalNegationOperator = 80, 
+    ComplimentOperator = 81, SingleAndOperator = 82, BitwiseXorOperator = 83, 
+    BitwiseOrOperator = 84, PipeOperator = 85, ArrowOperator = 86, ReferenceAccessOperator = 87, 
+    DotOperator = 88, Ellipsis = 89, DotDotOperator = 90, QuestionMarkOperator = 91, 
+    ColonOperator = 92, SemicolonSeparator = 93, CommaSeparator = 94, UnderscoreWildcard = 95, 
+    OpeningRoundBracket = 96, ClosingRoundBracket = 97, SquareBracketLeft = 98, 
+    SquareBracketRight = 99, FloatingLiteral = 100, IntegerLiteral = 101, 
+    CharLiteral = 102, Identifier = 103, BLOCK_COMMENT = 104, LINE_COMMENT = 105, 
+    WS = 106, DQUOTE = 107, CURLY_L = 108, CURLY_R = 109, TEXT = 110, BACKSLASH_PAREN = 111, 
+    ESCAPE_SEQUENCE = 112
   };
 
   enum {
@@ -81,10 +81,11 @@ public:
     RuleArgumentList = 100, RuleElementAccess = 101, RuleMemberAccess = 102, 
     RuleTupleExpression = 103, RuleTypeIdentifier = 104, RulePrimitiveType = 105, 
     RuleFunctionType = 106, RuleTypeList = 107, RuleTupleType = 108, RuleTypeModifier = 109, 
-    RuleReferenceLevel = 110, RuleArrayDimension = 111, RulePointerLevel = 112, 
-    RuleAccessModifier = 113, RuleStaticModifier = 114, RuleAbstractModifier = 115, 
-    RuleQualifiedName = 116, RulePrefixOperator = 117, RuleIncrementDecrementOperator = 118, 
-    RuleTypeSizeOrAlign = 119, RuleString = 120, RuleStringPart = 121
+    RuleRvalueReferenceLevel = 110, RuleReferenceLevel = 111, RuleArrayDimension = 112, 
+    RulePointerLevel = 113, RuleAccessModifier = 114, RuleStaticModifier = 115, 
+    RuleAbstractModifier = 116, RuleQualifiedName = 117, RulePrefixOperator = 118, 
+    RuleIncrementDecrementOperator = 119, RuleTypeSizeOrAlign = 120, RuleString = 121, 
+    RuleStringPart = 122
   };
 
   explicit MingusParser(antlr4::TokenStream *input);
@@ -214,6 +215,7 @@ public:
   class TypeListContext;
   class TupleTypeContext;
   class TypeModifierContext;
+  class RvalueReferenceLevelContext;
   class ReferenceLevelContext;
   class ArrayDimensionContext;
   class PointerLevelContext;
@@ -1838,13 +1840,15 @@ public:
   public:
     UnaryExpressionContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *MoveKeyword();
+    antlr4::tree::TerminalNode *OpeningRoundBracket();
+    ExpressionContext *expression();
+    antlr4::tree::TerminalNode *ClosingRoundBracket();
     PrefixOperatorContext *prefixOperator();
     UnaryExpressionContext *unaryExpression();
     IncrementDecrementOperatorContext *incrementDecrementOperator();
     TypeSizeOrAlignContext *typeSizeOrAlign();
-    antlr4::tree::TerminalNode *OpeningRoundBracket();
     TypeIdentifierContext *typeIdentifier();
-    antlr4::tree::TerminalNode *ClosingRoundBracket();
     PostfixExpressionContext *postfixExpression();
 
 
@@ -2103,6 +2107,7 @@ public:
     virtual size_t getRuleIndex() const override;
     ArrayDimensionContext *arrayDimension();
     PointerLevelContext *pointerLevel();
+    RvalueReferenceLevelContext *rvalueReferenceLevel();
     ReferenceLevelContext *referenceLevel();
 
 
@@ -2111,6 +2116,19 @@ public:
   };
 
   TypeModifierContext* typeModifier();
+
+  class  RvalueReferenceLevelContext : public antlr4::ParserRuleContext {
+  public:
+    RvalueReferenceLevelContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *LogicalAndOperator();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  RvalueReferenceLevelContext* rvalueReferenceLevel();
 
   class  ReferenceLevelContext : public antlr4::ParserRuleContext {
   public:

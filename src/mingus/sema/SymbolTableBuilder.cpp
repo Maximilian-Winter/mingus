@@ -200,12 +200,16 @@ void SymbolTableBuilder::visit(ConstructorDeclaration& node) {
     ctorSym->accessLevel = node.accessModifier;
     if (node.isCopyConstructor) {
         ctorSym->isCopyConstructor = true;
+    } else if (node.isMoveConstructor) {
+        ctorSym->isMoveConstructor = true;
     }
     symbolTable_.defineSymbol(ctorSym);
     node.resolvedConstructor = ctorSym;
 
     if (currentClass_) {
-        if (node.isCopyConstructor) {
+        if (node.isMoveConstructor) {
+            currentClass_->moveConstructor = ctorSym;
+        } else if (node.isCopyConstructor) {
             currentClass_->copyConstructor = ctorSym;
         } else {
             currentClass_->constructor = ctorSym;
@@ -435,17 +439,22 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
     // Constructor (explicit or auto-generated)
     if (node.constructor) {
         node.constructor->accept(*this);
-    } else if (!node.copyConstructor) {
+    } else if (!node.copyConstructor && !node.moveConstructor) {
         // Only auto-generate if there's no explicit constructor at all
         autoGenerateConstructor(node, classSym);
     } else {
-        // Has copy constructor but no regular constructor — auto-generate regular
+        // Has copy/move constructor but no regular constructor — auto-generate regular
         autoGenerateConstructor(node, classSym);
     }
 
     // Copy constructor (if defined)
     if (node.copyConstructor) {
         node.copyConstructor->accept(*this);
+    }
+
+    // Move constructor (if defined)
+    if (node.moveConstructor) {
+        node.moveConstructor->accept(*this);
     }
 
     // Destructor (explicit or auto-generated)
@@ -781,6 +790,11 @@ void SymbolTableBuilder::visit(BinaryExpression& node) {
 }
 
 void SymbolTableBuilder::visit(UnaryExpression& node) {
+    setScope(node);
+    if (node.operand) node.operand->accept(*this);
+}
+
+void SymbolTableBuilder::visit(MoveExpression& node) {
     setScope(node);
     if (node.operand) node.operand->accept(*this);
 }

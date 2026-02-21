@@ -457,6 +457,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitRvalueReferenceLevel(MingusParser::RvalueReferenceLevelContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitReferenceLevel(MingusParser::ReferenceLevelContext *ctx) override {
     return visitChildren(ctx);
   }

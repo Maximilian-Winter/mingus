@@ -130,7 +130,8 @@ class PointerTypeNode : public TypeNode {
 public:
     void accept(ASTVisitor& visitor) override;
     std::shared_ptr<TypeNode> baseType;
-    bool isReference = false;  // true for T&
+    bool isReference = false;         // true for T&
+    bool isRvalueReference = false;   // true for T&&
 };
 
 class ArrayTypeNode : public TypeNode {
@@ -202,6 +203,7 @@ public:
     std::string name;
     std::shared_ptr<TypeNode> type;
     bool isReference = false;
+    bool isRvalueReference = false;  // true for T&& parameters
     std::shared_ptr<ExpressionBaseNode> defaultValue;  // nullptr if no default
 
     // Set by Pass 1: direct link to the parameter's VariableSymbol
@@ -374,6 +376,7 @@ public:
     virtual void visit(PipeExpression& node) {}
     virtual void visit(LambdaExpression& node) {}
     virtual void visit(VariableDeclarationExpression& node) {}
+    virtual void visit(MoveExpression& node) {}
 
     // ---- Statement nodes ----
     virtual void visit(ExpressionStatement& node) {}

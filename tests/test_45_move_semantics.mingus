@@ -1,0 +1,43 @@
+module Test45 {
+    extern func printf(string fmt, ...) => int;
+
+    class Resource {
+        public int value;
+        public int moved;
+
+        constructor(int v) {
+            this.value = v;
+            this.moved = 0;
+        }
+
+        constructor(Resource&& other) {
+            this.value = other.value;
+            this.moved = 0;
+            other.value = 0;
+            other.moved = 1;
+        }
+
+        destructor {}
+        func getValue() => int => this.value;
+        func isMoved() => int => this.moved;
+    }
+
+    func main() => int {
+        printf("=== Move Constructor ===\n");
+        var a = new Resource(42);
+        printf("a before: %d\n", a->getValue());
+        var b = new Resource(move(a));
+        printf("a after:  %d\n", a->getValue());
+        printf("b value:  %d\n", b->getValue());
+        printf("a moved:  %d\n", a->isMoved());
+
+        printf("=== No Move (Regular Ctor) ===\n");
+        var c = new Resource(99);
+        printf("c value: %d\n", c->getValue());
+
+        delete b;
+        delete a;
+        delete c;
+        return 0;
+    }
+}

@@ -78,6 +78,7 @@ call :run_test test_41_typedef          Test41_main  "Typedef / Type Alias"
 call :run_test test_42_labeled_loops   Test42_main  "Labeled Break/Continue"
 call :run_test test_43_copy_constructors Test43_main "Copy Constructors"
 call :run_test test_44_overloading       Test44_main  "Function Overloading"
+call :run_test test_45_move_semantics    Test45_main  "Move Semantics"
 
 echo.
 echo ============================================================

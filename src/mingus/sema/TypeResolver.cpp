@@ -221,11 +221,15 @@ void TypeResolver::resolveParameters(
             auto resolvedType = resolveTypeNode(param->type);
             if (resolvedType) {
                 // CRITICAL: ReferenceType unwrapping
-                // If the param type annotation is T&, store base type + isReference flag.
+                // If the param type annotation is T& or T&&, store base type + isReference flag.
                 // Without this, mapType(ReferenceType(int)) returns ptr instead of i32.
                 if (auto* refType = resolvedType->as<ReferenceTypeSymbol>()) {
                     varSym->setType(refType->baseType);
                     varSym->isReference = true;
+                    // Propagate rvalue reference flag from AST ParameterNode
+                    if (param->isRvalueReference) {
+                        varSym->isRvalueReference = true;
+                    }
                 } else {
                     varSym->setType(resolvedType);
                 }
@@ -443,6 +447,9 @@ void TypeResolver::visit(ClassDeclaration& node) {
     }
     if (node.copyConstructor) {
         node.copyConstructor->accept(*this);
+    }
+    if (node.moveConstructor) {
+        node.moveConstructor->accept(*this);
     }
 
     // Destructor

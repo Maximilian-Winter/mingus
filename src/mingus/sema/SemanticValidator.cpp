@@ -663,6 +663,7 @@ void SemanticValidator::visit(ClassDeclaration& node) {
 
     if (node.constructor) node.constructor->accept(*this);
     if (node.copyConstructor) node.copyConstructor->accept(*this);
+    if (node.moveConstructor) node.moveConstructor->accept(*this);
     if (node.destructor) node.destructor->accept(*this);
 
     for (auto& method : node.methods) {
@@ -854,6 +855,10 @@ void SemanticValidator::visit(BinaryExpression& node) {
 }
 
 void SemanticValidator::visit(UnaryExpression& node) {
+    if (node.operand) node.operand->accept(*this);
+}
+
+void SemanticValidator::visit(MoveExpression& node) {
     if (node.operand) node.operand->accept(*this);
 }
 

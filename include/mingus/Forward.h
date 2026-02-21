@@ -93,6 +93,7 @@ class MatchExpression;
 class PipeExpression;
 class LambdaExpression;
 class VariableDeclarationExpression;
+class MoveExpression;
 
 // ---- AST statement nodes ----
 class ExpressionStatement;
