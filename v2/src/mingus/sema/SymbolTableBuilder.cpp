@@ -285,16 +285,27 @@ void SymbolTableBuilder::visit(EnumDeclaration& node) {
     symbolTable_.registerType(node.name, enumSym);
     node.resolvedEnum = enumSym;
 
-    // Populate members with auto-incrementing values
+    // Populate members: explicit integer values or auto-increment
     int64_t nextValue = 0;
     for (auto& member : node.members) {
         if (member) {
             setScope(*member);
             EnumSymbol::MemberInfo info;
             info.name = member->name;
-            // Value resolution deferred to Pass 2/3 for expression evaluation
-            info.intValue = nextValue++;
             info.hasExplicitValue = (member->value != nullptr);
+
+            if (info.hasExplicitValue) {
+                // Evaluate constant integer literal
+                if (auto* intLit = member->value->as<IntegerLiteral>()) {
+                    info.intValue = intLit->value;
+                    nextValue = info.intValue + 1;
+                } else {
+                    info.intValue = nextValue++;
+                }
+            } else {
+                info.intValue = nextValue++;
+            }
+
             enumSym->members.push_back(info);
         }
     }

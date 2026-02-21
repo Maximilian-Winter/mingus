@@ -545,6 +545,26 @@ void TypeChecker::visit(QualifiedNameExpression& node) {
 
     // Walk qualified parts: Module.Enum.Member etc.
     for (size_t i = 1; i < node.parts.size(); i++) {
+        // Special case: enum member access (members stored in data vector, not scope)
+        if (auto* enumSym = sym->as<EnumSymbol>()) {
+            auto* member = enumSym->findMember(node.parts[i]);
+            if (member) {
+                // Store the EnumSymbol as resolved (codegen uses it + member name)
+                node.resolvedSymbol = std::dynamic_pointer_cast<Symbol>(
+                    symbolTable_.resolveType(enumSym->getName()));
+                node.resolvedType = node.resolvedSymbol
+                    ? std::dynamic_pointer_cast<TypeSymbol>(node.resolvedSymbol)
+                    : symbolTable_.getIntType();
+                node.isEnumAccess = true;
+                node.resolvedEnumValue = member->intValue;
+                return;
+            }
+            errors_.error("'" + node.parts[i] + "' not found in enum '"
+                + enumSym->getName() + "'", node.debugInfo);
+            node.resolvedType = symbolTable_.getErrorType();
+            return;
+        }
+
         auto* symScope = dynamic_cast<Scope*>(sym.get());
         if (!symScope) {
             errors_.error("'" + node.parts[i-1] + "' is not a scope", node.debugInfo);

@@ -2057,7 +2057,22 @@ void IRGenerator::visit(IdentifierExpression& node) {
 }
 
 void IRGenerator::visit(QualifiedNameExpression& node) {
-    // Handle enum member access
+    // Enum member access (resolved by TypeChecker)
+    if (node.isEnumAccess) {
+        // Use enum's underlying type or default to i32
+        llvm::Type* enumTy = llvm::Type::getInt32Ty(context_);
+        if (node.resolvedSymbol) {
+            if (auto* enumSym = node.resolvedSymbol->as<EnumSymbol>()) {
+                if (enumSym->underlyingType) {
+                    enumTy = mapType(enumSym->underlyingType);
+                }
+            }
+        }
+        lastValue_ = llvm::ConstantInt::get(enumTy, node.resolvedEnumValue);
+        return;
+    }
+
+    // Fallback: try scope-based resolution
     if (node.resolvedSymbol) {
         if (auto* enumSym = node.resolvedSymbol->as<EnumSymbol>()) {
             if (node.parts.size() >= 2) {
@@ -3182,6 +3197,11 @@ void IRGenerator::visit(MatchExpression& node) {
         if (auto* litPat = pattern->as<LiteralPattern>()) {
             litPat->value->accept(*this);
             llvm::Value* patVal = lastValue_;
+            if (!patVal) {
+                builder_.CreateBr(nextTestBB);
+                if (nextTestBB != mergeBB) builder_.SetInsertPoint(nextTestBB);
+                continue;
+            }
             llvm::Value* cond;
             if (isFloatingKind(subjectType)) {
                 cond = builder_.CreateFCmpOEQ(subjectVal, patVal, "match.cmp");

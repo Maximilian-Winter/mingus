@@ -89,6 +89,11 @@ class QualifiedNameExpression : public ExpressionBaseNode {
 public:
     void accept(ASTVisitor& visitor) override;
     std::vector<std::string> parts;  // ["Module", "name"] or ["Enum", "Member"]
+
+    // Enum access resolution (set by TypeChecker)
+    bool isEnumAccess = false;
+    int64_t resolvedEnumValue = 0;
+
     // resolvedSymbol inherited from ExpressionBaseNode
 };
 
