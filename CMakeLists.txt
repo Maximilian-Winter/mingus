@@ -136,9 +136,9 @@ target_link_libraries(mingus_v2_tool PRIVATE
 add_custom_command(TARGET mingus_v2_tool POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:mingus_v2_tool>
-        ${CMAKE_SOURCE_DIR}/../tests/mingus_v2_tool.exe
+        ${CMAKE_SOURCE_DIR}/tests/mingus_v2_tool.exe
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:mingus_v2_tool>
-        ${CMAKE_SOURCE_DIR}/../examples/mingus_v2_tool.exe
+        ${CMAKE_SOURCE_DIR}/examples/mingus_v2_tool.exe
         COMMENT "Copying mingus_v2_tool to tests/ and examples/"
 )

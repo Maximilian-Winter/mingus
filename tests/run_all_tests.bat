@@ -64,6 +64,9 @@ call :run_test test_27_debug_info      Test27_main  "Debug Info"
 call :run_test test_28_explicit_captures Test28_main "Explicit Captures"
 call :run_test test_29_ref_params      Test29_main  "Reference Parameters"
 call :run_test test_30_capture_writeback Test30_main "Capture Write-Back"
+call :run_test test_31_closure_struct_params Test31_main "Closure + Struct Params"
+call :run_test test_32_closure_ref_params Test32_main "Closure + Ref Params"
+call :run_test test_33_interface_params Test33_main "Interface Params"
 
 echo.
 echo ============================================================
