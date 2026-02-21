@@ -16,25 +16,25 @@ module Test37
 
         constructor(double sx, double sy, double ox, double oy)
         {
-            scaleX = sx;
-            scaleY = sy;
-            offsetX = ox;
-            offsetY = oy;
+            this.scaleX = sx;
+            this.scaleY = sy;
+            this.offsetX = ox;
+            this.offsetY = oy;
         }
 
         func scale(double val) => double
         {
-            return val * scaleX;
+            return val * this.scaleX;
         }
 
         func offset(double val) => double
         {
-            return val + offsetX;
+            return val + this.offsetX;
         }
 
         func apply(double val, double extra) => double
         {
-            return val * scaleX + extra;
+            return val * this.scaleX + extra;
         }
     }
 

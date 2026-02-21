@@ -1,0 +1,8 @@
+=== Test 37: Pipe Methods ===
+5 |> double |> add10 = 20.000000 (expect 20.0)
+3 |> t->scale = 6.000000 (expect 6.0)
+5 |> t->offset = 105.000000 (expect 105.0)
+5 |> scale |> offset = 110.000000 (expect 110.0)
+5 |> double |> offset = 110.000000 (expect 110.0)
+3 |> t->apply(7) = 13.000000 (expect 13.0)
+=== Test 37 complete ===

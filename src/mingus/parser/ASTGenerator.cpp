@@ -1399,36 +1399,28 @@ std::any ASTGenerator::visitPipe(MingusParser::PipeContext* ctx) {
         PipeStage stage;
 
         // Build base expression from qualifiedName
-        auto baseExpr = std::make_shared<QualifiedNameExpression>();
-        baseExpr->debugInfo = makeDebugInfo(targetCtx->qualifiedName());
-        baseExpr->parts = parseQualifiedName(targetCtx->qualifiedName());
-        std::shared_ptr<ExpressionBaseNode> funcExpr = baseExpr;
+        auto nameParts = parseQualifiedName(targetCtx->qualifiedName());
+        auto memberIds = targetCtx->Identifier();
+        bool hasMemberAccess = !memberIds.empty();
 
-        // Chain member accesses: qualifiedName.method or qualifiedName->method
-        // Walk children to pair each operator (. or ->) with its Identifier
-        bool nextIsArrow = false;
-        for (auto* child : targetCtx->children) {
-            auto* termNode = dynamic_cast<antlr4::tree::TerminalNode*>(child);
-            if (!termNode) continue;
-            auto tokenType = termNode->getSymbol()->getType();
-            if (tokenType == MingusParser::DotOperator) {
-                nextIsArrow = false;
-            } else if (tokenType == MingusParser::ReferenceAccessOperator) {
-                nextIsArrow = true;
-            } else if (tokenType == MingusParser::Identifier) {
-                // Only process identifiers that follow a dot/arrow operator
-                // (not the one inside qualifiedName)
-                // qualifiedName comes first, then (op Identifier)* pattern
-                // We detect this by checking if we've seen any dot/arrow
-                // Actually simpler: check position relative to qualifiedName
-            }
+        std::shared_ptr<ExpressionBaseNode> funcExpr;
+        if (hasMemberAccess && nameParts.size() == 1) {
+            // Single identifier with member access: x |> obj->method
+            // Use IdentifierExpression so codegen can load the variable
+            auto identExpr = std::make_shared<IdentifierExpression>();
+            identExpr->debugInfo = makeDebugInfo(targetCtx->qualifiedName());
+            identExpr->name = nameParts[0];
+            funcExpr = identExpr;
+        } else {
+            // Qualified name: x |> func, x |> Enum.Member, etc.
+            auto baseExpr = std::make_shared<QualifiedNameExpression>();
+            baseExpr->debugInfo = makeDebugInfo(targetCtx->qualifiedName());
+            baseExpr->parts = std::move(nameParts);
+            funcExpr = baseExpr;
         }
-        // Cleaner: use DotOperator() + ReferenceAccessOperator() counts
-        // and Identifier() list (which excludes qualifiedName's Identifier)
+
+        // Chain member accesses: obj.method or obj->method
         {
-            auto dotTokens = targetCtx->DotOperator();
-            auto arrowTokens = targetCtx->ReferenceAccessOperator();
-            auto memberIds = targetCtx->Identifier();
 
             // Pair operators with identifiers by walking children in order
             size_t memberIdx = 0;
