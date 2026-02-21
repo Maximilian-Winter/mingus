@@ -1,0 +1,11 @@
+=== Parameter Count Overloading ===
+add(1,2) = 3
+add(1,2,3) = 6
+=== Parameter Type Overloading ===
+int: 42
+double: 3.1
+string: hello
+results: 1 2 3
+=== Method Overloading ===
+compute(5) = 15
+compute(3,4) = 22

@@ -6,6 +6,9 @@
 // ============================================================================
 
 #include "mingus/sema/TypeChecker.h"
+#include "mingus/Scope.h"  // BaseScope::resolveFunctions
+
+#include <climits>  // INT_MAX
 
 namespace mingus {
 
@@ -985,17 +988,58 @@ void TypeChecker::visit(CallExpression& node) {
     // Keep the built FunctionTypeSymbol alive for the duration of this function
     std::shared_ptr<FunctionTypeSymbol> funcTypeHolder;
 
-    // Direct function call (identifier resolved to FunctionSymbol)
+    // Direct function call (identifier or member access resolved to FunctionSymbol)
     if (node.callee->resolvedSymbol) {
         auto* fSym = node.callee->resolvedSymbol->as<FunctionSymbol>();
         if (fSym) {
-            funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.callee->resolvedSymbol);
-            funcTypeHolder = fSym->buildFunctionType();
-            if (funcTypeHolder) funcType = funcTypeHolder.get();
+            // Overload resolution: if this function has overloads, find best match
+            if (fSym->hasOverloads) {
+                std::vector<std::shared_ptr<FunctionSymbol>> overloads;
+
+                // Case 1: Free function call via identifier
+                if (auto* identCallee = node.callee->as<IdentifierExpression>()) {
+                    auto* scope = node.callee->astScopeNode.get();
+                    auto* baseScope = scope ? dynamic_cast<BaseScope*>(scope) : nullptr;
+                    if (baseScope) {
+                        overloads = baseScope->resolveFunctions(identCallee->name);
+                    }
+                }
+                // Case 2: Method call via member access
+                else if (auto* memberAccess = node.callee->as<MemberAccessExpression>()) {
+                    if (memberAccess->object) {
+                        auto objType = memberAccess->object->resolvedType;
+                        if (objType) {
+                            if (auto* ptrT = objType->as<PointerTypeSymbol>())
+                                objType = ptrT->baseType;
+                            auto* typeScope = dynamic_cast<BaseScope*>(objType.get());
+                            if (typeScope) {
+                                overloads = typeScope->resolveFunctions(
+                                    memberAccess->memberName);
+                            }
+                        }
+                    }
+                }
+
+                if (overloads.size() > 1) {
+                    auto bestMatch = resolveOverload(overloads, node.arguments);
+                    if (bestMatch) {
+                        node.callee->resolvedSymbol = bestMatch;
+                        fSym = bestMatch.get();
+                        funcSym = bestMatch;
+                        funcTypeHolder = bestMatch->buildFunctionType();
+                        if (funcTypeHolder) funcType = funcTypeHolder.get();
+                    }
+                }
+            }
+            if (!funcSym) {
+                funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.callee->resolvedSymbol);
+                funcTypeHolder = fSym->buildFunctionType();
+                if (funcTypeHolder) funcType = funcTypeHolder.get();
+            }
         }
     }
 
-    // Method call via member access
+    // Method call via member access (fallback for unresolved symbols)
     if (!funcSym && node.callee->is<MemberAccessExpression>()) {
         auto* memberAccess = node.callee->as<MemberAccessExpression>();
         if (memberAccess->resolvedSymbol) {
@@ -1275,6 +1319,82 @@ void TypeChecker::visit(LambdaExpression& node) {
     // Restore context
     currentFunction_ = savedFunc;
     currentReturnType_ = savedReturn;
+}
+
+// ============================================================================
+// Overload resolution
+// ============================================================================
+
+int TypeChecker::scoreOverloadMatch(FunctionSymbol* func,
+                                     const std::shared_ptr<ArgumentsNode>& args)
+{
+    size_t argCount = args ? args->expressions.size() : 0;
+    size_t paramCount = func->parameters.size();
+
+    // Skip 'this' param for method calls — 'this' is implicit
+    // (methods called via identifier have hasThisParam=true but the this arg
+    //  is added by codegen, not by the caller in the argument list)
+
+    // Variadics: at least paramCount args
+    if (func->isVariadic) {
+        if (argCount < paramCount) return -1;  // too few args
+    } else {
+        if (argCount != paramCount) return -1;  // wrong count
+    }
+
+    int score = 0;  // 0 = perfect, higher = worse
+    for (size_t i = 0; i < paramCount && i < argCount; i++) {
+        auto argType = args->expressions[i]->resolvedType;
+        auto paramType = func->parameters[i]->getType();
+        if (!argType || !paramType) return -1;
+
+        TypeSymbol* argT = argType->as<TypeSymbol>();
+        TypeSymbol* paramT = paramType->as<TypeSymbol>();
+        if (!argT || !paramT) return -1;
+
+        // Exact match: score 0
+        if (argT == paramT) continue;
+
+        // Compatible match (widening): score penalty
+        if (symbolTable_.isCompatible(argT, paramT)) {
+            score += 10;  // compatible but not exact
+            continue;
+        }
+
+        // No match at all
+        return -1;
+    }
+
+    return score;
+}
+
+std::shared_ptr<FunctionSymbol> TypeChecker::resolveOverload(
+    const std::vector<std::shared_ptr<FunctionSymbol>>& candidates,
+    const std::shared_ptr<ArgumentsNode>& args)
+{
+    std::shared_ptr<FunctionSymbol> bestMatch;
+    int bestScore = INT_MAX;
+    bool ambiguous = false;
+
+    for (auto& candidate : candidates) {
+        int score = scoreOverloadMatch(candidate.get(), args);
+        if (score < 0) continue;  // not a match
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestMatch = candidate;
+            ambiguous = false;
+        } else if (score == bestScore) {
+            ambiguous = true;
+        }
+    }
+
+    if (ambiguous) {
+        // Return first match anyway — error reported by caller if needed
+        return bestMatch;
+    }
+
+    return bestMatch;
 }
 
 } // namespace mingus

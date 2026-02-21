@@ -140,6 +140,11 @@ SymbolPtr ClassSymbol::resolve(const std::string& name) const {
     if (it != symbols_.end()) {
         return it->second;
     }
+    // 1b. Check function overloads (return first match)
+    auto fit = functionOverloads_.find(name);
+    if (fit != functionOverloads_.end() && !fit->second.empty()) {
+        return fit->second[0];
+    }
     // 2. Inherited members (walk base class chain)
     if (resolvedBaseClass) {
         auto found = resolvedBaseClass->resolve(name);

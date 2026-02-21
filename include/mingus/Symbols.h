@@ -100,6 +100,9 @@ public:
     bool isVariadic = false;
     bool hasThisParam = false;
 
+    // Overload support: true if other functions share this name in the same scope
+    bool hasOverloads = false;
+
     // Virtual dispatch index (-1 = not virtual)
     int vtableIndex = -1;
 

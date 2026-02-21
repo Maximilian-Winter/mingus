@@ -263,6 +263,31 @@ std::string IRGenerator::opToString(OverloadableOp op) {
     return "unknown";
 }
 
+// Type tag for overloaded function name mangling
+static std::string mangleTypeTag(TypeSymbol* type) {
+    if (!type) return "v";
+    if (auto* prim = type->as<PrimitiveTypeSymbol>()) {
+        switch (prim->primitiveKind) {
+            case PrimitiveKind::Int:    return "i";
+            case PrimitiveKind::Double: return "d";
+            case PrimitiveKind::Float:  return "f";
+            case PrimitiveKind::Bool:   return "b";
+            case PrimitiveKind::Byte:   return "y";
+            case PrimitiveKind::Char:   return "c";
+            case PrimitiveKind::String: return "s";
+            case PrimitiveKind::Void:   return "v";
+        }
+    }
+    if (auto* ptr = type->as<PointerTypeSymbol>()) {
+        return "p" + mangleTypeTag(ptr->baseType.get());
+    }
+    if (type->is<ClassSymbol>() || type->is<StructSymbol>()) {
+        return type->getName();
+    }
+    if (type->is<FunctionTypeSymbol>()) return "fn";
+    return "x";
+}
+
 std::string IRGenerator::mangleName(Symbol* sym) {
     if (!sym) return "__unknown__";
 
@@ -302,13 +327,19 @@ std::string IRGenerator::mangleName(Symbol* sym) {
         }
     }
 
-    // Method: ClassName_methodName
+    // Method or module-level function
     if (auto* func = sym->as<FunctionSymbol>()) {
-        if (func->isMethod) {
-            return func->getQualifiedName();
+        std::string name = func->getQualifiedName();
+        // Overloaded functions: append parameter type signatures for uniqueness
+        if (func->hasOverloads) {
+            name += "$";
+            for (auto& param : func->parameters) {
+                if (param->getType()) {
+                    name += "_" + mangleTypeTag(param->getType().get());
+                }
+            }
         }
-        // Module-level function: ModuleName_funcName
-        return func->getQualifiedName();
+        return name;
     }
 
     return sym->getName();

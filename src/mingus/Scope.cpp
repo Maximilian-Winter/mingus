@@ -23,7 +23,12 @@ SymbolPtr BaseScope::resolve(const std::string& name) const {
     if (it != symbols_.end()) {
         return it->second;
     }
-    // 2. Walk up the enclosing scope chain
+    // 2. Check function overloads (return first match for backward compat)
+    auto fit = functionOverloads_.find(name);
+    if (fit != functionOverloads_.end() && !fit->second.empty()) {
+        return fit->second[0];
+    }
+    // 3. Walk up the enclosing scope chain
     if (enclosingScope_) {
         return enclosingScope_->resolve(name);
     }
@@ -32,15 +37,42 @@ SymbolPtr BaseScope::resolve(const std::string& name) const {
 
 void BaseScope::define(const SymbolPtr& sym) {
     if (!sym) return;
-    // Note: silently overwrites on redefinition (sema should catch duplicates)
+
+    // Function overloading: track all FunctionSymbol definitions per name
+    // (excludes constructors/destructors which use dedicated ClassSymbol slots)
+    if (auto funcSym = std::dynamic_pointer_cast<FunctionSymbol>(sym)) {
+        if (!funcSym->is<ConstructorSymbol>() && !funcSym->is<DestructorSymbol>()) {
+            auto& overloads = functionOverloads_[sym->getName()];
+            overloads.push_back(funcSym);
+            // Mark all overloads when multiple functions share a name
+            if (overloads.size() > 1) {
+                for (auto& f : overloads) f->hasOverloads = true;
+            }
+            // Still store in symbols_ for backward compat (resolve returns first)
+            if (overloads.size() == 1) {
+                symbols_[sym->getName()] = sym;
+            }
+            return;
+        }
+    }
+
+    // Non-function symbols or constructors/destructors: single entry
     symbols_[sym->getName()] = sym;
 }
 
 std::vector<SymbolPtr> BaseScope::getAllSymbols() const {
     std::vector<SymbolPtr> result;
-    result.reserve(symbols_.size());
+    // Non-function symbols (variables, types, ctors, dtors) from symbols_ map
     for (const auto& [name, sym] : symbols_) {
+        // Skip functions that are tracked in functionOverloads_
+        if (functionOverloads_.count(name)) continue;
         result.push_back(sym);
+    }
+    // All function overloads (includes single-definition functions)
+    for (const auto& [name, funcs] : functionOverloads_) {
+        for (const auto& func : funcs) {
+            result.push_back(func);
+        }
     }
     return result;
 }
@@ -95,13 +127,35 @@ const std::vector<std::shared_ptr<OperatorSymbol>>& BaseScope::getAllOperators()
 }
 
 bool BaseScope::isDefined(const std::string& name) const {
-    return symbols_.find(name) != symbols_.end();
+    return symbols_.find(name) != symbols_.end() ||
+           functionOverloads_.find(name) != functionOverloads_.end();
+}
+
+std::vector<std::shared_ptr<FunctionSymbol>> BaseScope::resolveFunctions(
+    const std::string& name) const
+{
+    auto it = functionOverloads_.find(name);
+    if (it != functionOverloads_.end() && !it->second.empty()) {
+        return it->second;
+    }
+    // Walk up scope chain
+    if (enclosingScope_) {
+        auto* baseScope = dynamic_cast<BaseScope*>(enclosingScope_.get());
+        if (baseScope) {
+            return baseScope->resolveFunctions(name);
+        }
+    }
+    return {};
 }
 
 std::string BaseScope::toString() const {
     std::string result = "Scope[" + getName() + "] {\n";
     for (const auto& [name, sym] : symbols_) {
-        result += "  " + name + "\n";
+        if (!functionOverloads_.count(name))
+            result += "  " + name + "\n";
+    }
+    for (const auto& [name, funcs] : functionOverloads_) {
+        result += "  " + name + " (" + std::to_string(funcs.size()) + " overload(s))\n";
     }
     result += "}";
     return result;

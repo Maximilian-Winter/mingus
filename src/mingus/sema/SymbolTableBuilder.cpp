@@ -581,10 +581,12 @@ void SymbolTableBuilder::buildVtable(ClassSymbol* classSym) {
         if (!funcSym->isMethod) continue;
 
         // Check if this overrides a base class method
+        // Match by name AND parameter count (overloaded methods are distinct vtable slots)
         bool overridden = false;
         for (size_t i = 1; i < classSym->vtable.size(); i++) {
             if (classSym->vtable[i] &&
-                classSym->vtable[i]->getName() == funcSym->getName()) {
+                classSym->vtable[i]->getName() == funcSym->getName() &&
+                classSym->vtable[i]->parameters.size() == funcSym->parameters.size()) {
                 classSym->vtable[i] = std::dynamic_pointer_cast<FunctionSymbol>(sym);
                 funcSym->vtableIndex = static_cast<int>(i);
                 funcSym->isVirtual = true;

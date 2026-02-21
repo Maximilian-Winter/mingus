@@ -90,12 +90,21 @@ public:
     // Check if a name is defined directly in this scope (no chain walk)
     bool isDefined(const std::string& name) const;
 
+    // Overload resolution: return all functions with a given name
+    // Walks enclosing scope chain. Returns empty vector if none found.
+    std::vector<std::shared_ptr<FunctionSymbol>> resolveFunctions(
+        const std::string& name) const;
+
 protected:
     std::unordered_map<std::string, SymbolPtr> symbols_;
     ScopePtr enclosingScope_;
     std::vector<ScopePtr> nestedScopes_;  // child block scopes (not SymbolWithScope)
     std::vector<std::shared_ptr<OperatorSymbol>> operators_;
     std::string name_;
+
+    // Parallel storage for function overloads (functions only, not ctors/dtors)
+    std::unordered_map<std::string,
+        std::vector<std::shared_ptr<FunctionSymbol>>> functionOverloads_;
 };
 
 // ============================================================================

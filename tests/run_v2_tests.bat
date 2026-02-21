@@ -77,6 +77,7 @@ call :run_test test_40_covariant_returns Test40_main "Covariant Return Types"
 call :run_test test_41_typedef          Test41_main  "Typedef / Type Alias"
 call :run_test test_42_labeled_loops   Test42_main  "Labeled Break/Continue"
 call :run_test test_43_copy_constructors Test43_main "Copy Constructors"
+call :run_test test_44_overloading       Test44_main  "Function Overloading"
 
 echo.
 echo ============================================================

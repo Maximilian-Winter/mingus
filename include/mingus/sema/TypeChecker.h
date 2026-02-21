@@ -127,6 +127,16 @@ private:
 
     // Check that an expression is a valid lvalue
     bool isLValue(ExpressionBaseNode* expr);
+
+    // Overload resolution: pick the best-matching function from candidates
+    // Returns nullptr if no match or ambiguous
+    std::shared_ptr<FunctionSymbol> resolveOverload(
+        const std::vector<std::shared_ptr<FunctionSymbol>>& candidates,
+        const std::shared_ptr<ArgumentsNode>& args);
+
+    // Score how well argument types match parameter types (lower = better, -1 = no match)
+    int scoreOverloadMatch(FunctionSymbol* func,
+                           const std::shared_ptr<ArgumentsNode>& args);
 };
 
 } // namespace mingus

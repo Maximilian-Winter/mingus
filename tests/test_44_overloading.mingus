@@ -1,0 +1,69 @@
+// Test 44: Function Overloading
+
+module Test44
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Overloaded free functions: different parameter counts ---
+    func add(int a, int b) => int => a + b;
+    func add(int a, int b, int c) => int => a + b + c;
+
+    // --- Overloaded free functions: different parameter types ---
+    func describe(int x) => int
+    {
+        printf("int: %d\n", x);
+        return 1;
+    }
+
+    func describe(double x) => int
+    {
+        printf("double: %.1f\n", x);
+        return 2;
+    }
+
+    func describe(string x) => int
+    {
+        printf("string: %s\n", x);
+        return 3;
+    }
+
+    // --- Overloaded methods ---
+    class Calculator
+    {
+        public int base;
+
+        constructor(int b)
+        {
+            this.base = b;
+        }
+
+        destructor {}
+
+        func compute(int x) => int => this.base + x;
+        func compute(int x, int y) => int => this.base + x * y;
+    }
+
+    func main() => int
+    {
+        // Test 1: Different parameter counts
+        printf("=== Parameter Count Overloading ===\n");
+        printf("add(1,2) = %d\n", add(1, 2));
+        printf("add(1,2,3) = %d\n", add(1, 2, 3));
+
+        // Test 2: Different parameter types
+        printf("=== Parameter Type Overloading ===\n");
+        var r1 = describe(42);
+        var r2 = describe(3.14);
+        var r3 = describe("hello");
+        printf("results: %d %d %d\n", r1, r2, r3);
+
+        // Test 3: Overloaded methods
+        printf("=== Method Overloading ===\n");
+        var calc = new Calculator(10);
+        printf("compute(5) = %d\n", calc->compute(5));
+        printf("compute(3,4) = %d\n", calc->compute(3, 4));
+        delete calc;
+
+        return 0;
+    }
+}
