@@ -1,0 +1,136 @@
+// Test 40: Covariant Return Types
+// Verifies that overriding virtual methods can return a more derived type.
+
+module Test40
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Base class ---
+    class Animal
+    {
+        int id;
+
+        constructor(int i)
+        {
+            this.id = i;
+        }
+
+        destructor {}
+
+        func describe() => int
+        {
+            return this.id;
+        }
+
+        // Virtual method returning Animal*
+        func clone(int newId) => Animal*
+        {
+            return new Animal(newId);
+        }
+
+        // Virtual method returning int (same type in derived)
+        func kind() => int
+        {
+            return 0;
+        }
+    }
+
+    // --- Derived class with covariant return ---
+    class Dog : Animal
+    {
+        int barkVolume;
+
+        constructor(int i, int vol) : super(i)
+        {
+            this.barkVolume = vol;
+        }
+
+        destructor {}
+
+        // Covariant: returns Dog* where base returns Animal*
+        func clone(int newId) => Dog*
+        {
+            return new Dog(newId, this.barkVolume);
+        }
+
+        // Same return type override
+        func kind() => int
+        {
+            return 1;
+        }
+
+        func getBark() => int
+        {
+            return this.barkVolume;
+        }
+    }
+
+    // --- Second derived class ---
+    class Cat : Animal
+    {
+        int purr;
+
+        constructor(int i, int p) : super(i)
+        {
+            this.purr = p;
+        }
+
+        destructor {}
+
+        // Covariant: returns Cat* where base returns Animal*
+        func clone(int newId) => Cat*
+        {
+            return new Cat(newId, this.purr);
+        }
+
+        func kind() => int
+        {
+            return 2;
+        }
+
+        func getPurr() => int
+        {
+            return this.purr;
+        }
+    }
+
+    func main() => int
+    {
+        // --- 1. Direct covariant call ---
+        var dog = new Dog(10, 99);
+        var clonedDog = dog->clone(20);
+        printf("dog clone id=%d bark=%d\n", clonedDog->describe(), clonedDog->getBark());
+
+        // --- 2. Through base pointer (virtual dispatch) ---
+        Animal* animalPtr = dog;
+        var clonedAnimal = animalPtr->clone(30);
+        printf("animal clone id=%d kind=%d\n", clonedAnimal->describe(), clonedAnimal->kind());
+
+        // --- 3. Cat covariant ---
+        var cat = new Cat(40, 77);
+        var clonedCat = cat->clone(50);
+        printf("cat clone id=%d purr=%d\n", clonedCat->describe(), clonedCat->getPurr());
+
+        // --- 4. Polymorphic dispatch ---
+        Animal* a1 = new Dog(1, 10);
+        Animal* a2 = new Cat(2, 20);
+
+        var c1 = a1->clone(11);
+        var c2 = a2->clone(22);
+        printf("poly c1 kind=%d c2 kind=%d\n", c1->kind(), c2->kind());
+
+        // --- Cleanup ---
+        delete clonedDog;
+        delete clonedAnimal;
+        delete clonedCat;
+        delete c1;
+        delete c2;
+        delete dog;
+        delete cat;
+        delete a1;
+        delete a2;
+
+        printf("done\n");
+        return 0;
+    }
+}

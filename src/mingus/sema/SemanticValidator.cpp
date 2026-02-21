@@ -336,7 +336,47 @@ void SemanticValidator::checkInterfaceImplementation(
 }
 
 // ============================================================================
-// Match exhaustiveness — 4e
+// Override return type covariance — 4e
+// ============================================================================
+
+void SemanticValidator::checkOverrideCovariance(
+    ClassSymbol* cls,
+    const std::shared_ptr<DebugInfo>& loc)
+{
+    if (!cls || !cls->resolvedBaseClass) return;
+
+    // Compare each vtable slot against the base class vtable
+    auto* base = cls->resolvedBaseClass;
+    size_t baseVtableSize = base->vtable.size();
+
+    for (size_t i = 1; i < std::min(cls->vtable.size(), baseVtableSize); i++) {
+        auto& childFunc = cls->vtable[i];
+        auto& parentFunc = base->vtable[i];
+        if (!childFunc || !parentFunc) continue;
+
+        // Skip if same function (not overridden)
+        if (childFunc.get() == parentFunc.get()) continue;
+
+        auto* childRet = childFunc->returnType.get();
+        auto* parentRet = parentFunc->returnType.get();
+        if (!childRet || !parentRet) continue;
+
+        // Same type → OK
+        if (childRet == parentRet) continue;
+
+        // Covariant: child return type is compatible with parent return type
+        if (symbolTable_.isCompatible(childRet, parentRet)) continue;
+
+        // Incompatible return type
+        errors_.error("override '" + childFunc->getName()
+            + "' returns '" + childRet->getName()
+            + "' but base method returns '" + parentRet->getName()
+            + "' (not covariant)", loc);
+    }
+}
+
+// ============================================================================
+// Match exhaustiveness — 4f
 // ============================================================================
 
 void SemanticValidator::checkExhaustiveness(MatchExpression& node) {
@@ -611,6 +651,9 @@ void SemanticValidator::visit(ClassDeclaration& node) {
             checkInterfaceImplementation(node.resolvedClass.get(),
                 iface.get(), node.debugInfo);
         }
+
+        // Check override return type covariance
+        checkOverrideCovariance(node.resolvedClass.get(), node.debugInfo);
     }
 
     // Visit field initializers

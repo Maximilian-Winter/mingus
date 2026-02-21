@@ -177,6 +177,10 @@ private:
                                        InterfaceSymbol* iface,
                                        const std::shared_ptr<DebugInfo>& loc);
 
+    // Check override return types are covariant
+    void checkOverrideCovariance(ClassSymbol* cls,
+                                  const std::shared_ptr<DebugInfo>& loc);
+
     // Match exhaustiveness
     void checkExhaustiveness(MatchExpression& node);
 };

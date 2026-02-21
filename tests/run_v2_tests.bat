@@ -73,6 +73,7 @@ call :run_test test_36_const            Test36_main  "Const Variables"
 call :run_test test_37_pipe_methods    Test37_main  "Pipe Methods"
 call :run_test test_38_bare_fields    Test38_main  "Bare Field Access"
 call :run_test test_39_do_while      Test39_main  "Do-While Loop"
+call :run_test test_40_covariant_returns Test40_main "Covariant Return Types"
 
 echo.
 echo ============================================================

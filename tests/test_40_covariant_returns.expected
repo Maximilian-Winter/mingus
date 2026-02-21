@@ -1,0 +1,5 @@
+dog clone id=20 bark=99
+animal clone id=30 kind=1
+cat clone id=50 purr=77
+poly c1 kind=1 c2 kind=2
+done
