@@ -31,6 +31,7 @@ add_library(mingus_v2_core STATIC
     src/mingus/sema/SymbolTableBuilder.cpp
     src/mingus/sema/TypeResolver.cpp
     src/mingus/sema/TypeChecker.cpp
+    src/mingus/sema/SemanticValidator.cpp
 )
 
 target_include_directories(mingus_v2_core PUBLIC

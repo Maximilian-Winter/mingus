@@ -21,6 +21,7 @@
 #include "mingus/sema/SymbolTableBuilder.h"
 #include "mingus/sema/TypeResolver.h"
 #include "mingus/sema/TypeChecker.h"
+#include "mingus/sema/SemanticValidator.h"
 
 #include <cassert>
 #include <iostream>
@@ -1821,6 +1822,368 @@ int main() {
     }
 
     // ========================================
+    // 22. Pass 4 — Lambda capture analysis
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     func outer() => void {
+        //       var count: int = 0;
+        //       var name: string = "hello";
+        //       var fn = [=, &count](int x) => { return count + x; };
+        //       // fn should capture:
+        //       //   count by reference (explicit &count)
+        //       //   x is a parameter — not captured
+        //       // name is not used in lambda — not captured
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "outer";
+        auto retType = std::make_shared<PrimitiveTypeNode>();
+        retType->kind = PrimitiveKind::Void;
+        funcDecl->returnType = retType;
+        auto body = std::make_shared<BlockStatementNode>();
+
+        // var count: int = 0;
+        auto varCount = std::make_shared<VariableDeclaration>();
+        varCount->name = "count";
+        auto countType = std::make_shared<PrimitiveTypeNode>();
+        countType->kind = PrimitiveKind::Int;
+        varCount->type = countType;
+        varCount->initializer = std::make_shared<IntegerLiteral>();
+        body->statements.push_back(varCount);
+
+        // var name: string = "hello";
+        auto varName = std::make_shared<VariableDeclaration>();
+        varName->name = "name";
+        auto nameType = std::make_shared<PrimitiveTypeNode>();
+        nameType->kind = PrimitiveKind::String;
+        varName->type = nameType;
+        varName->initializer = std::make_shared<StringLiteral>();
+        body->statements.push_back(varName);
+
+        // var fn = [=, &count](int x) => { return count + x; };
+        auto varFn = std::make_shared<VariableDeclaration>();
+        varFn->name = "fn";
+        varFn->isInferred = true;
+
+        auto lambda = std::make_shared<LambdaExpression>();
+        lambda->captureDefault = CaptureDefault::ByCopy;
+        lambda->captureItems = {{"count", CaptureMode::ByReference}};
+
+        auto lambdaParam = std::make_shared<ParameterNode>();
+        lambdaParam->name = "x";
+        auto paramType = std::make_shared<PrimitiveTypeNode>();
+        paramType->kind = PrimitiveKind::Int;
+        lambdaParam->type = paramType;
+        lambda->parameters = {lambdaParam};
+
+        // Body: return count + x;
+        auto lambdaBody = std::make_shared<BlockStatementNode>();
+        auto lambdaRet = std::make_shared<ReturnStatement>();
+        auto addExpr = std::make_shared<BinaryExpression>();
+        addExpr->op = BinaryOp::Add;
+        auto countIdent = std::make_shared<IdentifierExpression>();
+        countIdent->name = "count";
+        auto xIdent = std::make_shared<IdentifierExpression>();
+        xIdent->name = "x";
+        addExpr->left = countIdent;
+        addExpr->right = xIdent;
+        lambdaRet->value = addExpr;
+        lambdaBody->statements.push_back(lambdaRet);
+        lambda->body = lambdaBody;
+        varFn->initializer = lambda;
+        body->statements.push_back(varFn);
+
+        funcDecl->body = body;
+        module->declarations = {funcDecl};
+        program->modules = {module};
+
+        // Run all 4 passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+        SemanticValidator validator(st, errors);
+        validator.validate(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 4 no errors (test 22)");
+
+        // Verify: lambda captured 'count' (used in body)
+        ASSERT_EQ(lambda->capturedVariables.size(), size_t(1),
+            "lambda captures 1 variable");
+        ASSERT_EQ(lambda->capturedVariables[0]->getName(), std::string("count"),
+            "captured var = count");
+
+        // Verify: capture mode is ByReference (explicit &count)
+        ASSERT_EQ(lambda->captureModesResolved.size(), size_t(1),
+            "1 capture mode resolved");
+        ASSERT_TRUE(lambda->captureModesResolved[0] == CaptureMode::ByReference,
+            "count captured by reference");
+
+        // Verify: 'x' is NOT captured (it's a parameter)
+        // 'name' is NOT captured (not used in lambda body)
+
+        passed++;
+        std::cout << "[PASS] 22. Pass 4 — Lambda capture analysis\n";
+    }
+
+    // ========================================
+    // 23. Pass 4 — RAII tracking + control flow
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     class Widget { int id; }
+        //     func test() => void {
+        //       var w: Widget;       // RAII: Widget has destructor
+        //       while (true) {
+        //         break;             // valid: inside loop
+        //       }
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        // class Widget { int id; }
+        auto classDecl = std::make_shared<ClassDeclaration>();
+        classDecl->name = "Widget";
+        auto idField = std::make_shared<VariableDeclaration>();
+        idField->name = "id";
+        auto idType = std::make_shared<PrimitiveTypeNode>();
+        idType->kind = PrimitiveKind::Int;
+        idField->type = idType;
+        classDecl->fields = {idField};
+
+        // func test() => void
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "test";
+        auto retType = std::make_shared<PrimitiveTypeNode>();
+        retType->kind = PrimitiveKind::Void;
+        funcDecl->returnType = retType;
+        auto body = std::make_shared<BlockStatementNode>();
+
+        // var w: Widget;
+        auto varW = std::make_shared<VariableDeclaration>();
+        varW->name = "w";
+        auto wType = std::make_shared<NamedTypeNode>();
+        wType->qualifiedName = {"Widget"};
+        varW->type = wType;
+        body->statements.push_back(varW);
+
+        // while (true) { break; }
+        auto whileStmt = std::make_shared<WhileStatement>();
+        auto trueLit = std::make_shared<BoolLiteral>();
+        trueLit->value = true;
+        whileStmt->condition = trueLit;
+        auto whileBody = std::make_shared<BlockStatementNode>();
+        auto breakStmt = std::make_shared<BreakStatement>();
+        whileBody->statements.push_back(breakStmt);
+        whileStmt->body = whileBody;
+        body->statements.push_back(whileStmt);
+
+        funcDecl->body = body;
+        module->declarations = {classDecl, funcDecl};
+        program->modules = {module};
+
+        // Run all 4 passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+        SemanticValidator validator(st, errors);
+        validator.validate(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 4 no errors (test 23)");
+
+        // Verify: RAII tracking — Widget has destructor, so 'w' is tracked
+        auto& raiiInfo = validator.getRAIIInfo();
+        bool foundRAII = false;
+        for (auto& [scope, info] : raiiInfo) {
+            for (auto& d : info.destructibles) {
+                if (d.variable->getName() == "w") {
+                    foundRAII = true;
+                    ASSERT_NOT_NULL(d.destructor, "w has destructor in RAII info");
+                }
+            }
+        }
+        ASSERT_TRUE(foundRAII, "var w tracked for RAII cleanup");
+
+        // Verify: break inside loop — no error
+        // (if break were outside loop, errors.hasErrors() would be true)
+
+        passed++;
+        std::cout << "[PASS] 23. Pass 4 — RAII tracking + control flow\n";
+    }
+
+    // ========================================
+    // 24. Pass 4 — Nested lambda + self-capture + non-escaping
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     func test() => void {
+        //       var val: int = 10;
+        //       var f = [=](int x) => { return val + x; };  // self-capture
+        //       apply(f);                                     // non-escaping: lambda as arg
+        //     }
+        //     func apply((int)=>int callback) => void { }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        // func apply((int)=>int callback) => void { }
+        auto applyFunc = std::make_shared<FunctionDeclaration>();
+        applyFunc->name = "apply";
+        auto applyRet = std::make_shared<PrimitiveTypeNode>();
+        applyRet->kind = PrimitiveKind::Void;
+        applyFunc->returnType = applyRet;
+        auto callbackParam = std::make_shared<ParameterNode>();
+        callbackParam->name = "callback";
+        auto callbackType = std::make_shared<FunctionTypeNode>();
+        auto cbParamType = std::make_shared<PrimitiveTypeNode>();
+        cbParamType->kind = PrimitiveKind::Int;
+        callbackType->parameterTypes = {cbParamType};
+        auto cbRetType = std::make_shared<PrimitiveTypeNode>();
+        cbRetType->kind = PrimitiveKind::Int;
+        callbackType->returnType = cbRetType;
+        callbackParam->type = callbackType;
+        applyFunc->parameters = {callbackParam};
+        applyFunc->body = std::make_shared<BlockStatementNode>();
+
+        // func test() => void
+        auto testFunc = std::make_shared<FunctionDeclaration>();
+        testFunc->name = "test";
+        auto testRet = std::make_shared<PrimitiveTypeNode>();
+        testRet->kind = PrimitiveKind::Void;
+        testFunc->returnType = testRet;
+        auto testBody = std::make_shared<BlockStatementNode>();
+
+        // var val: int = 10;
+        auto varVal = std::make_shared<VariableDeclaration>();
+        varVal->name = "val";
+        auto valType = std::make_shared<PrimitiveTypeNode>();
+        valType->kind = PrimitiveKind::Int;
+        varVal->type = valType;
+        varVal->initializer = std::make_shared<IntegerLiteral>();
+        testBody->statements.push_back(varVal);
+
+        // var f = [=](int x) => { return val + x; };
+        auto varF = std::make_shared<VariableDeclaration>();
+        varF->name = "f";
+        varF->isInferred = true;
+        auto lambda = std::make_shared<LambdaExpression>();
+        lambda->captureDefault = CaptureDefault::ByCopy;
+        auto lParam = std::make_shared<ParameterNode>();
+        lParam->name = "x";
+        auto lParamType = std::make_shared<PrimitiveTypeNode>();
+        lParamType->kind = PrimitiveKind::Int;
+        lParam->type = lParamType;
+        lambda->parameters = {lParam};
+        auto lBody = std::make_shared<BlockStatementNode>();
+        auto lRet = std::make_shared<ReturnStatement>();
+        auto lAdd = std::make_shared<BinaryExpression>();
+        lAdd->op = BinaryOp::Add;
+        auto valIdent = std::make_shared<IdentifierExpression>();
+        valIdent->name = "val";
+        auto xIdent2 = std::make_shared<IdentifierExpression>();
+        xIdent2->name = "x";
+        lAdd->left = valIdent;
+        lAdd->right = xIdent2;
+        lRet->value = lAdd;
+        lBody->statements.push_back(lRet);
+        lambda->body = lBody;
+        varF->initializer = lambda;
+        testBody->statements.push_back(varF);
+
+        // apply(lambda directly as argument)
+        auto callStmt = std::make_shared<ExpressionStatement>();
+        auto callExpr = std::make_shared<CallExpression>();
+        auto applyIdent = std::make_shared<IdentifierExpression>();
+        applyIdent->name = "apply";
+        callExpr->callee = applyIdent;
+        auto callArgs = std::make_shared<ArgumentsNode>();
+        // Pass a lambda literal directly as argument (should be non-escaping)
+        auto inlineLambda = std::make_shared<LambdaExpression>();
+        inlineLambda->captureDefault = CaptureDefault::ByCopy;
+        auto inlineParam = std::make_shared<ParameterNode>();
+        inlineParam->name = "y";
+        auto inlineParamType = std::make_shared<PrimitiveTypeNode>();
+        inlineParamType->kind = PrimitiveKind::Int;
+        inlineParam->type = inlineParamType;
+        inlineLambda->parameters = {inlineParam};
+        auto inlineBody = std::make_shared<BlockStatementNode>();
+        auto inlineRet = std::make_shared<ReturnStatement>();
+        auto yIdent = std::make_shared<IdentifierExpression>();
+        yIdent->name = "y";
+        inlineRet->value = yIdent;
+        inlineBody->statements.push_back(inlineRet);
+        inlineLambda->body = inlineBody;
+        callArgs->expressions = {inlineLambda};
+        callExpr->arguments = callArgs;
+        callStmt->expression = callExpr;
+        testBody->statements.push_back(callStmt);
+
+        testFunc->body = testBody;
+        module->declarations = {applyFunc, testFunc};
+        program->modules = {module};
+
+        // Run all 4 passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+        SemanticValidator validator(st, errors);
+        validator.validate(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Pass 4 no errors (test 24)");
+
+        // Verify: lambda captures 'val' by value
+        ASSERT_EQ(lambda->capturedVariables.size(), size_t(1),
+            "lambda captures 1 var (val)");
+        ASSERT_EQ(lambda->capturedVariables[0]->getName(), std::string("val"),
+            "captured = val");
+        ASSERT_TRUE(lambda->captureModesResolved[0] == CaptureMode::ByValue,
+            "val captured by value ([=] default)");
+
+        // Verify: self-capture detection
+        // f captures val, not itself — selfCapture should be false
+        ASSERT_TRUE(!lambda->selfCapture, "f does not self-capture");
+
+        // Verify: inline lambda passed as argument is non-escaping
+        ASSERT_TRUE(!inlineLambda->escapes,
+            "inline lambda arg is non-escaping");
+
+        // Verify: named lambda (f) defaults to escaping
+        ASSERT_TRUE(lambda->escapes,
+            "named lambda defaults to escaping");
+
+        passed++;
+        std::cout << "[PASS] 24. Pass 4 — Nested lambda + self-capture + non-escaping\n";
+    }
+
+    // ========================================
     // Summary
     // ========================================
     std::cout << "\n=== All " << passed << " smoke tests passed ===\n";
@@ -1836,6 +2199,7 @@ int main() {
     std::cout << "  Pass 1 — SymbolTableBuilder (scope tree, symbols, imports)\n";
     std::cout << "  Pass 2 — TypeResolver (annotations, refs, compounds, named)\n";
     std::cout << "  Pass 3 — TypeChecker (inference, calls, member access, ops)\n";
+    std::cout << "  Pass 4 — SemanticValidator (captures, RAII, control flow)\n";
 
     return 0;
 }

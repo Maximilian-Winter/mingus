@@ -365,6 +365,12 @@ void TypeChecker::visit(ReturnStatement& node) {
         } else if (!node.value && currentReturnType_->getName() != "void") {
             errors_.error("non-void function must return a value", node.debugInfo);
         }
+    } else {
+        // Lambda return type inference: if currentReturnType_ is null,
+        // the first return statement sets it (block-body lambdas)
+        if (node.value && node.value->resolvedType) {
+            currentReturnType_ = node.value->resolvedType;
+        }
     }
 }
 
