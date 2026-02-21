@@ -1,0 +1,8 @@
+=== Explicit Copy ===
+original: value=42 id=1
+copy: value=42 id=101
+=== Copy Preserves Values ===
+a.value=999 b.value=999
+b is independent: 1
+=== No Copy Constructor ===
+value=77

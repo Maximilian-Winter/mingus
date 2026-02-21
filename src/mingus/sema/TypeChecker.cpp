@@ -350,6 +350,7 @@ void TypeChecker::visit(ClassDeclaration& node) {
     }
 
     if (node.constructor) node.constructor->accept(*this);
+    if (node.copyConstructor) node.copyConstructor->accept(*this);
     if (node.destructor) node.destructor->accept(*this);
 
     for (auto& method : node.methods) {

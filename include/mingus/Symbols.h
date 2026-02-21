@@ -132,6 +132,7 @@ public:
     explicit ConstructorSymbol(const std::string& className);
 
     // Always: isMethod = true, hasThisParam = true, name = "constructor"
+    bool isCopyConstructor = false;  // Set by SymbolTableBuilder for copy ctors
 };
 
 // ============================================================================
@@ -184,6 +185,7 @@ public:
     std::vector<std::shared_ptr<VariableSymbol>> allFields;  // inherited + own (LLVM GEP order)
 
     std::shared_ptr<ConstructorSymbol> constructor;
+    std::shared_ptr<ConstructorSymbol> copyConstructor;  // constructor(ClassName& other)
     std::shared_ptr<DestructorSymbol> destructor;
 
     // ---- Virtual dispatch ----

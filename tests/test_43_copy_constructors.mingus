@@ -1,0 +1,79 @@
+// Test 43: Copy Constructors
+
+module Test43
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Test 1: Explicit copy construction ---
+    class Counter
+    {
+        public int value;
+        public int id;
+
+        constructor(int v, int i)
+        {
+            this.value = v;
+            this.id = i;
+        }
+
+        constructor(Counter& other)
+        {
+            this.value = other.value;
+            this.id = other.id + 100;
+        }
+
+        destructor {}
+
+        func getValue() => int => this.value;
+        func getId() => int => this.id;
+    }
+
+    // --- Test 3: Class without copy constructor (regression) ---
+    class Simple
+    {
+        public int value;
+
+        constructor(int v)
+        {
+            this.value = v;
+        }
+
+        destructor {}
+
+        func getValue() => int => this.value;
+    }
+
+    func main() => int
+    {
+        // Test 1: Explicit copy construction
+        printf("=== Explicit Copy ===\n");
+        var original = new Counter(42, 1);
+        printf("original: value=%d id=%d\n", original->getValue(), original->getId());
+        var copy = new Counter(original);
+        printf("copy: value=%d id=%d\n", copy->getValue(), copy->getId());
+        delete copy;
+        delete original;
+
+        // Test 2: Copy preserves values but is independent
+        printf("=== Copy Preserves Values ===\n");
+        var a = new Counter(999, 0);
+        var b = new Counter(a);
+        printf("a.value=%d b.value=%d\n", a->getValue(), b->getValue());
+        // b should be independent (different id proves copy ctor ran)
+        var independent = 0;
+        if (b->getId() == 100) {
+            independent = 1;
+        }
+        printf("b is independent: %d\n", independent);
+        delete b;
+        delete a;
+
+        // Test 3: Class without copy constructor (regular construction still works)
+        printf("=== No Copy Constructor ===\n");
+        var s = new Simple(77);
+        printf("value=%d\n", s->getValue());
+        delete s;
+
+        return 0;
+    }
+}

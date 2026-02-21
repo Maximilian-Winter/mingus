@@ -441,6 +441,9 @@ void TypeResolver::visit(ClassDeclaration& node) {
     if (node.constructor) {
         node.constructor->accept(*this);
     }
+    if (node.copyConstructor) {
+        node.copyConstructor->accept(*this);
+    }
 
     // Destructor
     if (node.destructor) {

@@ -198,11 +198,18 @@ void SymbolTableBuilder::visit(ConstructorDeclaration& node) {
     auto ctorSym = std::make_shared<ConstructorSymbol>(
         currentClass_ ? currentClass_->getName() : "");
     ctorSym->accessLevel = node.accessModifier;
+    if (node.isCopyConstructor) {
+        ctorSym->isCopyConstructor = true;
+    }
     symbolTable_.defineSymbol(ctorSym);
     node.resolvedConstructor = ctorSym;
 
     if (currentClass_) {
-        currentClass_->constructor = ctorSym;
+        if (node.isCopyConstructor) {
+            currentClass_->copyConstructor = ctorSym;
+        } else {
+            currentClass_->constructor = ctorSym;
+        }
     }
 
     if (node.body) {
@@ -428,8 +435,17 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
     // Constructor (explicit or auto-generated)
     if (node.constructor) {
         node.constructor->accept(*this);
-    } else {
+    } else if (!node.copyConstructor) {
+        // Only auto-generate if there's no explicit constructor at all
         autoGenerateConstructor(node, classSym);
+    } else {
+        // Has copy constructor but no regular constructor — auto-generate regular
+        autoGenerateConstructor(node, classSym);
+    }
+
+    // Copy constructor (if defined)
+    if (node.copyConstructor) {
+        node.copyConstructor->accept(*this);
     }
 
     // Destructor (explicit or auto-generated)

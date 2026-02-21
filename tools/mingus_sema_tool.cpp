@@ -425,6 +425,7 @@ public:
         enterNamedScope(sym->as<TypeSymbol>()->memberScope);
 
         if (node.constructor) node.constructor->accept(*this);
+        if (node.copyConstructor) node.copyConstructor->accept(*this);
         if (node.destructor) node.destructor->accept(*this);
         for (auto& method : node.methods) {
             if (method) method->accept(*this);

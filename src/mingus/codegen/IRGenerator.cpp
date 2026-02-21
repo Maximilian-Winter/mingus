@@ -279,18 +279,20 @@ std::string IRGenerator::mangleName(Symbol* sym) {
         return "operator_" + opToString(opSym->op);
     }
 
-    // Constructor: ClassName_constructor
-    if (sym->is<ConstructorSymbol>()) {
-        auto scope = sym->getSymbolScope();
-        if (scope) {
-            // Walk up to find the class
-            auto parentSym = scope->resolve(sym->getName());
-            // Use the scope name
+    // Constructor: ClassName_constructor (or ClassName_copy_constructor)
+    if (auto* ctorSym = sym->as<ConstructorSymbol>()) {
+        if (ctorSym->isCopyConstructor) {
+            // Build mangled name: Module_Class_copy_constructor
+            std::string qn = ctorSym->getQualifiedName();
+            // Replace trailing "constructor" with "copy_constructor"
+            const std::string suffix = "_constructor";
+            if (qn.size() > suffix.size() &&
+                qn.substr(qn.size() - suffix.size()) == suffix) {
+                return qn.substr(0, qn.size() - suffix.size()) + "_copy_constructor";
+            }
+            return qn + "_copy";
         }
-        // Use qualified name from symbol
-        if (auto* func = sym->as<FunctionSymbol>()) {
-            return func->getQualifiedName();
-        }
+        return ctorSym->getQualifiedName();
     }
 
     // Destructor: ClassName_destructor
@@ -557,6 +559,10 @@ void IRGenerator::declareFunctions(ProgramNode& program) {
                 // Constructor
                 if (classSym->constructor) {
                     declareFunctionSymbol(classSym->constructor.get());
+                }
+                // Copy constructor
+                if (classSym->copyConstructor) {
+                    declareFunctionSymbol(classSym->copyConstructor.get());
                 }
                 // Destructor
                 if (classSym->destructor) {
@@ -1228,9 +1234,9 @@ void IRGenerator::visit(FunctionDeclaration& node) {
 }
 
 void IRGenerator::visit(ConstructorDeclaration& node) {
-    if (!currentClassSym_ || !currentClassSym_->constructor) return;
+    if (!currentClassSym_ || !node.resolvedConstructor) return;
 
-    auto* ctorSym = currentClassSym_->constructor.get();
+    auto* ctorSym = node.resolvedConstructor.get();
     auto it = functionCache_.find(ctorSym);
     if (it == functionCache_.end()) return;
 
@@ -1480,6 +1486,9 @@ void IRGenerator::visit(ClassDeclaration& node) {
 
     if (node.constructor) {
         node.constructor->accept(*this);
+    }
+    if (node.copyConstructor) {
+        node.copyConstructor->accept(*this);
     }
     if (node.destructor) {
         node.destructor->accept(*this);
@@ -3202,19 +3211,50 @@ void IRGenerator::visit(NewExpression& node) {
         llvm::Value* rawPtr = builder_.CreateCall(mallocCallee, {sizeVal}, "new.ptr");
 
         if (auto* classSym = allocType->as<ClassSymbol>()) {
-            if (classSym->constructor) {
-                auto it = functionCache_.find(classSym->constructor.get());
+            // Determine which constructor to call:
+            // If there's a copy constructor and the single argument is a pointer
+            // to the same class, use the copy constructor.
+            ConstructorSymbol* targetCtor = nullptr;
+            bool useCopyCtor = false;
+
+            if (classSym->copyConstructor && node.arguments &&
+                node.arguments->expressions.size() == 1) {
+                auto& arg = node.arguments->expressions[0];
+                if (arg->resolvedType) {
+                    TypeSymbol* argType = arg->resolvedType->as<TypeSymbol>();
+                    // Check: argument is ClassName* (pointer to same class)
+                    if (auto* ptrType = argType ? argType->as<PointerTypeSymbol>() : nullptr) {
+                        if (ptrType->baseType.get() == classSym) {
+                            useCopyCtor = true;
+                            targetCtor = classSym->copyConstructor.get();
+                        }
+                    }
+                }
+            }
+
+            if (!targetCtor && classSym->constructor) {
+                targetCtor = classSym->constructor.get();
+            }
+
+            if (targetCtor) {
+                auto it = functionCache_.find(targetCtor);
                 if (it != functionCache_.end()) {
                     std::vector<llvm::Value*> ctorArgs;
                     ctorArgs.push_back(rawPtr);
                     if (node.arguments) {
                         for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
                             auto& arg = node.arguments->expressions[i];
-                            bool isRef = (i < node.arguments->isReference.size() &&
-                                         node.arguments->isReference[i]);
+                            bool isRef = useCopyCtor ||
+                                         (i < node.arguments->isReference.size() &&
+                                          node.arguments->isReference[i]);
                             if (isRef) {
-                                llvm::Value* lval = emitLValue(*arg);
-                                if (lval) { ctorArgs.push_back(lval); continue; }
+                                // For copy constructor, the argument is a pointer
+                                // that we pass directly as the reference
+                                arg->accept(*this);
+                                if (lastValue_) {
+                                    ctorArgs.push_back(lastValue_);
+                                    continue;
+                                }
                             }
                             arg->accept(*this);
                             if (lastValue_) {

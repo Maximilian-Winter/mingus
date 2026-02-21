@@ -592,9 +592,32 @@ std::any ASTGenerator::visitClassDeclaration(
     if (ctx->classBlock()) {
         for (auto* memberCtx : ctx->classBlock()->classMember()) {
             if (memberCtx->constructorDeclaration()) {
-                cls->constructor = anyToNode<ConstructorDeclaration>(
+                auto ctor = anyToNode<ConstructorDeclaration>(
                     visitConstructorDeclaration(
                         memberCtx->constructorDeclaration()));
+                // Detect copy constructor: exactly 1 ref param of same class type
+                // Reference params have type PointerTypeNode(baseType=NamedTypeNode)
+                bool isCopyCtor = false;
+                if (ctor && ctor->parameters.size() == 1 &&
+                    ctor->parameters[0]->isReference) {
+                    auto* typeNode = ctor->parameters[0]->type.get();
+                    // Unwrap PointerTypeNode for reference types
+                    if (auto* ptrNode = dynamic_cast<PointerTypeNode*>(typeNode)) {
+                        typeNode = ptrNode->baseType.get();
+                    }
+                    if (auto* named = dynamic_cast<NamedTypeNode*>(typeNode)) {
+                        if (!named->qualifiedName.empty() &&
+                            named->qualifiedName.back() == cls->name) {
+                            isCopyCtor = true;
+                        }
+                    }
+                }
+                if (isCopyCtor) {
+                    ctor->isCopyConstructor = true;
+                    cls->copyConstructor = ctor;
+                } else {
+                    cls->constructor = ctor;
+                }
 
             } else if (memberCtx->destructorDeclaration()) {
                 cls->destructor = anyToNode<DestructorDeclaration>(
