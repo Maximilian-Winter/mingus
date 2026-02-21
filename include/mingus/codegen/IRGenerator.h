@@ -95,6 +95,7 @@ public:
     void visit(ForStatement& node) override;
     void visit(WhileStatement& node) override;
     void visit(DoWhileStatement& node) override;
+    void visit(LabeledStatement& node) override;
     void visit(BreakStatement& node) override;
     void visit(ContinueStatement& node) override;
     void visit(DeleteStatement& node) override;
@@ -174,11 +175,16 @@ private:
     std::unordered_map<std::string, llvm::Function*> structCleanupCache_;
 
     //==========================================================================
-    // Loop context (for break/continue)
+    // Loop context (for break/continue, supports labeled loops)
     //==========================================================================
-    llvm::BasicBlock* loopExitBlock_ = nullptr;
-    llvm::BasicBlock* loopIterBlock_ = nullptr;
-    size_t loopRAIIScopeDepth_ = 0;
+    struct LoopInfo {
+        std::string label;              // empty for unlabeled loops
+        llvm::BasicBlock* exitBlock;
+        llvm::BasicBlock* iterBlock;
+        size_t raiiScopeDepth;
+    };
+    std::vector<LoopInfo> loopStack_;
+    std::string pendingLabel_;          // set by LabeledStatement, consumed by next loop
 
     //==========================================================================
     // RAII scope stack
@@ -258,7 +264,7 @@ private:
     void registerRAII(llvm::Value* ptr, llvm::Function* dtor);
     void emitScopeDestructors();
     void emitReturnDestructors();
-    void emitBreakDestructors();
+    void emitBreakDestructors(size_t targetDepth);
 
     //==========================================================================
     // Forward declaration phase (Phase A)

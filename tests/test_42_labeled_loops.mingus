@@ -1,0 +1,166 @@
+// Test 42: Labeled break/continue
+// Tests labeled loops with break/continue targeting outer loops
+
+module Test42
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Test 1: Labeled break from nested for loop
+    func test_labeled_break() => void
+    {
+        printf("=== Labeled Break ===\n");
+        outer: for (int i = 0; i < 5; i++)
+        {
+            for (int j = 0; j < 5; j++)
+            {
+                if (j == 2)
+                {
+                    printf("Breaking outer at i=%d\n", i);
+                    break outer;
+                }
+            }
+        }
+        printf("After outer loop\n");
+    }
+
+    // Test 2: Labeled continue to outer loop
+    func test_labeled_continue() => void
+    {
+        printf("=== Labeled Continue ===\n");
+        outer: for (int i = 0; i < 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                if (j == 1)
+                {
+                    continue outer;
+                }
+                printf("i=%d j=%d\n", i, j);
+            }
+        }
+        printf("Done\n");
+    }
+
+    // Test 3: Unlabeled break still works (regression test)
+    func test_unlabeled_break() => void
+    {
+        printf("=== Unlabeled Break ===\n");
+        for (int i = 0; i < 10; i++)
+        {
+            if (i == 3)
+            {
+                break;
+            }
+            printf("%d\n", i);
+        }
+        printf("Done\n");
+    }
+
+    // Test 4: Labeled break on while loop
+    func test_labeled_while() => void
+    {
+        printf("=== Labeled While ===\n");
+        var i = 0;
+        outer: while (i < 5)
+        {
+            var j = 0;
+            while (j < 5)
+            {
+                if (i == 1)
+                {
+                    if (j == 1)
+                    {
+                        break outer;
+                    }
+                }
+                j++;
+            }
+            i++;
+        }
+        printf("Exited at i=%d\n", i);
+    }
+
+    // Test 5: Labeled break on do-while loop
+    func test_labeled_do_while() => void
+    {
+        printf("=== Labeled Do-While ===\n");
+        var i = 0;
+        outer: do
+        {
+            var j = 0;
+            do
+            {
+                if (i == 2)
+                {
+                    if (j == 0)
+                    {
+                        break outer;
+                    }
+                }
+                j++;
+            } while (j < 3);
+            i++;
+        } while (i < 5);
+        printf("Exited at i=%d\n", i);
+    }
+
+    // Test 6: Triple-nested labeled break
+    func test_triple_nested() => void
+    {
+        printf("=== Triple Nested ===\n");
+        var count = 0;
+        outer: for (int i = 0; i < 10; i++)
+        {
+            for (int j = 0; j < 10; j++)
+            {
+                for (int k = 0; k < 10; k++)
+                {
+                    count++;
+                    if (count == 15)
+                    {
+                        printf("Breaking outer at count=%d\n", count);
+                        break outer;
+                    }
+                }
+            }
+        }
+        printf("Total iterations: %d\n", count);
+    }
+
+    // Test 7: Labeled continue in while loop
+    func test_labeled_continue_while() => void
+    {
+        printf("=== Labeled Continue While ===\n");
+        var i = 0;
+        var skipped = 0;
+        outer: while (i < 4)
+        {
+            var j = 0;
+            while (j < 4)
+            {
+                j++;
+                if (i == 2)
+                {
+                    skipped++;
+                    i++;
+                    continue outer;
+                }
+            }
+            printf("Completed inner loop for i=%d\n", i);
+            i++;
+        }
+        printf("Skipped: %d\n", skipped);
+    }
+
+    func main() => int
+    {
+        test_labeled_break();
+        test_labeled_continue();
+        test_unlabeled_break();
+        test_labeled_while();
+        test_labeled_do_while();
+        test_triple_nested();
+        test_labeled_continue_while();
+        return 0;
+    }
+}

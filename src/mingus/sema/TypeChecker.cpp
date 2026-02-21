@@ -461,6 +461,10 @@ void TypeChecker::visit(DoWhileStatement& node) {
     }
 }
 
+void TypeChecker::visit(LabeledStatement& node) {
+    if (node.statement) node.statement->accept(*this);
+}
+
 void TypeChecker::visit(BreakStatement& node) {}
 void TypeChecker::visit(ContinueStatement& node) {}
 

@@ -65,6 +65,7 @@ void IfStatement::accept(ASTVisitor& v) { v.visit(*this); }
 void ForStatement::accept(ASTVisitor& v) { v.visit(*this); }
 void WhileStatement::accept(ASTVisitor& v) { v.visit(*this); }
 void DoWhileStatement::accept(ASTVisitor& v) { v.visit(*this); }
+void LabeledStatement::accept(ASTVisitor& v) { v.visit(*this); }
 void BreakStatement::accept(ASTVisitor& v) { v.visit(*this); }
 void ContinueStatement::accept(ASTVisitor& v) { v.visit(*this); }
 void DeleteStatement::accept(ASTVisitor& v) { v.visit(*this); }

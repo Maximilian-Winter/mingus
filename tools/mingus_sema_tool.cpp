@@ -612,6 +612,9 @@ public:
         if (node.condition) node.condition->accept(*this);
     }
 
+    void visit(LabeledStatement& node) override {
+        if (node.statement) node.statement->accept(*this);
+    }
     void visit(BreakStatement&) override {}
     void visit(ContinueStatement&) override {}
 

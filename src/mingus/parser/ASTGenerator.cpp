@@ -1084,6 +1084,9 @@ std::any ASTGenerator::visitStatement(MingusParser::StatementContext* ctx) {
     } else if (ctx->returnStatement()) {
         return visitReturnStatement(ctx->returnStatement());
 
+    } else if (ctx->labeledStatement()) {
+        return visitLabeledStatement(ctx->labeledStatement());
+
     } else if (ctx->breakStatement()) {
         return visitBreakStatement(ctx->breakStatement());
 
@@ -1305,11 +1308,36 @@ std::any ASTGenerator::visitDoWhileStatement(
     return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
+std::any ASTGenerator::visitLabeledStatement(
+    MingusParser::LabeledStatementContext* ctx)
+{
+    auto stmt = std::make_shared<LabeledStatement>();
+    stmt->debugInfo = makeDebugInfo(ctx);
+    if (ctx->Identifier()) {
+        stmt->label = ctx->Identifier()->getText();
+    }
+    // The inner loop statement
+    if (ctx->forStatement()) {
+        stmt->statement = anyToNode<StatementBaseNode>(
+            visitForStatement(ctx->forStatement()));
+    } else if (ctx->whileStatement()) {
+        stmt->statement = anyToNode<StatementBaseNode>(
+            visitWhileStatement(ctx->whileStatement()));
+    } else if (ctx->doWhileStatement()) {
+        stmt->statement = anyToNode<StatementBaseNode>(
+            visitDoWhileStatement(ctx->doWhileStatement()));
+    }
+    return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
+}
+
 std::any ASTGenerator::visitBreakStatement(
     MingusParser::BreakStatementContext* ctx)
 {
     auto stmt = std::make_shared<BreakStatement>();
     stmt->debugInfo = makeDebugInfo(ctx);
+    if (ctx->Identifier()) {
+        stmt->label = ctx->Identifier()->getText();
+    }
     return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 
@@ -1318,6 +1346,9 @@ std::any ASTGenerator::visitContinueStatement(
 {
     auto stmt = std::make_shared<ContinueStatement>();
     stmt->debugInfo = makeDebugInfo(ctx);
+    if (ctx->Identifier()) {
+        stmt->label = ctx->Identifier()->getText();
+    }
     return std::any(std::static_pointer_cast<StatementBaseNode>(stmt));
 }
 

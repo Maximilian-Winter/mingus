@@ -538,6 +538,10 @@ void TypeResolver::visit(DoWhileStatement& node) {
     if (node.condition) node.condition->accept(*this);
 }
 
+void TypeResolver::visit(LabeledStatement& node) {
+    if (node.statement) node.statement->accept(*this);
+}
+
 void TypeResolver::visit(BreakStatement& node) {}
 void TypeResolver::visit(ContinueStatement& node) {}
 

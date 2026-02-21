@@ -700,6 +700,11 @@ void SymbolTableBuilder::visit(DoWhileStatement& node) {
     if (node.condition) node.condition->accept(*this);
 }
 
+void SymbolTableBuilder::visit(LabeledStatement& node) {
+    setScope(node);
+    if (node.statement) node.statement->accept(*this);
+}
+
 void SymbolTableBuilder::visit(BreakStatement& node) { setScope(node); }
 void SymbolTableBuilder::visit(ContinueStatement& node) { setScope(node); }
 

@@ -154,6 +154,8 @@ public:
 
     virtual std::any visitReturnStatement(MingusParser::ReturnStatementContext *context) = 0;
 
+    virtual std::any visitLabeledStatement(MingusParser::LabeledStatementContext *context) = 0;
+
     virtual std::any visitBreakStatement(MingusParser::BreakStatementContext *context) = 0;
 
     virtual std::any visitContinueStatement(MingusParser::ContinueStatementContext *context) = 0;

@@ -75,6 +75,7 @@ call :run_test test_38_bare_fields    Test38_main  "Bare Field Access"
 call :run_test test_39_do_while      Test39_main  "Do-While Loop"
 call :run_test test_40_covariant_returns Test40_main "Covariant Return Types"
 call :run_test test_41_typedef          Test41_main  "Typedef / Type Alias"
+call :run_test test_42_labeled_loops   Test42_main  "Labeled Break/Continue"
 
 echo.
 echo ============================================================

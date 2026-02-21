@@ -285,6 +285,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitLabeledStatement(MingusParser::LabeledStatementContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitBreakStatement(MingusParser::BreakStatementContext *ctx) override {
     return visitChildren(ctx);
   }

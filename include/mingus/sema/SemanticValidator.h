@@ -96,6 +96,7 @@ public:
     void visit(ForStatement& node) override;
     void visit(WhileStatement& node) override;
     void visit(DoWhileStatement& node) override;
+    void visit(LabeledStatement& node) override;
     void visit(BreakStatement& node) override;
     void visit(ContinueStatement& node) override;
     void visit(DeleteStatement& node) override;
@@ -133,7 +134,9 @@ private:
     ErrorReporter& errors_;
 
     // ---- Context tracking ----
-    int loopDepth_ = 0;
+    // Loop label stack (replaces simple loopDepth_ for labeled break/continue)
+    std::vector<std::string> loopLabelStack_;  // "" for unlabeled loops
+    std::string pendingLabel_;  // set by LabeledStatement, consumed by next loop
     TypeSymbolPtr currentReturnType_;
 
     // ---- RAII tracking ----

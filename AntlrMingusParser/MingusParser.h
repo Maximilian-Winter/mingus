@@ -68,23 +68,23 @@ public:
     RuleTuplePattern = 58, RuleForStatement = 59, RuleForInitializer = 60, 
     RuleLocalVarInitializer = 61, RuleLocalVarDeclaration = 62, RuleForIterator = 63, 
     RuleWhileStatement = 64, RuleDoWhileStatement = 65, RuleReturnStatement = 66, 
-    RuleBreakStatement = 67, RuleContinueStatement = 68, RuleDeleteStatement = 69, 
-    RuleExpression = 70, RuleAssignment = 71, RuleAssignmentOperator = 72, 
-    RuleLambdaExpression = 73, RuleCaptureList = 74, RuleCaptureDefault = 75, 
-    RuleCaptureItem = 76, RuleLambdaParameterList = 77, RuleLambdaParameter = 78, 
-    RulePipe = 79, RulePipeTarget = 80, RuleTernary = 81, RuleLogicOr = 82, 
-    RuleLogicAnd = 83, RuleBitwiseOr = 84, RuleBitwiseXor = 85, RuleBitwiseAnd = 86, 
-    RuleEquality = 87, RuleRelational = 88, RuleShift = 89, RuleAdditive = 90, 
-    RuleMultiplicative = 91, RuleCastExpression = 92, RuleUnaryExpression = 93, 
-    RulePostfixExpression = 94, RulePrimaryExpression = 95, RulePostfixOperation = 96, 
-    RuleNewExpression = 97, RuleCallArguments = 98, RuleArgumentList = 99, 
-    RuleElementAccess = 100, RuleMemberAccess = 101, RuleTupleExpression = 102, 
-    RuleTypeIdentifier = 103, RulePrimitiveType = 104, RuleFunctionType = 105, 
-    RuleTypeList = 106, RuleTupleType = 107, RuleTypeModifier = 108, RuleReferenceLevel = 109, 
-    RuleArrayDimension = 110, RulePointerLevel = 111, RuleAccessModifier = 112, 
-    RuleStaticModifier = 113, RuleAbstractModifier = 114, RuleQualifiedName = 115, 
-    RulePrefixOperator = 116, RuleIncrementDecrementOperator = 117, RuleTypeSizeOrAlign = 118, 
-    RuleString = 119, RuleStringPart = 120
+    RuleLabeledStatement = 67, RuleBreakStatement = 68, RuleContinueStatement = 69, 
+    RuleDeleteStatement = 70, RuleExpression = 71, RuleAssignment = 72, 
+    RuleAssignmentOperator = 73, RuleLambdaExpression = 74, RuleCaptureList = 75, 
+    RuleCaptureDefault = 76, RuleCaptureItem = 77, RuleLambdaParameterList = 78, 
+    RuleLambdaParameter = 79, RulePipe = 80, RulePipeTarget = 81, RuleTernary = 82, 
+    RuleLogicOr = 83, RuleLogicAnd = 84, RuleBitwiseOr = 85, RuleBitwiseXor = 86, 
+    RuleBitwiseAnd = 87, RuleEquality = 88, RuleRelational = 89, RuleShift = 90, 
+    RuleAdditive = 91, RuleMultiplicative = 92, RuleCastExpression = 93, 
+    RuleUnaryExpression = 94, RulePostfixExpression = 95, RulePrimaryExpression = 96, 
+    RulePostfixOperation = 97, RuleNewExpression = 98, RuleCallArguments = 99, 
+    RuleArgumentList = 100, RuleElementAccess = 101, RuleMemberAccess = 102, 
+    RuleTupleExpression = 103, RuleTypeIdentifier = 104, RulePrimitiveType = 105, 
+    RuleFunctionType = 106, RuleTypeList = 107, RuleTupleType = 108, RuleTypeModifier = 109, 
+    RuleReferenceLevel = 110, RuleArrayDimension = 111, RulePointerLevel = 112, 
+    RuleAccessModifier = 113, RuleStaticModifier = 114, RuleAbstractModifier = 115, 
+    RuleQualifiedName = 116, RulePrefixOperator = 117, RuleIncrementDecrementOperator = 118, 
+    RuleTypeSizeOrAlign = 119, RuleString = 120, RuleStringPart = 121
   };
 
   explicit MingusParser(antlr4::TokenStream *input);
@@ -171,6 +171,7 @@ public:
   class WhileStatementContext;
   class DoWhileStatementContext;
   class ReturnStatementContext;
+  class LabeledStatementContext;
   class BreakStatementContext;
   class ContinueStatementContext;
   class DeleteStatementContext;
@@ -881,6 +882,7 @@ public:
     SwitchStatementContext *switchStatement();
     MatchStatementContext *matchStatement();
     ReturnStatementContext *returnStatement();
+    LabeledStatementContext *labeledStatement();
     BreakStatementContext *breakStatement();
     ContinueStatementContext *continueStatement();
     DeleteStatementContext *deleteStatement();
@@ -1373,12 +1375,30 @@ public:
 
   ReturnStatementContext* returnStatement();
 
+  class  LabeledStatementContext : public antlr4::ParserRuleContext {
+  public:
+    LabeledStatementContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *Identifier();
+    antlr4::tree::TerminalNode *ColonOperator();
+    ForStatementContext *forStatement();
+    WhileStatementContext *whileStatement();
+    DoWhileStatementContext *doWhileStatement();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  LabeledStatementContext* labeledStatement();
+
   class  BreakStatementContext : public antlr4::ParserRuleContext {
   public:
     BreakStatementContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode *Break();
     antlr4::tree::TerminalNode *SemicolonSeparator();
+    antlr4::tree::TerminalNode *Identifier();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -1393,6 +1413,7 @@ public:
     virtual size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode *Continue();
     antlr4::tree::TerminalNode *SemicolonSeparator();
+    antlr4::tree::TerminalNode *Identifier();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;

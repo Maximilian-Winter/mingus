@@ -875,8 +875,8 @@ void IRGenerator::emitReturnDestructors() {
     }
 }
 
-void IRGenerator::emitBreakDestructors() {
-    for (size_t i = raiiScopeStack_.size(); i > loopRAIIScopeDepth_; --i) {
+void IRGenerator::emitBreakDestructors(size_t targetDepth) {
+    for (size_t i = raiiScopeStack_.size(); i > targetDepth; --i) {
         auto& scope = raiiScopeStack_[i - 1];
         for (auto it = scope.destructibles.rbegin();
              it != scope.destructibles.rend(); ++it) {
@@ -1711,18 +1711,16 @@ void IRGenerator::visit(ForStatement& node) {
     }
 
     builder_.SetInsertPoint(bodyBB);
-    auto* prevExitBlock = loopExitBlock_;
-    auto* prevIterBlock = loopIterBlock_;
-    auto prevLoopRAIIDepth = loopRAIIScopeDepth_;
-    loopExitBlock_ = exitBB;
-    loopIterBlock_ = iterBB;
-    loopRAIIScopeDepth_ = raiiScopeStack_.size();
+
+    // Consume pending label (set by LabeledStatement) or use empty string
+    std::string label = std::move(pendingLabel_);
+    pendingLabel_.clear();
+
+    loopStack_.push_back({label, exitBB, iterBB, raiiScopeStack_.size()});
 
     node.body->accept(*this);
 
-    loopExitBlock_ = prevExitBlock;
-    loopIterBlock_ = prevIterBlock;
-    loopRAIIScopeDepth_ = prevLoopRAIIDepth;
+    loopStack_.pop_back();
 
     if (!builder_.GetInsertBlock()->getTerminator())
         builder_.CreateBr(iterBB);
@@ -1754,18 +1752,15 @@ void IRGenerator::visit(WhileStatement& node) {
     builder_.CreateCondBr(condVal, bodyBB, exitBB);
 
     builder_.SetInsertPoint(bodyBB);
-    auto* prevExitBlock = loopExitBlock_;
-    auto* prevIterBlock = loopIterBlock_;
-    auto prevLoopRAIIDepth = loopRAIIScopeDepth_;
-    loopExitBlock_ = exitBB;
-    loopIterBlock_ = condBB;
-    loopRAIIScopeDepth_ = raiiScopeStack_.size();
+
+    std::string label = std::move(pendingLabel_);
+    pendingLabel_.clear();
+
+    loopStack_.push_back({label, exitBB, condBB, raiiScopeStack_.size()});
 
     node.body->accept(*this);
 
-    loopExitBlock_ = prevExitBlock;
-    loopIterBlock_ = prevIterBlock;
-    loopRAIIScopeDepth_ = prevLoopRAIIDepth;
+    loopStack_.pop_back();
 
     if (!builder_.GetInsertBlock()->getTerminator())
         builder_.CreateBr(condBB);
@@ -1782,18 +1777,15 @@ void IRGenerator::visit(DoWhileStatement& node) {
     builder_.CreateBr(bodyBB);
 
     builder_.SetInsertPoint(bodyBB);
-    auto* prevExitBlock = loopExitBlock_;
-    auto* prevIterBlock = loopIterBlock_;
-    auto prevLoopRAIIDepth = loopRAIIScopeDepth_;
-    loopExitBlock_ = exitBB;
-    loopIterBlock_ = condBB;
-    loopRAIIScopeDepth_ = raiiScopeStack_.size();
+
+    std::string label = std::move(pendingLabel_);
+    pendingLabel_.clear();
+
+    loopStack_.push_back({label, exitBB, condBB, raiiScopeStack_.size()});
 
     node.body->accept(*this);
 
-    loopExitBlock_ = prevExitBlock;
-    loopIterBlock_ = prevIterBlock;
-    loopRAIIScopeDepth_ = prevLoopRAIIDepth;
+    loopStack_.pop_back();
 
     if (!builder_.GetInsertBlock()->getTerminator())
         builder_.CreateBr(condBB);
@@ -1812,17 +1804,58 @@ void IRGenerator::visit(DoWhileStatement& node) {
     builder_.SetInsertPoint(exitBB);
 }
 
-void IRGenerator::visit(BreakStatement& /*node*/) {
-    emitBreakDestructors();
-    if (loopExitBlock_) {
-        builder_.CreateBr(loopExitBlock_);
+void IRGenerator::visit(LabeledStatement& node) {
+    // Set pendingLabel_ so the next loop visitor consumes it
+    pendingLabel_ = node.label;
+    if (node.statement) node.statement->accept(*this);
+    pendingLabel_.clear();  // safety: clear if unconsumed
+}
+
+void IRGenerator::visit(BreakStatement& node) {
+    if (loopStack_.empty()) return;
+
+    if (node.label.empty()) {
+        // Unlabeled break — use innermost loop (backward compatible)
+        auto& info = loopStack_.back();
+        emitBreakDestructors(info.raiiScopeDepth);
+        builder_.CreateBr(info.exitBlock);
+    } else {
+        // Labeled break — search stack for matching label
+        for (int i = (int)loopStack_.size() - 1; i >= 0; --i) {
+            if (loopStack_[i].label == node.label) {
+                emitBreakDestructors(loopStack_[i].raiiScopeDepth);
+                builder_.CreateBr(loopStack_[i].exitBlock);
+                return;
+            }
+        }
+        // Label not found — sema should have caught this, but just use innermost
+        auto& info = loopStack_.back();
+        emitBreakDestructors(info.raiiScopeDepth);
+        builder_.CreateBr(info.exitBlock);
     }
 }
 
-void IRGenerator::visit(ContinueStatement& /*node*/) {
-    emitBreakDestructors();
-    if (loopIterBlock_) {
-        builder_.CreateBr(loopIterBlock_);
+void IRGenerator::visit(ContinueStatement& node) {
+    if (loopStack_.empty()) return;
+
+    if (node.label.empty()) {
+        // Unlabeled continue — use innermost loop
+        auto& info = loopStack_.back();
+        emitBreakDestructors(info.raiiScopeDepth);
+        builder_.CreateBr(info.iterBlock);
+    } else {
+        // Labeled continue — search stack for matching label
+        for (int i = (int)loopStack_.size() - 1; i >= 0; --i) {
+            if (loopStack_[i].label == node.label) {
+                emitBreakDestructors(loopStack_[i].raiiScopeDepth);
+                builder_.CreateBr(loopStack_[i].iterBlock);
+                return;
+            }
+        }
+        // Label not found — sema should have caught this
+        auto& info = loopStack_.back();
+        emitBreakDestructors(info.raiiScopeDepth);
+        builder_.CreateBr(info.iterBlock);
     }
 }
 

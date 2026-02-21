@@ -704,7 +704,9 @@ void SemanticValidator::visit(IfStatement& node) {
 }
 
 void SemanticValidator::visit(ForStatement& node) {
-    loopDepth_++;
+    std::string label = pendingLabel_;
+    pendingLabel_.clear();
+    loopLabelStack_.push_back(label);
 
     auto savedScope = currentScope_;
     if (node.body && node.body->as<BlockStatementNode>()
@@ -725,36 +727,70 @@ void SemanticValidator::visit(ForStatement& node) {
     if (node.body) node.body->accept(*this);
 
     currentScope_ = savedScope;
-    loopDepth_--;
+    loopLabelStack_.pop_back();
 }
 
 void SemanticValidator::visit(WhileStatement& node) {
-    loopDepth_++;
+    std::string label = pendingLabel_;
+    pendingLabel_.clear();
+    loopLabelStack_.push_back(label);
 
     if (node.condition) node.condition->accept(*this);
     if (node.body) node.body->accept(*this);
 
-    loopDepth_--;
+    loopLabelStack_.pop_back();
 }
 
 void SemanticValidator::visit(DoWhileStatement& node) {
-    loopDepth_++;
+    std::string label = pendingLabel_;
+    pendingLabel_.clear();
+    loopLabelStack_.push_back(label);
 
     if (node.body) node.body->accept(*this);
     if (node.condition) node.condition->accept(*this);
 
-    loopDepth_--;
+    loopLabelStack_.pop_back();
+}
+
+void SemanticValidator::visit(LabeledStatement& node) {
+    // Set the pending label — the inner loop will consume it
+    pendingLabel_ = node.label;
+    if (node.statement) node.statement->accept(*this);
 }
 
 void SemanticValidator::visit(BreakStatement& node) {
-    if (loopDepth_ == 0) {
+    if (loopLabelStack_.empty()) {
         errors_.error("'break' statement outside of loop", node.debugInfo);
+        return;
+    }
+    if (!node.label.empty()) {
+        // Labeled break: search stack for matching label
+        bool found = false;
+        for (auto& lbl : loopLabelStack_) {
+            if (lbl == node.label) { found = true; break; }
+        }
+        if (!found) {
+            errors_.error("'break' label '" + node.label
+                + "' does not match any enclosing loop", node.debugInfo);
+        }
     }
 }
 
 void SemanticValidator::visit(ContinueStatement& node) {
-    if (loopDepth_ == 0) {
+    if (loopLabelStack_.empty()) {
         errors_.error("'continue' statement outside of loop", node.debugInfo);
+        return;
+    }
+    if (!node.label.empty()) {
+        // Labeled continue: search stack for matching label
+        bool found = false;
+        for (auto& lbl : loopLabelStack_) {
+            if (lbl == node.label) { found = true; break; }
+        }
+        if (!found) {
+            errors_.error("'continue' label '" + node.label
+                + "' does not match any enclosing loop", node.debugInfo);
+        }
     }
 }
 
