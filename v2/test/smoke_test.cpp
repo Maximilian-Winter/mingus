@@ -22,6 +22,12 @@
 #include "mingus/sema/TypeResolver.h"
 #include "mingus/sema/TypeChecker.h"
 #include "mingus/sema/SemanticValidator.h"
+#include "mingus/codegen/IRGenerator.h"
+
+#pragma warning(push, 0)
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/raw_ostream.h>
+#pragma warning(pop)
 
 #include <cassert>
 #include <iostream>
@@ -2184,6 +2190,382 @@ int main() {
     }
 
     // ========================================
+    // 25. Codegen — Simple function returning int
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     func answer() => int {
+        //       return 42;
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "answer";
+        auto retType = std::make_shared<PrimitiveTypeNode>();
+        retType->kind = PrimitiveKind::Int;
+        funcDecl->returnType = retType;
+
+        auto body = std::make_shared<BlockStatementNode>();
+        auto retStmt = std::make_shared<ReturnStatement>();
+        auto literal42 = std::make_shared<IntegerLiteral>();
+        literal42->value = 42;
+        retStmt->value = literal42;
+        body->statements.push_back(retStmt);
+        funcDecl->body = body;
+
+        module->declarations = {funcDecl};
+        program->modules = {module};
+
+        // Run all 4 sema passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+        SemanticValidator validator(st, errors);
+        validator.validate(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Sema passes no errors (test 25)");
+
+        // Run codegen
+        auto& raiiInfo = validator.getRAIIInfo();
+        mingus::codegen::IRGenerator irgen(st, raiiInfo);
+        auto llvmModule = irgen.generate(*program);
+
+        ASSERT_NOT_NULL(llvmModule.get(), "LLVM module generated");
+
+        // Verify the module
+        std::string verifyErrors;
+        llvm::raw_string_ostream verifyOS(verifyErrors);
+        bool broken = llvm::verifyModule(*llvmModule, &verifyOS);
+        if (broken) {
+            std::cerr << "FAIL: LLVM verify errors:\n" << verifyErrors << "\n";
+            return 1;
+        }
+
+        // Verify: function 'Main_answer' exists
+        auto* answerFn = llvmModule->getFunction("Main_answer");
+        ASSERT_NOT_NULL(answerFn, "Main_answer function in module");
+        ASSERT_TRUE(!answerFn->isDeclaration(), "Main_answer has body");
+        ASSERT_TRUE(answerFn->getReturnType()->isIntegerTy(32), "Main_answer returns i32");
+
+        passed++;
+        std::cout << "[PASS] 25. Codegen — Simple function returning int\n";
+    }
+
+    // ========================================
+    // 26. Codegen — Extern function declaration
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     extern func printf(string fmt) => int;
+        //     func main() => int {
+        //       return 0;
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        auto externDecl = std::make_shared<ExternFunctionDeclaration>();
+        externDecl->name = "printf";
+        auto fmtParam = std::make_shared<ParameterNode>();
+        fmtParam->name = "fmt";
+        auto fmtType = std::make_shared<PrimitiveTypeNode>();
+        fmtType->kind = PrimitiveKind::String;
+        fmtParam->type = fmtType;
+        externDecl->parameters = {fmtParam};
+        auto printfRetType = std::make_shared<PrimitiveTypeNode>();
+        printfRetType->kind = PrimitiveKind::Int;
+        externDecl->returnType = printfRetType;
+
+        auto mainDecl = std::make_shared<FunctionDeclaration>();
+        mainDecl->name = "main";
+        auto mainRetType = std::make_shared<PrimitiveTypeNode>();
+        mainRetType->kind = PrimitiveKind::Int;
+        mainDecl->returnType = mainRetType;
+        auto mainBody = std::make_shared<BlockStatementNode>();
+        auto mainRet = std::make_shared<ReturnStatement>();
+        auto zero = std::make_shared<IntegerLiteral>();
+        zero->value = 0;
+        mainRet->value = zero;
+        mainBody->statements.push_back(mainRet);
+        mainDecl->body = mainBody;
+
+        module->declarations = {externDecl, mainDecl};
+        program->modules = {module};
+
+        // Run all 4 sema passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+        SemanticValidator validator(st, errors);
+        validator.validate(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Sema passes no errors (test 26)");
+
+        // Run codegen
+        auto& raiiInfo = validator.getRAIIInfo();
+        mingus::codegen::IRGenerator irgen(st, raiiInfo);
+        auto llvmModule = irgen.generate(*program);
+        ASSERT_NOT_NULL(llvmModule.get(), "LLVM module generated (test 26)");
+
+        // Verify module
+        std::string verifyErrors;
+        llvm::raw_string_ostream verifyOS(verifyErrors);
+        bool broken = llvm::verifyModule(*llvmModule, &verifyOS);
+        if (broken) {
+            std::cerr << "FAIL: LLVM verify errors (test 26):\n" << verifyErrors << "\n";
+            return 1;
+        }
+
+        // Verify: extern 'printf' exists and is a declaration (no body)
+        auto* printfFn = llvmModule->getFunction("printf");
+        ASSERT_NOT_NULL(printfFn, "printf declared in module");
+        ASSERT_TRUE(printfFn->isDeclaration(), "printf is extern (no body)");
+        ASSERT_TRUE(printfFn->isVarArg(), "printf is vararg");
+
+        // Verify: 'main' function exists
+        auto* mainFn = llvmModule->getFunction("Main_main");
+        ASSERT_NOT_NULL(mainFn, "Main_main exists");
+        ASSERT_TRUE(!mainFn->isDeclaration(), "Main_main has body");
+
+        passed++;
+        std::cout << "[PASS] 26. Codegen — Extern function + vararg printf\n";
+    }
+
+    // ========================================
+    // 27. Codegen — Struct with fields
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     struct Vec2 {
+        //       double x;
+        //       double y;
+        //     }
+        //     func make() => Vec2 {
+        //       var v: Vec2;
+        //       return v;
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        auto structDecl = std::make_shared<StructDeclaration>();
+        structDecl->name = "Vec2";
+        auto fieldX = std::make_shared<VariableDeclaration>();
+        fieldX->name = "x";
+        auto xType = std::make_shared<PrimitiveTypeNode>();
+        xType->kind = PrimitiveKind::Double;
+        fieldX->type = xType;
+        auto fieldY = std::make_shared<VariableDeclaration>();
+        fieldY->name = "y";
+        auto yType = std::make_shared<PrimitiveTypeNode>();
+        yType->kind = PrimitiveKind::Double;
+        fieldY->type = yType;
+        structDecl->fields = {fieldX, fieldY};
+
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "make";
+        auto retType = std::make_shared<NamedTypeNode>();
+        retType->qualifiedName = {"Vec2"};
+        funcDecl->returnType = retType;
+        auto body = std::make_shared<BlockStatementNode>();
+
+        // var v: Vec2;
+        auto varV = std::make_shared<VariableDeclaration>();
+        varV->name = "v";
+        auto vType = std::make_shared<NamedTypeNode>();
+        vType->qualifiedName = {"Vec2"};
+        varV->type = vType;
+        body->statements.push_back(varV);
+
+        // return v;
+        auto retStmt = std::make_shared<ReturnStatement>();
+        auto vIdent = std::make_shared<IdentifierExpression>();
+        vIdent->name = "v";
+        retStmt->value = vIdent;
+        body->statements.push_back(retStmt);
+
+        funcDecl->body = body;
+        module->declarations = {structDecl, funcDecl};
+        program->modules = {module};
+
+        // Run all 4 sema passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+        SemanticValidator validator(st, errors);
+        validator.validate(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Sema passes no errors (test 27)");
+
+        // Run codegen
+        auto& raiiInfo = validator.getRAIIInfo();
+        mingus::codegen::IRGenerator irgen(st, raiiInfo);
+        auto llvmModule = irgen.generate(*program);
+        ASSERT_NOT_NULL(llvmModule.get(), "LLVM module generated (test 27)");
+
+        // Verify module
+        std::string verifyErrors;
+        llvm::raw_string_ostream verifyOS(verifyErrors);
+        bool broken = llvm::verifyModule(*llvmModule, &verifyOS);
+        if (broken) {
+            std::cerr << "FAIL: LLVM verify errors (test 27):\n" << verifyErrors << "\n";
+            return 1;
+        }
+
+        // Verify: Vec2 struct type exists (LLVM 21: StructType::getTypeByName)
+        auto* vec2Ty = llvm::StructType::getTypeByName(irgen.getContext(), "Vec2");
+        ASSERT_NOT_NULL(vec2Ty, "Vec2 type in module");
+        ASSERT_EQ(vec2Ty->getNumElements(), unsigned(2), "Vec2 has 2 fields");
+        ASSERT_TRUE(vec2Ty->getElementType(0)->isDoubleTy(), "Vec2.x is double");
+        ASSERT_TRUE(vec2Ty->getElementType(1)->isDoubleTy(), "Vec2.y is double");
+
+        // Verify: make function returns struct by pointer
+        auto* makeFn = llvmModule->getFunction("Main_make");
+        ASSERT_NOT_NULL(makeFn, "Main_make exists");
+
+        passed++;
+        std::cout << "[PASS] 27. Codegen — Struct with fields + return\n";
+    }
+
+    // ========================================
+    // 28. Codegen — Integer arithmetic in function body
+    // ========================================
+    {
+        // Build:
+        //   module Main {
+        //     func add(int a, int b) => int {
+        //       var result: int = a + b;
+        //       return result;
+        //     }
+        //   }
+
+        auto program = std::make_shared<ProgramNode>();
+        auto module = std::make_shared<ModuleNode>();
+        module->name = "Main";
+
+        auto funcDecl = std::make_shared<FunctionDeclaration>();
+        funcDecl->name = "add";
+        auto retType = std::make_shared<PrimitiveTypeNode>();
+        retType->kind = PrimitiveKind::Int;
+        funcDecl->returnType = retType;
+
+        auto paramA = std::make_shared<ParameterNode>();
+        paramA->name = "a";
+        auto aType = std::make_shared<PrimitiveTypeNode>();
+        aType->kind = PrimitiveKind::Int;
+        paramA->type = aType;
+
+        auto paramB = std::make_shared<ParameterNode>();
+        paramB->name = "b";
+        auto bType = std::make_shared<PrimitiveTypeNode>();
+        bType->kind = PrimitiveKind::Int;
+        paramB->type = bType;
+
+        funcDecl->parameters = {paramA, paramB};
+
+        auto body = std::make_shared<BlockStatementNode>();
+
+        // var result: int = a + b;
+        auto varResult = std::make_shared<VariableDeclaration>();
+        varResult->name = "result";
+        auto resultType = std::make_shared<PrimitiveTypeNode>();
+        resultType->kind = PrimitiveKind::Int;
+        varResult->type = resultType;
+
+        auto addExpr = std::make_shared<BinaryExpression>();
+        addExpr->op = BinaryOp::Add;
+        auto aIdent = std::make_shared<IdentifierExpression>();
+        aIdent->name = "a";
+        auto bIdent = std::make_shared<IdentifierExpression>();
+        bIdent->name = "b";
+        addExpr->left = aIdent;
+        addExpr->right = bIdent;
+        varResult->initializer = addExpr;
+        body->statements.push_back(varResult);
+
+        // return result;
+        auto retStmt = std::make_shared<ReturnStatement>();
+        auto resultIdent = std::make_shared<IdentifierExpression>();
+        resultIdent->name = "result";
+        retStmt->value = resultIdent;
+        body->statements.push_back(retStmt);
+
+        funcDecl->body = body;
+        module->declarations = {funcDecl};
+        program->modules = {module};
+
+        // Run all 4 sema passes
+        SymbolTable st;
+        ErrorReporter errors;
+        SymbolTableBuilder builder(st, errors);
+        builder.build(*program);
+        TypeResolver resolver(st, errors);
+        resolver.resolve(*program);
+        TypeChecker checker(st, errors);
+        checker.check(*program);
+        SemanticValidator validator(st, errors);
+        validator.validate(*program);
+
+        ASSERT_TRUE(!errors.hasErrors(), "Sema passes no errors (test 28)");
+
+        // Run codegen
+        auto& raiiInfo = validator.getRAIIInfo();
+        mingus::codegen::IRGenerator irgen(st, raiiInfo);
+        auto llvmModule = irgen.generate(*program);
+        ASSERT_NOT_NULL(llvmModule.get(), "LLVM module generated (test 28)");
+
+        // Verify module
+        std::string verifyErrors;
+        llvm::raw_string_ostream verifyOS(verifyErrors);
+        bool broken = llvm::verifyModule(*llvmModule, &verifyOS);
+        if (broken) {
+            std::cerr << "FAIL: LLVM verify errors (test 28):\n" << verifyErrors << "\n";
+            return 1;
+        }
+
+        // Verify: add function exists with correct signature
+        auto* addFn = llvmModule->getFunction("Main_add");
+        ASSERT_NOT_NULL(addFn, "Main_add exists");
+        ASSERT_TRUE(!addFn->isDeclaration(), "Main_add has body");
+        ASSERT_EQ(addFn->arg_size(), unsigned(2), "Main_add has 2 params");
+        ASSERT_TRUE(addFn->getReturnType()->isIntegerTy(32), "Main_add returns i32");
+        ASSERT_TRUE(addFn->getArg(0)->getType()->isIntegerTy(32), "param a is i32");
+        ASSERT_TRUE(addFn->getArg(1)->getType()->isIntegerTy(32), "param b is i32");
+
+        // Dump the IR for manual inspection (optional)
+        // llvmModule->print(llvm::outs(), nullptr);
+
+        passed++;
+        std::cout << "[PASS] 28. Codegen — Integer arithmetic + params\n";
+    }
+
+    // ========================================
     // Summary
     // ========================================
     std::cout << "\n=== All " << passed << " smoke tests passed ===\n";
@@ -2200,6 +2582,7 @@ int main() {
     std::cout << "  Pass 2 — TypeResolver (annotations, refs, compounds, named)\n";
     std::cout << "  Pass 3 — TypeChecker (inference, calls, member access, ops)\n";
     std::cout << "  Pass 4 — SemanticValidator (captures, RAII, control flow)\n";
+    std::cout << "  Pass 5 — Codegen (IRGenerator: functions, externs, structs, arithmetic)\n";
 
     return 0;
 }

@@ -3540,13 +3540,5 @@ void IRGenerator::visit(VariableDeclarationExpression& node) {
     lastValue_ = alloca;
 }
 
-//================================================================================
-// Pattern visitors (handled inline by MatchExpression)
-//================================================================================
-void IRGenerator::visit(LiteralPattern& /*node*/) {}
-void IRGenerator::visit(IdentifierPattern& /*node*/) {}
-void IRGenerator::visit(WildcardPattern& /*node*/) {}
-void IRGenerator::visit(RangePattern& /*node*/) {}
-
 } // namespace codegen
 } // namespace mingus
