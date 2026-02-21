@@ -1,7 +1,7 @@
 # Mingus -- Language Status Report
 
 **Date:** February 2026
-**Status:** Compiles and executes optimized native binaries -- **38 feature tests + 21 stress tests passing (59/59)**
+**Status:** Compiles and executes optimized native binaries -- **45 feature tests + 21 stress tests passing (66/66)**
 
 ---
 
@@ -25,7 +25,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Semantic Analysis (4 passes) -> LLVM
 | Stage | Implementation |
 |-------|----------------|
 | Lexer/Parser | ANTLR4 grammar (MingusLexer.g4, MingusParser.g4) |
-| AST | 64 node types with full visitor pattern |
+| AST | 69 node types with full visitor pattern |
 | Sema Pass 1 | SymbolTableBuilder -- scopes, symbols, type declarations, import resolution |
 | Sema Pass 2 | TypeResolver -- resolve all type references to TypeSymbol |
 | Sema Pass 3 | TypeChecker -- expression types, overload resolution, access modifier enforcement |
@@ -35,7 +35,7 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Semantic Analysis (4 passes) -> LLVM
 | Compilation | Clang (from LLVM distribution) compiles IR to native executable |
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
-**Test Runner:** `run_tests.bat` (combined 59 tests), `tests/run_all_tests.bat` (38 feature), `tests/run_stress_tests.bat` (21 stress) -- supports `--code`, `--ir`, `--output` flags
+**Test Runner:** `run_tests.bat` (combined 66 tests), `tests/run_v2_tests.bat` (45 feature), `tests/run_v2_stress_tests.bat` (21 stress) -- supports `--code`, `--ir`, `--output` flags
 **Showcase:** `examples/showcase.bat` -- 9 example programs (including multi-module import demo)
 
 ---
@@ -790,11 +790,206 @@ LLVM PassBuilder integration with configurable optimization levels:
 
 Optimization runs between IR generation and LLVM verification. All tests run with `--opt 2` enabled.
 
+### 2.20 Do-While Loops
+
+The `do-while` loop executes its body at least once before checking the condition:
+
+```mingus
+// Body executes at least once
+var i = 0;
+do {
+    i++;
+} while (i < 5);
+
+// Even when condition is immediately false
+var once = 0;
+do {
+    once = 42;
+} while (false);
+// once == 42
+```
+
+Do-while loops support `break` and `continue` with the same semantics as other loops, including RAII cleanup on break/continue (Test 39).
+
+### 2.21 Covariant Return Types
+
+Overriding a virtual method can return a more derived pointer type than the base class:
+
+```mingus
+class Animal
+{
+    func clone(int newId) => Animal*
+    {
+        return new Animal(newId);
+    }
+}
+
+class Dog : Animal
+{
+    // Covariant: returns Dog* where base returns Animal*
+    func clone(int newId) => Dog*
+    {
+        return new Dog(newId, 10);
+    }
+}
+```
+
+The TypeChecker validates that the override's return type is a subclass of the base method's return type. Non-pointer covariant returns or unrelated types are rejected (Test 40).
+
+### 2.22 Typedef / Type Alias
+
+Type aliases create named synonyms for existing types:
+
+```mingus
+// Primitive typedef
+typedef int Count;
+typedef double Temperature;
+typedef bool Flag;
+
+// Typedef in function signatures
+func addCounts(Count a, Count b) => Count
+{
+    return a + b;
+}
+
+// Typedef in struct fields
+struct Point
+{
+    Temperature x;
+    Temperature y;
+}
+
+// Usage
+Count items = 42;
+Temperature temp = 100.0;
+```
+
+Typedefs are transparent aliases -- `Count` is fully interchangeable with `int` in all contexts. No new type is created; the alias resolves to the underlying type during semantic analysis (Test 41).
+
+### 2.23 Labeled Break/Continue
+
+Labels on loops enable breaking or continuing an outer loop from within nested loops:
+
+```mingus
+// Labeled break exits the named outer loop
+outer: for (int i = 0; i < 5; i++)
+{
+    for (int j = 0; j < 5; j++)
+    {
+        if (j == 2) { break outer; }
+    }
+}
+
+// Labeled continue skips to the next iteration of the named loop
+outer: for (int i = 0; i < 3; i++)
+{
+    for (int j = 0; j < 3; j++)
+    {
+        if (j == 1) { continue outer; }
+        printf("i=%d j=%d\n", i, j);
+    }
+}
+```
+
+Labels work with `for`, `while`, and `do-while` loops. Unlabeled `break`/`continue` still affects only the innermost loop. RAII cleanup correctly destroys objects in all scopes between the break/continue site and the target loop (Test 42).
+
+### 2.24 Copy Constructors
+
+A constructor whose sole parameter is a reference to the same class type is recognized as a copy constructor:
+
+```mingus
+class Counter
+{
+    public int value;
+    public int id;
+
+    constructor(int v, int i)
+    {
+        this.value = v;
+        this.id = i;
+    }
+
+    // Copy constructor: parameter is ClassName&
+    constructor(Counter& other)
+    {
+        this.value = other.value;
+        this.id = other.id + 100;  // user-defined logic
+    }
+
+    destructor {}
+}
+
+var original = new Counter(42, 1);
+var copy = new Counter(original);     // invokes copy constructor
+// copy.value == 42, copy.id == 101
+```
+
+The copy constructor is invoked when `new ClassName(existingInstance)` is called. The compiler detects the copy constructor pattern during AST generation by matching the parameter type against the enclosing class name. Mangled name: `ClassName_copy_constructor` (Test 43).
+
+### 2.25 Function Overloading
+
+Multiple functions can share the same name if they differ in parameter count or types:
+
+```mingus
+// Overloading by parameter count
+func add(int a, int b) => int => a + b;
+func add(int a, int b, int c) => int => a + b + c;
+
+// Overloading by parameter type
+func describe(int x) => int { printf("int: %d\n", x); return 1; }
+func describe(double x) => int { printf("double: %.1f\n", x); return 2; }
+func describe(string x) => int { printf("string: %s\n", x); return 3; }
+
+// Overloaded class methods
+class Calculator
+{
+    public int base;
+    constructor(int b) { this.base = b; }
+    destructor {}
+
+    func compute(int x) => int => this.base + x;
+    func compute(int x, int y) => int => this.base + x * y;
+}
+```
+
+Overload resolution uses a scoring system in the TypeChecker: exact type matches score highest, compatible types (e.g., `int` to `double`) score lower. Parameter count must match exactly. Overloaded functions use `$_type` mangled name suffixes for LLVM disambiguation (Test 44).
+
+### 2.26 Move Semantics
+
+Move constructors enable efficient ownership transfer using the `move()` expression and `&&` rvalue reference parameter syntax:
+
+```mingus
+class Resource
+{
+    public int value;
+    public int moved;
+
+    constructor(int v) { this.value = v; this.moved = 0; }
+
+    // Move constructor: parameter is ClassName&&
+    constructor(Resource&& other)
+    {
+        this.value = other.value;
+        this.moved = 0;
+        other.value = 0;      // zero out source
+        other.moved = 1;      // mark as moved
+    }
+
+    destructor {}
+}
+
+var a = new Resource(42);
+var b = new Resource(move(a));   // invokes move constructor
+// b.value == 42, a.value == 0, a.moved == 1
+```
+
+The `move(expr)` syntax wraps an expression as an rvalue reference, signaling that the value can be moved from. At `new ClassName(move(x))`, if the class has a move constructor and the argument is wrapped in `move()`, the move constructor is dispatched. The move constructor body is user-written and typically transfers ownership of resources while zeroing the source. Mangled name: `ClassName_move_constructor` (Test 45).
+
 ---
 
 ## 3. Test Suite
 
-### Feature Tests (38/38 passing)
+### Feature Tests (45/45 passing)
 
 | # | Test File | Description |
 |---|-----------|-------------|
@@ -836,6 +1031,13 @@ Optimization runs between IR generation and LLVM verification. All tests run wit
 | 36 | `test_36_const` | Const variables: typed const, inferred const, const in expressions, const string, const inside loops, mutable regression |
 | 37 | `test_37_pipe_methods` | Pipe into method calls (x \|> obj->method), chained method pipes, mixed free+method, methods with extra args |
 | 38 | `test_38_bare_fields` | Bare field access in class methods/constructors (no this. prefix), inherited field access, local shadowing |
+| 39 | `test_39_do_while` | Do-while loop: body-first execution, break/continue inside do-while, nested do-while |
+| 40 | `test_40_covariant_returns` | Covariant return types: Dog* overriding Animal*, polymorphic calls through base pointer |
+| 41 | `test_41_typedef` | Typedef type aliases: primitive typedefs, typedef in function params, struct fields, interchangeability |
+| 42 | `test_42_labeled_loops` | Labeled break/continue: outer loop targeting, for/while/do-while labels, RAII cleanup across label jumps |
+| 43 | `test_43_copy_constructors` | Copy constructors: `constructor(T& other)`, user-defined copy logic, regular ctor regression |
+| 44 | `test_44_overloading` | Function overloading: by param count, by param type, overloaded class methods |
+| 45 | `test_45_move_semantics` | Move semantics: `constructor(T&& other)`, `move(x)` expression, source zeroing, ownership transfer |
 
 ### Stress Tests (21/21 passing)
 
@@ -865,7 +1067,7 @@ Optimization runs between IR generation and LLVM verification. All tests run wit
 
 **Note:** There is no `stress_12` -- numbering was preserved from development history.
 
-**All 59 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+**All 66 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
@@ -904,26 +1106,26 @@ CLion uses `cmake-build-release/` as its build directory and works out of the bo
 
 ### Post-Build
 
-CMake post-build copies `mingus_ir_tool.exe` to both `examples/` and `tests/` directories, so tests and examples can be run directly.
+CMake post-build copies `mingus_v2_tool.exe` to both `examples/` and `tests/` directories, so tests and examples can be run directly.
 
 ### Running Tests
 
 ```bat
-:: Run all 38 feature tests
+:: Run all 45 feature tests
 cd tests
-run_all_tests.bat
+run_v2_tests.bat
 
 :: Run all 21 stress tests
 cd tests
-run_stress_tests.bat
+run_v2_stress_tests.bat
 
-:: Run all 59 tests together
+:: Run all 66 tests together
 run_tests.bat
 
 :: Optional flags
-run_all_tests.bat --code      :: Show source code
-run_all_tests.bat --ir        :: Show generated LLVM IR
-run_all_tests.bat --output    :: Show program output
+run_v2_tests.bat --code      :: Show source code
+run_v2_tests.bat --ir        :: Show generated LLVM IR
+run_v2_tests.bat --output    :: Show program output
 ```
 
 Each test compiles `.mingus` to `.ll` (with `--opt 2`), then uses `clang` to produce a native `.exe`, runs it, and compares output against the `.expected` file.
@@ -951,7 +1153,7 @@ Source (.mingus) ->| ANTLR4    |-> Parse Tree
                   +-----------+
                        |
                   +-----------+
-                  | AST       |-> 64 node types
+                  | AST       |-> 69 node types
                   | Generator |   (Expressions, Statements, Declarations,
                   +-----------+    Types, Patterns, Structural)
                        |
@@ -983,10 +1185,10 @@ Source (.mingus) ->| ANTLR4    |-> Parse Tree
 
 | Pass | Class | Responsibility |
 |------|-------|----------------|
-| 1 | `SymbolTableBuilder` | Builds scope tree, creates all symbols (variables, functions, classes, structs, enums, interfaces), auto-generates constructors/destructors, builds vtables, resolves imports (Phase 1a/1b), sets `ParameterNode::resolvedSymbol` |
-| 2 | `TypeResolver` | Resolves all `TypeNode` to `TypeSymbol`, sets `VariableSymbol::type`, `FunctionSymbol::returnType`, unwraps `ReferenceType` on parameters (base type + `isReference=true`) |
-| 3 | `TypeChecker` | Bottom-up expression type inference, literal types, identifier resolution via scope chain, call resolution (`resolvedCallee` + `ArgumentsNode::isReference`), binary/unary ops, operator overload dispatch, member access, var inference, lambda return type inference, access modifier enforcement |
-| 4 | `SemanticValidator` | Lambda capture analysis (walks entire lambda stack), self-capture detection, non-escaping lambda detection, RAII variable tracking (per-scope destructibles for codegen), return completeness, break/continue validation, abstract/interface method implementation checking, match exhaustiveness |
+| 1 | `SymbolTableBuilder` | Builds scope tree, creates all symbols (variables, functions, classes, structs, enums, interfaces), auto-generates constructors/destructors, builds vtables, resolves imports (Phase 1a/1b), sets `ParameterNode::resolvedSymbol`, detects copy/move constructors, registers function overloads, resolves typedef aliases |
+| 2 | `TypeResolver` | Resolves all `TypeNode` to `TypeSymbol`, sets `VariableSymbol::type`, `FunctionSymbol::returnType`, unwraps `ReferenceType` and rvalue reference on parameters (base type + `isReference=true` / `isRvalueReference=true`) |
+| 3 | `TypeChecker` | Bottom-up expression type inference, literal types, identifier resolution via scope chain, call resolution (`resolvedCallee` + `ArgumentsNode::isReference`), function overload resolution with scoring, binary/unary ops, operator overload dispatch, member access, var inference, lambda return type inference, access modifier enforcement, covariant return type validation |
+| 4 | `SemanticValidator` | Lambda capture analysis (walks entire lambda stack), self-capture detection, non-escaping lambda detection, RAII variable tracking (per-scope destructibles for codegen), return completeness, labeled break/continue validation, abstract/interface method implementation checking, match exhaustiveness |
 
 ### Key Architectural Patterns
 
@@ -1004,7 +1206,7 @@ mingus/
 +-- MingusParser.g4                         # ANTLR4 parser grammar
 +-- README.md                               # Project overview and quick start
 +-- build.bat                               # Standalone build script (Ninja + MSVC)
-+-- run_tests.bat                           # Combined test runner (all 59 tests)
++-- run_tests.bat                           # Combined test runner (all 66 tests)
 +-- docs/
 |   +-- MINGUS_STATUS.md                    # This file
 |   +-- GRAMMAR_AND_AST.md                  # Grammar rules, operator precedence, AST node inventory
@@ -1015,9 +1217,9 @@ mingus/
 |   +-- KNOWN_LIMITATIONS.md               # All known limitations
 +-- include/mingus/
 |   +-- AstNode.h                           # AST base classes, TypeNode, PatternNode, visitor
-|   +-- Expressions.h                       # Expression AST nodes (25 concrete types)
-|   +-- Statements.h                        # Statement AST nodes (9 concrete types)
-|   +-- Declarations.h                      # Declaration AST nodes (13 concrete types)
+|   +-- Expressions.h                       # Expression AST nodes (26 concrete types)
+|   +-- Statements.h                        # Statement AST nodes (11 concrete types)
+|   +-- Declarations.h                      # Declaration AST nodes (14 concrete types)
 |   +-- Forward.h                           # Forward declarations and enums
 |   +-- Symbol.h                            # Symbol base classes
 |   +-- Symbols.h                           # Concrete symbol types
@@ -1052,7 +1254,7 @@ mingus/
 |   +-- example_01..09_*.mingus             # 9 showcase programs
 |   +-- showcase.bat                        # Run all 9 examples
 +-- tests/
-|   +-- test_01..test_38_*.mingus           # 38 feature tests
+|   +-- test_01..test_45_*.mingus           # 45 feature tests
 |   +-- stress_01..stress_22_*.mingus       # 21 stress tests
 |   +-- *.expected                          # Expected output files
 |   +-- MathLib.mingus                      # Library file for test_12 imports

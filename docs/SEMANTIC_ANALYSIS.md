@@ -470,8 +470,10 @@ Similar to structs but with additional steps:
 2. Remaining base class names are treated as implemented interfaces.
 3. Visit fields (appended to both `fields` and `allFields`).
 4. Visit or auto-generate constructor and destructor.
-5. Visit methods and operators.
-6. Call `buildVtable(classSym)` after all members are registered.
+5. Visit copy constructor if present (`node.copyConstructor`): when the `ConstructorDeclaration` has `isCopyConstructor=true`, the constructor symbol gets `isCopyConstructor=true` and is stored on `ClassSymbol::copyConstructor`.
+6. Visit move constructor if present (`node.moveConstructor`): when `isMoveConstructor=true`, the constructor symbol gets `isMoveConstructor=true` and is stored on `ClassSymbol::moveConstructor`.
+7. Visit methods and operators.
+8. Call `buildVtable(classSym)` after all members are registered.
 
 **Enums:**
 
@@ -503,6 +505,22 @@ A lambda creates a `BlockScope` labeled `__lambda`, not a `FunctionSymbol` scope
 **Match Arms:**
 
 Each match arm gets its own `BlockScope`. `IdentifierPattern` nodes create `Local` variables in the arm scope (for binding patterns like `x` in `match val { x => ... }`).
+
+**MoveExpression:**
+
+`visit(MoveExpression&)` must be implemented in Pass 1 to call `setScope()` on the node and then visit the operand. Without this, the inner `IdentifierExpression` has a null `astScopeNode`, causing later passes (identifier resolution, capture analysis) to fail.
+
+**Function Overloads:**
+
+When multiple functions share the same name in a scope, Pass 1 tracks them via a parallel `functionOverloads_` map. Each scope maintains a list of `FunctionSymbol` entries keyed by function name. When a new function is defined with a name that already exists in the current scope, it is added to the overload list rather than producing a redefinition error. Overload resolution is deferred to Pass 3.
+
+**Typedef Declarations:**
+
+`visit(TypedefDeclaration&)` creates a type alias that resolves to the underlying type. The alias name is registered in the type registry via `symbolTable_.registerType()`, so subsequent type resolution in Passes 2 and 3 transparently resolves the alias to its target type.
+
+**Do-While Statements:**
+
+`visit(DoWhileStatement&)` scopes the body like a regular `while` statement -- it pushes a `BlockScope` for the body and visits the condition and body within it.
 
 ### Auto-Generated Constructors and Destructors
 
@@ -603,6 +621,8 @@ void TypeResolver::resolveParameters(...) {
 
 This unwrapping is **critical**. Without it, codegen's `mapType()` would receive `ReferenceTypeSymbol(int)` and map it to `ptr` (LLVM pointer type) instead of `i32`. The reference semantic is carried entirely by the `isReference` flag on `VariableSymbol`, not by the type itself.
 
+`resolveParameters()` also propagates `isRvalueReference` from `ParameterNode` to `VariableSymbol`, parallel to the existing `isReference` propagation. This supports move constructor parameters declared as `T&&`.
+
 The same unwrapping applies in two locations:
 1. `resolveParameters()` -- for regular function/method parameters
 2. `visit(LambdaExpression&)` -- for lambda parameters
@@ -634,8 +654,10 @@ For `var`-declared variables (`isInferred = true`), the type is left as `nullptr
 - Sets `FunctionSymbol::returnType` (defaults to `void` if no annotation)
 - Sets `EnumSymbol::underlyingType` (defaults to `int`)
 - Unwraps `ReferenceTypeSymbol` on parameters
+- Propagates `isRvalueReference` from `ParameterNode` to `VariableSymbol`
 - Resolves `CastExpression::targetType` and `NewExpression::type`
 - Resolves `SizeOfExpression::targetType`
+- Visits `ClassDeclaration::moveConstructor` if present (resolves move constructor parameter types)
 
 **Does NOT:**
 - Infer types for `var`-declared variables (deferred to Pass 3)
@@ -827,6 +849,28 @@ if (!symbolTable_.isCompatible(condition->resolvedType.get(),
 }
 ```
 
+### Function Overload Resolution
+
+The TypeChecker maintains overload candidate lists populated by Pass 1's `functionOverloads_` map. When a `CallExpression` callee resolves to an overloaded name, Pass 3 performs overload resolution using a scoring system:
+
+- **Exact type match**: Scores highest (e.g., calling with `int` when parameter is `int`).
+- **Compatible type match**: Scores lower (e.g., calling with `int` when parameter is `double`, requiring implicit widening).
+- **Parameter count**: Must match exactly -- no implicit default arguments.
+
+The candidate with the highest total score wins. If no candidate matches or if there is an ambiguity, an error is reported.
+
+### Covariant Return Type Checking
+
+When checking method overrides (derived class method overriding a base class method), the TypeChecker validates that the return type of the override is covariant: it must be either the same type as the base method's return type, or a subclass pointer of the base method's return type. For example, if the base method returns `Animal*`, the override may return `Dog*` (where `Dog` extends `Animal`).
+
+### MoveExpression
+
+`visit(MoveExpression&)` visits the operand expression and sets `resolvedType` to the operand's resolved type. The move expression is a pass-through for type purposes -- it only signals move semantics to codegen.
+
+### String Indexing
+
+`visit(IndexExpression&)` recognizes when the object type is `PrimitiveKind::String`. String indexing with an integer subscript returns `charType`, enabling character access via `str[i]`.
+
 ### Delete Statement Checking
 
 The target of `delete` must be a `PointerTypeSymbol` or `ClassSymbol`:
@@ -1016,6 +1060,16 @@ void SemanticValidator::visit(BreakStatement& node) {
     }
 }
 ```
+
+**Labeled Break/Continue:**
+
+Labeled break and continue statements (e.g., `break outer;`, `continue outer;`) are validated against a map of active labeled loops. When a labeled loop (e.g., `outer: for (...)`) is entered, the label is registered in the active label map. When a labeled `break` or `continue` is encountered, the validator checks that the label refers to an enclosing labeled loop in the active map. If the label is not found or does not refer to an enclosing loop, an error is reported. Labels are removed from the map when their loop scope exits.
+
+### 4d.1: MoveExpression and ClassDeclaration Visitors
+
+`visit(MoveExpression&)` visits the operand expression to ensure any nested identifiers are subjected to capture analysis and RAII tracking.
+
+`visit(ClassDeclaration&)` visits the `moveConstructor` node if present, ensuring that move constructor bodies are subjected to the same validation (lambda captures, RAII tracking, return completeness) as regular constructors.
 
 ### 4e: Abstract/Interface Implementation Checking
 

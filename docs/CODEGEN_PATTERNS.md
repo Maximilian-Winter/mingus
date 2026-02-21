@@ -4,7 +4,7 @@ Comprehensive reference for how the Mingus compiler lowers its semantically-anno
 
 **Source files:**
 - `include/mingus/codegen/IRGenerator.h` -- header with all state, caches, and method declarations
-- `src/mingus/codegen/IRGenerator.cpp` -- full codegen implementation (~3800 lines)
+- `src/mingus/codegen/IRGenerator.cpp` -- full codegen implementation (~4600 lines)
 - `tools/mingus_ir_tool.cpp` -- driver: parse, sema, codegen, optimization, clang invocation
 
 **LLVM target:** LLVM 21.1.8, `x86_64-pc-windows-msvc` triple.
@@ -30,6 +30,13 @@ Comprehensive reference for how the Mingus compiler lowers its semantically-anno
 15. [Optimization](#15-optimization)
 16. [Entry Point Wrapper](#16-entry-point-wrapper)
 17. [Key Invariants](#17-key-invariants)
+18. [Do-While Loop Codegen](#18-do-while-loop-codegen)
+19. [Labeled Break/Continue Codegen](#19-labeled-breakcontinue-codegen)
+20. [Function Overloading Codegen](#20-function-overloading-codegen)
+21. [Copy Constructor Codegen](#21-copy-constructor-codegen)
+22. [Move Semantics Codegen](#22-move-semantics-codegen)
+23. [Typedef Codegen](#23-typedef-codegen)
+24. [Covariant Return Types Codegen](#24-covariant-return-types-codegen)
 
 ---
 
@@ -1052,6 +1059,218 @@ This bridges Mingus's module naming convention to the C runtime's expected `main
 
 ---
 
+## 18. Do-While Loop Codegen
+
+Unlike `while` loops where the condition is checked first, `do-while` generates a different basic block layout where the body executes unconditionally before the first condition check.
+
+### Basic Block Layout
+
+```
+entry:
+    br label %do.body
+
+do.body:                          ; body executes at least once
+    ; ... loop body statements ...
+    br label %do.cond
+
+do.cond:
+    %cond = <evaluate condition>
+    br i1 %cond, label %do.body, label %do.exit
+
+do.exit:
+    ; ... continues after loop ...
+```
+
+Compare with `while`:
+```
+while: entry -> cond.bb -> (body.bb -> back to cond, or exit)
+do:    entry -> body.bb -> cond.bb -> (back to body, or exit)
+```
+
+### RAII Interaction
+
+RAII interaction is identical to `for` and `while` loops. The `loopRAIIScopeDepth_` is recorded at loop entry, and `emitBreakDestructors()` uses it to clean up only scopes created inside the loop body. The `loopExitBlock_` and `loopIterBlock_` are set to `do.exit` and `do.cond` respectively, so `break` branches to exit and `continue` branches to the condition check.
+
+---
+
+## 19. Labeled Break/Continue Codegen
+
+Labeled loops allow `break` and `continue` to target a specific enclosing loop by name, enabling controlled exit from nested loop structures.
+
+### Label-to-Block Maps
+
+Two maps store the association between label names and their target basic blocks:
+
+| Map | Type | Purpose |
+|-----|------|---------|
+| `labeledExitBlocks_` | `string -> BasicBlock*` | Maps label names to the labeled loop's exit block |
+| `labeledIterBlocks_` | `string -> BasicBlock*` | Maps label names to the labeled loop's iteration/condition block |
+
+When a labeled loop is entered, its label, exit block, and iteration block are registered in these maps. When the loop exits, the entries are removed.
+
+### Labeled Break
+
+```mingus
+outer: for (int i = 0; i < 10; i = i + 1) {
+    for (int j = 0; j < 10; j = j + 1) {
+        if (someCondition) break outer;
+    }
+}
+```
+
+`break outer;` looks up `"outer"` in `labeledExitBlocks_` and branches to that block, skipping out of both loops.
+
+### Labeled Continue
+
+```mingus
+outer: for (int i = 0; i < 10; i = i + 1) {
+    for (int j = 0; j < 10; j = j + 1) {
+        if (someCondition) continue outer;
+    }
+}
+```
+
+`continue outer;` looks up `"outer"` in `labeledIterBlocks_` and branches to the outer loop's iteration block.
+
+### RAII Cleanup for Labeled Break/Continue
+
+`emitBreakDestructors()` must clean up all RAII scopes between the current point and the target label's loop depth. For a labeled break that exits multiple loops, this means destroying scopes from all intermediate loop bodies, not just the innermost one. The target loop's `loopRAIIScopeDepth_` is used as the boundary for cleanup, which is retrieved alongside the target block from the label maps.
+
+---
+
+## 20. Function Overloading Codegen
+
+### Name Mangling with Type Suffixes
+
+Overloaded functions are disambiguated in LLVM IR via `$_type` mangled name suffixes. The `mangleName()` function appends parameter type suffixes when a function has overloads:
+
+| Mingus Declaration | Mangled LLVM Name |
+|-------------------|-------------------|
+| `func add(int a, int b) => int` | `Module_add$_int_int` |
+| `func add(int a, int b, int c) => int` | `Module_add$_int_int_int` |
+| `func add(double a, double b) => double` | `Module_add$_double_double` |
+
+The `$_` separator ensures the type suffix portion is distinct from the base name. Each parameter type name is joined with `_` to form the suffix.
+
+### Call Site Resolution
+
+At call sites, the `TypeChecker` (Pass 3) has already resolved which overload to call and stored it in `CallExpression::resolvedCallee`. The codegen simply looks up the `resolvedCallee` in `functionCache_` and emits a direct call -- no runtime dispatch or additional resolution is needed:
+
+```cpp
+auto* calleeFuncSym = callExpr.resolvedCallee;
+auto* fn = functionCache_[calleeFuncSym];
+builder_.CreateCall(fn, args);
+```
+
+---
+
+## 21. Copy Constructor Codegen
+
+### Name Mangling
+
+Copy constructors are mangled as `ClassName_copy_constructor`, separate from the regular `ClassName_constructor`:
+
+```llvm
+declare void @Vector_copy_constructor(ptr %this, ptr %other)
+```
+
+### Forward Declaration
+
+Copy constructors are forward-declared in `declareFunctions()` alongside regular constructors and destructors, using the `ClassSymbol::copyConstructor` field.
+
+### Dispatch in NewExpression
+
+`visit(NewExpression&)` checks whether the class has a `copyConstructor` and the argument is a class instance. When both conditions are met, the copy constructor is called instead of the regular constructor:
+
+```llvm
+; new Vector(existingVec)
+%new.obj = call ptr @malloc(i64 <size>)
+call void @Vector_copy_constructor(ptr %new.obj, ptr %existing.ptr)
+```
+
+The source argument is passed as a pointer (`ptr`), using the same representation as reference parameters. This is consistent with the copy constructor's parameter signature `(ClassName& other)`.
+
+---
+
+## 22. Move Semantics Codegen
+
+### Name Mangling
+
+Move constructors are mangled as `ClassName_move_constructor`:
+
+```llvm
+declare void @Vector_move_constructor(ptr %this, ptr %source)
+```
+
+### MoveExpression Visitor
+
+`visit(MoveExpression&)` simply evaluates the operand expression and passes through the resulting value via `lastValue_`. The `move()` wrapper is purely a semantic marker -- it does not generate additional IR instructions.
+
+### Dispatch in NewExpression
+
+In `visit(NewExpression&)`, the move constructor check happens **before** the copy constructor check. When the argument is wrapped in `MoveExpression` (detected via `arg->is<MoveExpression>()`), and the class has a `moveConstructor`, the move constructor is dispatched:
+
+```llvm
+; new Vector(move(existingVec))
+%new.obj = call ptr @malloc(i64 <size>)
+call void @Vector_move_constructor(ptr %new.obj, ptr %existing.ptr)
+```
+
+### LLVM IR Representation
+
+Both `&` (reference) and `&&` (rvalue reference) map to `ptr` in LLVM IR. The distinction between copy and move constructors is purely semantic -- which constructor gets dispatched. At the LLVM level, both receive the same `ptr` argument type:
+
+```
+copy constructor: void (ptr %this, ptr %other)    ; from ClassName&
+move constructor: void (ptr %this, ptr %source)   ; from ClassName&&
+```
+
+---
+
+## 23. Typedef Codegen
+
+Typedefs have **no codegen impact** -- they are pure compile-time aliases resolved during semantic analysis.
+
+### Type Resolution
+
+When `mapType()` encounters a `TypeAliasSymbol` (the symbol created for a typedef), it resolves through to the underlying type's LLVM representation. No special IR instructions, types, or declarations are generated for typedef declarations.
+
+```mingus
+typedef int Score;        // Score -> i32 (same as int)
+typedef Pointer<Node> NodePtr;  // NodePtr -> ptr (same as Pointer<Node>)
+```
+
+The `TypedefDeclaration` visitor in the codegen is effectively a no-op.
+
+---
+
+## 24. Covariant Return Types Codegen
+
+Covariant return types require **no special codegen**. The validation is purely a semantic analysis concern handled in Pass 3 (TypeChecker).
+
+### Why No Codegen Is Needed
+
+LLVM 21 uses opaque pointers (`ptr`) for all pointer types. A method returning `Dog*` and its override returning `Animal*` both generate the same LLVM return type: `ptr`. Virtual dispatch through the vtable works correctly because all pointer types are identical at the LLVM level:
+
+```llvm
+; Base class method:
+define ptr @Animal_clone(ptr %this) { ... }
+
+; Derived class override (covariant return Dog* instead of Animal*):
+define ptr @Dog_clone(ptr %this) { ... }
+
+; Vtable entry is just ptr -- no type mismatch:
+@Dog_vtable = internal constant [N x ptr] [
+    ptr @Dog_destructor,
+    ptr @Dog_clone,     ; same ptr type as Animal_clone slot
+    ...
+]
+```
+
+The covariant return check (verifying that the override's return type is a subclass of the base method's return type) is entirely a Pass 3 validation. By the time codegen runs, all pointer returns are uniformly `ptr`.
+
+---
+
 ## 17. Key Invariants
 
 ### Lambda RAII Isolation
@@ -1172,3 +1391,11 @@ if (arg->resolvedType->is<FunctionTypeSymbol>() && arg->is<LambdaExpression>()) 
 ```
 
 Without this, temporary closures would leak one refcount.
+
+### MoveExpression Must Have visit() in SymbolTableBuilder
+
+`MoveExpression` MUST have a `visit()` implementation in the `SymbolTableBuilder` (Pass 1) that propagates `astScopeNode` to the inner expression. Without it, the inner `IdentifierExpression` has no `astScopeNode`, and the `TypeChecker` (Pass 3) cannot resolve the identifier's symbol -- causing a silent null dereference or type resolution failure.
+
+### Copy Constructor Detection Requires PointerTypeNode Unwrap
+
+When detecting whether a constructor parameter matches the copy constructor signature `(ClassName& other)`, the `ASTGenerator` must unwrap `PointerTypeNode` before checking `NamedTypeNode` for the class name match. The reference parameter `ClassName&` is parsed as a `PointerTypeNode` wrapping a `NamedTypeNode`, so checking only for `NamedTypeNode` at the top level would fail to identify copy constructors.

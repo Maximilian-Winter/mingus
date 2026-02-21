@@ -1072,14 +1072,30 @@ though its contents have been copied into the final buffer.
 Retain, release, and destructor calls have no `DebugLoc` attached -- they appear
 as "unknown location" in debuggers and cannot be stepped through meaningfully.
 
-### Closures with Struct Parameters
+### Move Semantics and Ownership Transfer
 
-Fat-pointer call sites pass struct arguments as `ptr`, but the lambda function
-expects the struct by value. This causes an LLVM verification failure. Workaround:
-pass struct fields as individual scalar arguments.
+Move constructors (`constructor(ClassName&& other)`) enable transferring ownership
+of resources between objects. The move constructor body is user-written and typically:
 
-### Closures with Reference Parameters
+1. Copies field values from the source to the destination
+2. Zeros the source's fields to prevent double-free or stale access
+3. Marks the source as "moved" (optional, for debugging)
 
-Call sites pass the `i32` value directly, not a `ptr` to the alloca. This causes
-an LLVM verification failure when the lambda expects a reference parameter.
-Workaround: use non-closure functions for reference parameters.
+```mingus
+constructor(Resource&& other)
+{
+    this.value = other.value;
+    other.value = 0;       // zero source to prevent double-free
+    other.moved = 1;       // optional: mark as moved
+}
+```
+
+**Interaction with RAII and destructors**: After a move, the source object still exists
+and its destructor will be called at scope exit. The move constructor must leave the
+source in a valid state (typically zeroed) so the destructor is a safe no-op. For
+closure-typed fields, zeroing ensures the destructor epilogue's release calls encounter
+null envPtrs (safe no-ops) rather than dangling pointers to transferred environments.
+
+Both `&` (reference) and `&&` (rvalue reference) map to `ptr` in LLVM IR -- the
+distinction is purely semantic, controlling which constructor the `NewExpression`
+dispatches to.

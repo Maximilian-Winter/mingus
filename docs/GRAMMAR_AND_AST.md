@@ -68,17 +68,17 @@ The lexer defines keywords in several categories:
 ```
 module  class  struct  enum  func  constructor  destructor
 super   operator  for  while  static  abstract  interface
-public  private  protected  extern  raw
+public  private  protected  extern  raw  typedef
 ```
 
 **Control Flow:**
 ```
-if  else  switch  case  default  match  return  break  continue
+if  else  switch  case  default  match  return  break  continue  do
 ```
 
 **Memory and References:**
 ```
-var  const  new  delete  null  this
+var  const  new  delete  null  this  move
 ```
 
 **Module System:**
@@ -293,6 +293,7 @@ moduleDeclaration
     | externDeclaration
     | variableDeclaration
     | importDefinition
+    | typedefDeclaration
     ;
 ```
 
@@ -572,7 +573,25 @@ interface Drawable {
 
 At runtime, interfaces use fat-pointer dispatch: `{ objPtr, itablePtr }`.
 
-### 3.11 Variable Declarations
+### 3.11 Typedef Declarations
+
+```
+typedefDeclaration
+    : 'typedef' typeIdentifier Identifier ';'
+    ;
+```
+
+Type aliases create a new name for an existing type:
+
+```mingus
+typedef int Color;
+typedef (int, string) Pair;
+typedef (int) => double Transformer;
+```
+
+The alias name is the `Identifier`, and the target type is the `typeIdentifier`. After resolution, the alias behaves identically to the original type.
+
+### 3.12 Variable Declarations
 
 ```
 variableDeclaration
@@ -627,7 +646,7 @@ const PI = 3.14159;      // inferred const
 (var x, var y) = computePair();
 ```
 
-### 3.12 Statements
+### 3.13 Statements
 
 ```
 statement
@@ -635,6 +654,7 @@ statement
     | variableDeclaration
     | forStatement
     | whileStatement
+    | doWhileStatement
     | ifStatement
     | switchStatement
     | matchStatement
@@ -643,6 +663,7 @@ statement
     | continueStatement
     | deleteStatement
     | rawBlock
+    | labeledStatement
     | block
     ;
 ```
@@ -733,6 +754,38 @@ while (running) {
 }
 ```
 
+#### Do-While Loops
+
+```
+doWhileStatement
+    : 'do' block 'while' '(' expression ')' ';'
+    ;
+```
+
+```mingus
+do {
+    tick();
+} while (running);
+```
+
+#### Labeled Statements
+
+```
+labeledStatement
+    : Identifier ':' statement
+    ;
+```
+
+Labels can be attached to loops for use with `break` and `continue`:
+
+```mingus
+outer: for (int i = 0; i < 10; i++) {
+    for (int j = 0; j < 10; j++) {
+        if (j == 5) break outer;
+    }
+}
+```
+
 #### Switch Statements
 
 ```
@@ -766,8 +819,15 @@ switch (color) {
 
 ```
 returnStatement    : 'return' expression? ';'
-breakStatement     : 'break' ';'
-continueStatement  : 'continue' ';'
+breakStatement     : 'break' Identifier? ';'
+continueStatement  : 'continue' Identifier? ';'
+```
+
+`break` and `continue` accept an optional label to target an outer loop:
+
+```mingus
+break outer;       // break out of the loop labeled 'outer'
+continue outer;    // continue the loop labeled 'outer'
 ```
 
 #### Delete Statement
@@ -797,7 +857,7 @@ raw {
 }
 ```
 
-### 3.13 Expressions
+### 3.14 Expressions
 
 The expression grammar uses **precedence climbing** (separate rules per precedence level) to enforce operator precedence without left recursion.
 
@@ -953,6 +1013,7 @@ unaryExpression
     : prefixOperator unaryExpression
     | incrementDecrementOperator unaryExpression
     | typeSizeOrAlign '(' typeIdentifier ')'
+    | 'move' '(' expression ')'
     | postfixExpression
     ;
 
@@ -970,6 +1031,13 @@ typeSizeOrAlign
 ```
 
 Prefix unary operators: `!` (logical not), `-` (negate), `+` (positive), `~` (bitwise complement), `&` (address-of), `*` (dereference), `++`/`--` (pre-increment/decrement), `sizeof(Type)`, `alignof(Type)`.
+
+The `move(expr)` form produces a `MoveExpression` node, used for move semantics in constructor calls and assignments:
+
+```mingus
+var b = move(a);                // move a into b
+MyClass c(move(other));         // move constructor
+```
 
 #### Postfix Expressions
 
@@ -1094,7 +1162,7 @@ var result = match status {
 };
 ```
 
-### 3.14 Type System Grammar
+### 3.15 Type System Grammar
 
 ```
 typeIdentifier
@@ -1107,14 +1175,16 @@ typeIdentifier
 primitiveType : 'int' | 'double' | 'float' | 'byte' | 'string' | 'char' | 'bool' | 'void'
 
 typeModifier
-    : arrayDimension       // [N] or []
-    | pointerLevel         // *
-    | referenceLevel       // &
+    : arrayDimension         // [N] or []
+    | pointerLevel           // *
+    | referenceLevel         // &
+    | rvalueReferenceLevel   // &&
     ;
 
-arrayDimension : '[' IntegerLiteral? ']'
-pointerLevel   : '*'
-referenceLevel : '&'
+arrayDimension       : '[' IntegerLiteral? ']'
+pointerLevel         : '*'
+referenceLevel       : '&'
+rvalueReferenceLevel : '&&'   // LogicalAndOperator token (ANTLR longest-match)
 
 functionType : '(' typeList? ')' '=>' returnType
 tupleType    : '(' typeIdentifier ',' typeIdentifier (',' typeIdentifier)* ')'
@@ -1129,6 +1199,7 @@ Type modifiers stack left-to-right on the base type:
 | `int` | `PrimitiveTypeNode(Int)` |
 | `int*` | `PointerTypeNode(PrimitiveTypeNode(Int))` |
 | `int&` | `PointerTypeNode(PrimitiveTypeNode(Int), isReference=true)` |
+| `int&&` | `PointerTypeNode(PrimitiveTypeNode(Int), isRvalueReference=true)` |
 | `int[]` | `ArrayTypeNode(PrimitiveTypeNode(Int), unsized)` |
 | `int[16]` | `ArrayTypeNode(PrimitiveTypeNode(Int), size=16)` |
 | `int[]*` | `PointerTypeNode(ArrayTypeNode(PrimitiveTypeNode(Int)))` |
@@ -1138,7 +1209,7 @@ Type modifiers stack left-to-right on the base type:
 | `(int) => double` | `FunctionTypeNode([int], double)` |
 | `() => void` | `FunctionTypeNode([], void)` |
 
-### 3.15 Modifiers
+### 3.16 Modifiers
 
 ```
 accessModifier   : 'public' | 'private' | 'protected'
@@ -1146,7 +1217,7 @@ staticModifier   : 'static'
 abstractModifier : 'abstract'
 ```
 
-### 3.16 Qualified Names
+### 3.17 Qualified Names
 
 ```
 qualifiedName : Identifier ('.' Identifier)*
@@ -1199,7 +1270,7 @@ AstBaseNode                          // Root of all AST nodes
 +-- TypeNode                         // Base for type annotations
 |   +-- PrimitiveTypeNode            // int, double, etc.
 |   +-- NamedTypeNode                // User types, qualified names
-|   +-- PointerTypeNode              // T* or T& (isReference flag)
+|   +-- PointerTypeNode              // T*, T&, or T&& (isReference/isRvalueReference)
 |   +-- ArrayTypeNode                // T[] or T[N]
 |   +-- TupleTypeNode                // (T1, T2, ...)
 |   +-- FunctionTypeNode             // (T1, T2) => R
@@ -1332,6 +1403,7 @@ Sema-resolved annotations on `MemberAccessExpression`:
 | `CastExpression` | `shared_ptr<TypeNode> targetType`, `operand` | `(double)x` |
 | `NewExpression` | `shared_ptr<TypeNode> type`, `shared_ptr<ArgumentsNode> arguments`, `bool isArray`, `arraySize` | `new Dog("Rex")`, `new int[100]` |
 | `SizeOfExpression` | `shared_ptr<TypeNode> targetType` | `sizeof(int)` |
+| `MoveExpression` | `shared_ptr<ExpressionBaseNode> operand` | `move(x)` |
 
 #### Tuple, Match, Pipe, Lambda
 
@@ -1383,8 +1455,10 @@ Defined in `include/mingus/Statements.h` (with `BlockStatementNode` in `AstNode.
 | `IfStatement` | `condition`, `thenBody`, `vector<ElseIfClause> elseIfClauses`, `elseBody` | `if/else if/else` |
 | `ForStatement` | `initDeclarations`, `initExpressions`, `condition`, `iterators`, `body` | `for (...;...;...) { }` |
 | `WhileStatement` | `condition`, `body` | `while (cond) { }` |
-| `BreakStatement` | -- | `break;` |
-| `ContinueStatement` | -- | `continue;` |
+| `BreakStatement` | `optional<string> label` | `break;` or `break label;` |
+| `ContinueStatement` | `optional<string> label` | `continue;` or `continue label;` |
+| `DoWhileStatement` | `body` (BlockStatementNode), `condition` (ExpressionBaseNode) | `do { } while (cond);` |
+| `LabeledStatement` | `string label`, `statement` (StatementBaseNode) | `label: stmt` |
 | `DeleteStatement` | `shared_ptr<ExpressionBaseNode> target` | `delete expr;` |
 | `SwitchStatement` | `subject`, `vector<SwitchCase> cases`, `vector<shared_ptr<StatementBaseNode>> defaultCase` | `switch { case: ... }` |
 
@@ -1403,16 +1477,17 @@ Defined in `include/mingus/Declarations.h` (with `ModuleNode` in `AstNode.h`):
 | `VariableDeclaration` | `name`, `accessModifier`, `isStatic`, `isConst`, `type`, `isInferred`, `initializer`, `resolvedVariable` | Variable/field/const declaration |
 | `TupleDestructuringDeclaration` | `vector<DestructureElement> elements`, `initializer`, `resolvedVariables` | `(var a, var b) = expr;` |
 | `FunctionDeclaration` | `name`, `accessModifier`, `isStatic`, `isAbstract`, `isVirtual`, `isOverride`, `parameters`, `returnType`, `body`, `resolvedFunction` | Function/method declaration |
-| `ConstructorDeclaration` | `accessModifier`, `parameters`, `body`, `superArgs`, `hasSuperCall`, `resolvedConstructor` | `constructor(params) : super(args) { }` |
+| `ConstructorDeclaration` | `accessModifier`, `parameters`, `body`, `superArgs`, `hasSuperCall`, `bool isMoveConstructor`, `resolvedConstructor` | `constructor(params) : super(args) { }` |
 | `DestructorDeclaration` | `body`, `resolvedDestructor` | `destructor { }` |
 | `ExternFunctionDeclaration` | `name`, `parameters`, `returnType`, `bool isVariadic`, `resolvedFunction` | `extern func f(...) => T;` |
 | `OperatorDeclaration` | `OverloadableOp op`, `parameters`, `returnType`, `body`, `resolvedOperator` | `func operator+(T) => T { }` |
 | `EnumMemberNode` | `string name`, `shared_ptr<ExpressionBaseNode> value` | `Red = 0` |
 | `EnumDeclaration` | `name`, `accessModifier`, `underlyingType`, `vector<EnumMemberNode> members`, `resolvedEnum` | `enum Color : int { }` |
 | `StructDeclaration` | `name`, `accessModifier`, `fields`, `methods`, `operators`, `resolvedStruct` | `struct Vec2 { }` |
-| `ClassDeclaration` | `name`, `accessModifier`, `isStatic`, `isAbstract`, `baseClasses`, `fields`, `methods`, `operators`, `constructor`, `destructor`, `resolvedClass` | `class Dog : Animal { }` |
+| `ClassDeclaration` | `name`, `accessModifier`, `isStatic`, `isAbstract`, `baseClasses`, `fields`, `methods`, `operators`, `constructor`, `destructor`, `moveConstructor`, `resolvedClass` | `class Dog : Animal { }` |
 | `InterfaceDeclaration` | `name`, `accessModifier`, `methods`, `resolvedInterface` | `interface Drawable { }` |
 | `ImportDeclaration` | `vector<ImportTarget> targets`, `vector<string> sourcePath`, `bool isWholeModule` | `import X from M;` |
+| `TypedefDeclaration` | `string aliasName`, `shared_ptr<TypeNode> targetType` | `typedef int Color;` |
 
 **OverloadableOp enum:** `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Equal`, `NotEqual`, `Less`, `Greater`, `LessEq`, `GreaterEq`, `Negate`, `Index`
 
@@ -1429,14 +1504,14 @@ Defined in `include/mingus/AstNode.h`:
 | `TypeNode` | `TypeSymbolPtr resolvedType` | Base type annotation (resolved by Pass 2) |
 | `PrimitiveTypeNode` | `PrimitiveKind kind` | `int`, `double`, `float`, `byte`, `string`, `char`, `bool`, `void` |
 | `NamedTypeNode` | `vector<string> qualifiedName` | `MyStruct`, `Module.Type` |
-| `PointerTypeNode` | `shared_ptr<TypeNode> baseType`, `bool isReference` | `T*` (isReference=false) or `T&` (isReference=true) |
+| `PointerTypeNode` | `shared_ptr<TypeNode> baseType`, `bool isReference`, `bool isRvalueReference` | `T*` (isReference=false), `T&` (isReference=true), or `T&&` (isRvalueReference=true) |
 | `ArrayTypeNode` | `shared_ptr<TypeNode> elementType`, `shared_ptr<ExpressionBaseNode> sizeExpr` | `T[]` (sizeExpr=null) or `T[16]` |
 | `TupleTypeNode` | `vector<shared_ptr<TypeNode>> elementTypes` | `(int, string)` |
 | `FunctionTypeNode` | `vector<shared_ptr<TypeNode>> parameterTypes`, `shared_ptr<TypeNode> returnType` | `(int) => double` |
 
 **PrimitiveKind enum:** `Int`, `Double`, `Float`, `Byte`, `Char`, `String`, `Bool`, `Void`
 
-Note: `PointerTypeNode` serves double duty for both pointer types (`T*`) and reference types (`T&`). The `isReference` flag distinguishes them. The TypeResolver (Pass 2) unwraps reference types during parameter resolution.
+Note: `PointerTypeNode` serves triple duty for pointer types (`T*`), reference types (`T&`), and rvalue reference types (`T&&`). The `isReference` and `isRvalueReference` flags distinguish them. The TypeResolver (Pass 2) unwraps reference types during parameter resolution.
 
 ### 5.7 Pattern Nodes
 
@@ -1462,6 +1537,7 @@ Defined in `include/mingus/AstNode.h`:
 | `name` | `string` | Parameter name |
 | `type` | `shared_ptr<TypeNode>` | Parameter type (null for untyped lambda params) |
 | `isReference` | `bool` | True for `T&` parameters |
+| `isRvalueReference` | `bool` | True for `T&&` parameters (move semantics) |
 | `defaultValue` | `shared_ptr<ExpressionBaseNode>` | Default value (null if none) |
 | `resolvedSymbol` | `shared_ptr<VariableSymbol>` | Linked to the parameter's variable symbol (set by Pass 1) |
 
@@ -1484,17 +1560,16 @@ Defined in `include/mingus/AstNode.h`:
 
 ### 5.10 Complete AST Node Count
 
-The V2 AST has **62 named node types** (including base classes, type nodes, pattern nodes, and supporting nodes):
+The V2 AST has **69 named node types** (including base classes, type nodes, pattern nodes, and supporting nodes):
 
 - 4 base classes: `AstBaseNode`, `ExpressionBaseNode`, `StatementBaseNode`, `DeclarationBaseNode`
 - 3 structural: `ProgramNode`, `ModuleNode`, `BlockStatementNode`
 - 3 support: `ParameterNode`, `ArgumentsNode`, `ModifiersNode`
 - 7 type nodes: `TypeNode`, `PrimitiveTypeNode`, `NamedTypeNode`, `PointerTypeNode`, `ArrayTypeNode`, `TupleTypeNode`, `FunctionTypeNode`
 - 4 pattern nodes: `LiteralPattern`, `IdentifierPattern`, `WildcardPattern`, `RangePattern`
-- 7 literal expressions: `IntegerLiteral`, `FloatLiteral`, `BoolLiteral`, `CharLiteral`, `StringLiteral`, `NullLiteral`, `InterpolatedStringExpression`
-- 18 other expressions: `IdentifierExpression`, `QualifiedNameExpression`, `ThisExpression`, `MemberAccessExpression`, `BinaryExpression`, `UnaryExpression`, `AssignmentExpression`, `TernaryExpression`, `IndexExpression`, `CallExpression`, `CastExpression`, `NewExpression`, `SizeOfExpression`, `TupleExpression`, `MatchExpression`, `PipeExpression`, `LambdaExpression`, `VariableDeclarationExpression`
-- 8 statements: `ExpressionStatement`, `ReturnStatement`, `IfStatement`, `ForStatement`, `WhileStatement`, `BreakStatement`, `ContinueStatement`, `DeleteStatement`, `SwitchStatement`
-- 13 declarations: `VariableDeclaration`, `TupleDestructuringDeclaration`, `FunctionDeclaration`, `ConstructorDeclaration`, `DestructorDeclaration`, `ExternFunctionDeclaration`, `OperatorDeclaration`, `EnumMemberNode`, `EnumDeclaration`, `StructDeclaration`, `ClassDeclaration`, `InterfaceDeclaration`, `ImportDeclaration`
+- 26 expressions: `IntegerLiteral`, `FloatLiteral`, `BoolLiteral`, `CharLiteral`, `StringLiteral`, `NullLiteral`, `InterpolatedStringExpression`, `IdentifierExpression`, `QualifiedNameExpression`, `ThisExpression`, `MemberAccessExpression`, `BinaryExpression`, `UnaryExpression`, `AssignmentExpression`, `TernaryExpression`, `IndexExpression`, `CallExpression`, `CastExpression`, `NewExpression`, `SizeOfExpression`, `MoveExpression`, `TupleExpression`, `MatchExpression`, `PipeExpression`, `LambdaExpression`, `VariableDeclarationExpression`
+- 11 statements: `ExpressionStatement`, `ReturnStatement`, `IfStatement`, `ForStatement`, `WhileStatement`, `DoWhileStatement`, `BreakStatement`, `ContinueStatement`, `DeleteStatement`, `SwitchStatement`, `LabeledStatement`
+- 14 declarations: `VariableDeclaration`, `TupleDestructuringDeclaration`, `FunctionDeclaration`, `ConstructorDeclaration`, `DestructorDeclaration`, `ExternFunctionDeclaration`, `OperatorDeclaration`, `EnumMemberNode`, `EnumDeclaration`, `StructDeclaration`, `ClassDeclaration`, `InterfaceDeclaration`, `ImportDeclaration`, `TypedefDeclaration`
 
 ---
 
@@ -1532,16 +1607,19 @@ Calls `visitProgram()`, extracts the `ProgramNode`, and collects any errors.
 | `tupleDestructuring` | `TupleDestructuringDeclaration` | |
 | `forStatement` | `ForStatement` | Multi-init via `localVarInitializer` |
 | `whileStatement` | `WhileStatement` | |
+| `doWhileStatement` | `DoWhileStatement` | Body then condition |
 | `ifStatement` | `IfStatement` | Else-if clauses chained |
 | `switchStatement` | `SwitchStatement` | Cases + optional default |
 | `matchStatement` | `ExpressionStatement { MatchExpression }` | Match-as-statement wrapped |
+| `labeledStatement` | `LabeledStatement` | Label string + wrapped statement |
+| `typedefDeclaration` | `TypedefDeclaration` | Alias name + target type |
 | `rawBlock` | `BlockStatementNode` | No separate RawBlock node in V2 |
 | `assignment` (with lambda RHS) | `AssignmentExpression` | `f = [=](x) => {...}` works |
 | `lambdaExpression` | `LambdaExpression` | Captures parsed, body as expression or block |
 | `pipe` | `PipeExpression` | Stages with optional member access chains |
 | Binary operator rules | `BinaryExpression` chain | Left-associative chaining |
 | `castExpression` | `CastExpression` | C-style cast |
-| `unaryExpression` | `UnaryExpression` | Prefix ops, sizeof |
+| `unaryExpression` | `UnaryExpression` / `MoveExpression` | Prefix ops, sizeof, move |
 | `postfixExpression` | Chained nodes | `Call`/`Index`/`MemberAccess`/`UnaryExpression` |
 | `primaryExpression` (integer) | `IntegerLiteral` | Handles decimal/hex/binary/octal |
 | `string` with interpolation | `InterpolatedStringExpression` | Plain strings become `StringLiteral` |
@@ -1692,9 +1770,9 @@ Dotted names like `Module.func` or `Color.Red` are represented as `QualifiedName
 
 Each `ParameterNode` carries a `resolvedSymbol` pointer set by the SymbolTableBuilder (Pass 1). This eliminates the V1 `scanForParamSymbols()` pass that had to scan lambda bodies to map parameter names to allocas. Now codegen reads `param->resolvedSymbol` directly.
 
-### 7.7 PointerTypeNode for Both Pointers and References
+### 7.7 PointerTypeNode for Pointers, References, and Rvalue References
 
-Rather than having separate `PointerTypeNode` and `ReferenceTypeNode` in the AST, the parser produces `PointerTypeNode` for both `T*` and `T&`, distinguished by the `isReference` flag. The semantic passes unwrap reference types: the TypeResolver sets `VariableSymbol::isReference = true` and stores the base type, not the reference wrapper.
+Rather than having separate `PointerTypeNode`, `ReferenceTypeNode`, and `RvalueReferenceTypeNode` in the AST, the parser produces `PointerTypeNode` for `T*`, `T&`, and `T&&`, distinguished by the `isReference` and `isRvalueReference` flags. The semantic passes unwrap reference types: the TypeResolver sets `VariableSymbol::isReference = true` and stores the base type, not the reference wrapper. Rvalue references (`T&&`) are used for move constructor parameters. Note that `&&` is parsed as the `LogicalAndOperator` token due to ANTLR's longest-match rule.
 
 ### 7.8 Expression Body Desugaring
 
@@ -1708,10 +1786,7 @@ Lambda bodies can be either `ExpressionBaseNode` or `BlockStatementNode`, stored
 
 ## 8. Grammar Limitations
 
-- **No do-while loop.** Only `for` and `while` loops are supported.
-- **No labeled break/continue.** Breaking out of nested loops requires restructuring.
 - **No generics/templates.** All types are concrete.
-- **No typedef or using alias.** Type aliases are not supported.
 - **No multiple return types.** Functions return a single type (tuples can be used as a workaround).
 - **Range patterns are integer-only.** `1..10` works, but `'a'..'z'` or `0.0..1.0` do not.
 - **Char literal escapes are raw.** The ASTGenerator reads `text[1]` without processing escape sequences in character literals, so `'\n'` produces `\` instead of a newline character.

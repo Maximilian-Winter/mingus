@@ -30,6 +30,10 @@ This document describes how types are represented in the Mingus compiler, how th
 10. [Operator Overloading](#10-operator-overloading)
 11. [Access Modifiers](#11-access-modifiers)
 12. [Const System](#12-const-system)
+13. [Typedef / Type Aliases](#13-typedef--type-aliases)
+14. [Function Overloading](#14-function-overloading)
+15. [Covariant Return Types](#15-covariant-return-types)
+16. [Copy and Move Constructor Type Matching](#16-copy-and-move-constructor-type-matching)
 
 ---
 
@@ -815,6 +819,151 @@ The TypeChecker also validates that assignment targets are valid lvalues:
 - `UnaryExpression` with `Dereference` -- `*ptr`
 
 Anything else (literals, function calls, binary expressions) produces "assignment to non-lvalue".
+
+---
+
+## 13. Typedef / Type Aliases
+
+### Overview
+
+Typedefs create transparent name aliases for existing types. They do NOT introduce new types — they are pure name aliases that resolve to an existing `TypeSymbol`.
+
+### Syntax
+
+```mingus
+typedef int Count;
+typedef (int) => bool Predicate;
+typedef Vec3 Position;
+```
+
+### Implementation
+
+During Pass 1, the SymbolTableBuilder processes typedef declarations by:
+
+1. Resolving the target type name to its `TypeSymbol`
+2. Registering the alias name in the current scope, pointing directly to the underlying `TypeSymbol`
+
+Because the alias maps to the same `TypeSymbol` instance as the original type, no new `TypeSymbol` is created. The alias is simply another name for the same object.
+
+### Type Compatibility
+
+Since a typedef resolves to the exact same `TypeSymbol` as its target, `isCompatible()` treats typedef aliases identically to their underlying type. The identity check (`from == to`) passes because both names resolve to the same `shared_ptr` instance. No special compatibility logic is needed.
+
+### Scope
+
+Typedefs work with all types: primitives, structs, classes, function types, pointers, arrays, and tuples. The alias is visible within the scope where it is declared and any nested scopes.
+
+---
+
+## 14. Function Overloading
+
+### Overview
+
+Function overloading allows multiple functions with the same name but different parameter signatures to coexist in the same scope. This applies to both free functions and class methods.
+
+### Symbol Registration
+
+The SymbolTableBuilder tracks overloads via a `functionOverloads_` parallel map in each scope. When a function name is already defined in a scope, the new definition is added to the overload set rather than producing a redefinition error.
+
+### Overload Resolution
+
+The TypeChecker performs scoring-based overload resolution when a `CallExpression` target has multiple candidates:
+
+1. **Parameter count**: Must match exactly. Candidates with wrong arity are eliminated.
+2. **Exact type match**: Each argument that matches its parameter type exactly contributes the highest score.
+3. **Compatible type**: An argument that is compatible but not identical (e.g., `int` passed to `double`) contributes a lower score.
+4. The candidate with the highest total score wins.
+
+If no candidate matches or multiple candidates tie, a compile error is produced.
+
+### Name Mangling
+
+Overloaded functions get a `$_type` suffix appended to their mangled name for LLVM IR disambiguation. The suffix encodes the parameter types:
+
+```
+func add(int a, int b) => int;      // Module_add$_int_int
+func add(double a, double b) => double;  // Module_add$_double_double
+```
+
+This ensures each overload has a unique LLVM function name while preserving the shared source-level name for resolution.
+
+### Codegen
+
+After the TypeChecker resolves the correct overload and sets `CallExpression::resolvedCallee`, codegen uses the mangled name to look up the correct `llvm::Function*` in the `functionCache_`. No additional disambiguation is needed at the IR level.
+
+---
+
+## 15. Covariant Return Types
+
+### Overview
+
+When overriding a virtual method, the return type can be a more derived pointer type than the base method's return type. This is known as covariant return.
+
+### Example
+
+```mingus
+class Animal {
+    virtual func clone() => Animal* {
+        return new Animal();
+    }
+}
+
+class Dog : Animal {
+    override func clone() => Dog* {    // covariant: Dog* narrows Animal*
+        return new Dog();
+    }
+}
+```
+
+### Validation
+
+The TypeChecker validates covariant returns during override checking. The override's return type must satisfy one of:
+
+- **Identical type** to the base method's return type, OR
+- **A pointer to a subclass** of the base method's return pointer type. The subclass relationship is verified by walking the `ClassSymbol::resolvedBaseClass` inheritance chain.
+
+Non-pointer covariant returns (e.g., base returns `int`, override returns `byte`) and unrelated pointer types are rejected with a compile error.
+
+### LLVM Representation
+
+At the LLVM level, all pointer types map to opaque `ptr` (following LLVM 14+ conventions). Because both the base return type (`Animal*`) and the covariant return type (`Dog*`) map to `ptr`, no special codegen is needed. The vtable slot holds the overriding function, and the caller receives a `ptr` regardless of which concrete type is returned.
+
+---
+
+## 16. Copy and Move Constructor Type Matching
+
+### Copy Constructor Detection
+
+The ASTGenerator detects copy constructors by examining constructor parameters. A constructor is a copy constructor if it has a single parameter that is a reference (`&`) to the enclosing class type.
+
+The detection requires a key subtlety: the parameter's `TypeNode` is a `PointerTypeNode` with `isReference=true`. The underlying `NamedTypeNode` is nested inside this wrapper. The ASTGenerator must unwrap the `PointerTypeNode` first to find the `NamedTypeNode`, then compare the type name against the enclosing class name.
+
+```mingus
+class Foo {
+    constructor(Foo& other) {    // copy constructor
+        // PointerTypeNode(isReference=true) wraps NamedTypeNode("Foo")
+    }
+}
+```
+
+The mangled name is `ClassName_copy_constructor`.
+
+### Move Constructor Detection
+
+Move constructors follow the same pattern but with an rvalue reference (`&&`). The `PointerTypeNode` has both `isReference=true` and `isRvalueReference=true`.
+
+A critical parsing subtlety: the `&&` token is lexed as a single `LogicalAndOperator` token, NOT two `SingleAndOperator` (`&`) tokens. This is due to ANTLR's longest-match rule. The grammar and ASTGenerator handle this by recognizing `LogicalAndOperator` in the parameter type position as an rvalue reference marker.
+
+```mingus
+class Foo {
+    constructor(Foo&& other) {   // move constructor
+        // PointerTypeNode(isReference=true, isRvalueReference=true)
+        // wraps NamedTypeNode("Foo")
+    }
+}
+```
+
+The move constructor is invoked via `move(expr)`, which produces a `MoveExpression` AST node.
 
 ---
 

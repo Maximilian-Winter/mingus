@@ -1,6 +1,6 @@
 # Mingus Known Limitations
 
-Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 59 passing tests (38 feature + 21 stress).
+Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 66 passing tests (45 feature + 21 stress).
 
 ---
 
@@ -29,13 +29,6 @@ Missing language features that have not been implemented.
 | **No first-class arrays** | Arrays are not first-class types. Must use pointers with manual `malloc`/`free` allocation. Fixed-size array declarations (`int[16]`) exist but are limited to stack allocation. | High |
 | **No string type** | Strings are C-style null-terminated `char*`. No built-in string class with length tracking, slicing, or Unicode support. String concatenation via `+` produces heap-allocated results registered for RAII cleanup. | Medium |
 | **No garbage collection** | Manual memory management only. Heap objects must be explicitly freed with `delete`. Closure environments use reference counting, but all other heap allocations are manual. | Medium |
-| **No do-while loop** | Only `for` and `while` loops are available. No `do { } while (cond);` construct. | Low |
-| **No labeled break/continue** | Cannot break from or continue an outer loop when inside a nested loop. Only the innermost loop is affected. | Low |
-| **No typedef/type alias** | No way to create type aliases (e.g., `type Callback = (int) => void;`). Must repeat full type signatures everywhere. | Low |
-| **No function overloading** | Only one function per name in a scope. Operator overloads are the only form of overloading supported. | Medium |
-| **No move semantics** | All values are copied. No move constructors, rvalue references, or ownership transfer. | Medium |
-| **No copy constructors** | Copying a class instance copies raw bytes without invoking any user-defined copy logic. Closure-typed fields get duplicate references without retain, which can lead to double-free. | Medium |
-| **No covariant return types** | Overriding a virtual method requires the exact same return type as the base class. | Low |
 | **No multiple return types (beyond tuples)** | Functions can return tuples, but there is no named-return or multi-value return beyond the tuple mechanism. | Low |
 | **No exceptions** | No `try`/`catch`/`throw`. Error handling must use return codes, error enums, or similar patterns. | Medium |
 | **Range patterns are integer-only** | `match` arm ranges (`1..10`) work only with integer literals. Float or char ranges are not supported. | Low |
@@ -117,7 +110,7 @@ Limitations in the four semantic analysis passes (SymbolTableBuilder, TypeResolv
 | **No definite assignment analysis** | Variables can be read before assignment without a compiler error. Uninitialized variables contain whatever was in the alloca (zero for zero-initialized structs, undefined for primitives). | Medium |
 | **No null safety** | Pointers and nullable closures can be dereferenced without null checks. No `?.` safe-navigation operator or nullable type system. | Medium |
 | **Operator imports not transferred** | Whole-module import (`import Mod;`) transfers named symbols but does not transfer operator overload definitions. Operators from imported modules may not be available. | Low |
-| **Single ctor/dtor per class** | Only one constructor and one destructor per class. Constructor overloading is not supported. Multiple definitions silently overwrite each other. | Low |
+| **Limited constructor forms** | Each class supports one regular constructor, one copy constructor (`T&`), and one move constructor (`T&&`). General constructor overloading with arbitrary signatures is not supported. Only one destructor per class. | Low |
 | **Vtable ordering is alphabetical** | New virtual methods introduced in derived classes are ordered alphabetically (from `std::map` iteration), not in source order. This affects vtable layout but not correctness for single-inheritance. | Low |
 | **Enum exhaustiveness is name-based** | Match exhaustiveness checking for enums uses case names only. Numeric patterns, complex expressions, or range patterns covering enum values are not recognized as exhaustive. | Low |
 | **Loop return analysis is conservative** | `for`/`while` bodies are always classified as `NeverReturns` for return completeness checking, even for provably infinite loops. Functions that return only inside a loop may get false "missing return" warnings. | Low |
@@ -279,6 +272,13 @@ These were documented as limitations in earlier versions but have been fixed and
 | **No const modifier** | `const int x = 42;` and `const pi = 3.14;` with type-inferred and explicit-typed variants. Assignment to const is rejected by sema. | test_36 |
 | **Pipe targets restricted to free functions** | `x \|> obj->method` and `x \|> obj->method(extra_args)` now work. Pipe targets support member access chains. | test_37 |
 | **No bare field access** | Class fields can be accessed by name alone (without `this.` prefix) in methods and constructors, including inherited fields. Local variables shadow fields correctly. | test_38 |
+| **No do-while loop** | `do { } while (cond);` construct implemented with at-least-once semantics. Supports break, continue, and nesting. | test_39 |
+| **No covariant return types** | Overriding virtual methods can return a more derived pointer type (e.g., `Dog*` where base returns `Animal*`). TypeChecker validates subclass relationship. | test_40 |
+| **No typedef/type alias** | `typedef int Count;` creates transparent type aliases. Aliases resolve to underlying type during semantic analysis. | test_41 |
+| **No labeled break/continue** | `outer: for (...) { break outer; }` enables targeting outer loops from nested contexts. Works with for, while, and do-while. RAII cleanup across label jumps. | test_42 |
+| **No copy constructors** | `constructor(ClassName& other)` detected by ASTGenerator when parameter type matches enclosing class. User-defined copy logic. Mangled as `ClassName_copy_constructor`. | test_43 |
+| **No function overloading** | Multiple functions with the same name but different parameter counts or types. Scoring-based overload resolution in TypeChecker. `$_type` mangled name suffix for LLVM disambiguation. | test_44 |
+| **No move semantics** | `constructor(ClassName&& other)` for move constructors, `move(x)` expression for rvalue marking. Enables ownership transfer with source zeroing. Mangled as `ClassName_move_constructor`. | test_45 |
 | **No auto-generated ctor/dtor** | SymbolTableBuilder injects synthetic ConstructorDeclaration and DestructorDeclaration with empty bodies when a class lacks explicit ones. | Multiple tests |
 | **Nullable closures** | `NullType` is compatible with `FunctionType` in sema. Null converts to zero fat pointer `{ null, null }` in codegen. | test_21, stress tests |
 | **Lambda literal assignment** | `f = [=](int x) => { ... };` works as assignment RHS. Grammar and ASTGenerator handle lambda expressions in assignment context. | Multiple tests |
