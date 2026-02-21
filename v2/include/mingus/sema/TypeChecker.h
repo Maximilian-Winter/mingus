@@ -97,7 +97,7 @@ private:
     // ---- Context tracking ----
     std::shared_ptr<FunctionSymbol> currentFunction_;
     TypeSymbolPtr currentReturnType_;
-    ClassSymbol* currentClass_ = nullptr;
+    TypeSymbol* currentClass_ = nullptr;  // ClassSymbol* or StructSymbol*
 
     // ---- Helpers ----
     void visitStatements(std::vector<std::shared_ptr<StatementBaseNode>>& stmts);

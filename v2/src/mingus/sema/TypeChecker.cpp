@@ -305,12 +305,17 @@ void TypeChecker::visit(EnumDeclaration& node) {
 }
 
 void TypeChecker::visit(StructDeclaration& node) {
+    auto savedClass = currentClass_;
+    currentClass_ = node.resolvedStruct.get();
+
     for (auto& method : node.methods) {
         if (method) method->accept(*this);
     }
     for (auto& op : node.operators) {
         if (op) op->accept(*this);
     }
+
+    currentClass_ = savedClass;
 }
 
 void TypeChecker::visit(ClassDeclaration& node) {
@@ -486,13 +491,10 @@ void TypeChecker::visit(InterpolatedStringExpression& node) {
 
 void TypeChecker::visit(ThisExpression& node) {
     if (currentClass_) {
-        // 'this' is a pointer to the current class
-        auto classType = symbolTable_.resolveType(currentClass_->getName());
-        if (classType) {
-            node.resolvedType = symbolTable_.getPointerType(classType);
-        } else {
-            node.resolvedType = symbolTable_.getErrorType();
-        }
+        // 'this' resolves to the struct/class type in sema
+        // (codegen handles the LLVM-level pointer internally)
+        auto type = symbolTable_.resolveType(currentClass_->getName());
+        node.resolvedType = type ? type : symbolTable_.getErrorType();
     } else {
         errors_.error("'this' used outside of class context", node.debugInfo);
         node.resolvedType = symbolTable_.getErrorType();
@@ -575,11 +577,10 @@ void TypeChecker::visit(MemberAccessExpression& node) {
         return;
     }
 
-    // If pointer type, dereference for member access
-    if (node.isArrow) {
-        if (auto* ptrType = objType->as<PointerTypeSymbol>()) {
-            objType = ptrType->baseType;
-        }
+    // Auto-dereference pointer types for member access
+    // Arrow (->) always dereferences; dot (.) also dereferences for `this.x` pattern
+    if (auto* ptrType = objType->as<PointerTypeSymbol>()) {
+        objType = ptrType->baseType;
     }
 
     // Enum member access: Color.Red
