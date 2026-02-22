@@ -875,6 +875,28 @@ void TypeChecker::visit(MoveExpression& node) {
     node.resolvedType = opType;
 }
 
+void TypeChecker::visit(ArrayLiteralExpression& node) {
+    if (node.elements.empty()) {
+        errors_.error("empty array literal", node.debugInfo);
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
+    }
+    TypeSymbolPtr elemType = nullptr;
+    for (auto& elem : node.elements) {
+        elem->accept(*this);
+        if (!elemType) {
+            elemType = elem->resolvedType;
+        } else if (elem->resolvedType &&
+                   !symbolTable_.isCompatible(elem->resolvedType.get(), elemType.get())) {
+            errors_.error("array literal elements must all have the same type",
+                          node.debugInfo);
+            node.resolvedType = symbolTable_.getErrorType();
+            return;
+        }
+    }
+    node.resolvedType = symbolTable_.getArrayType(elemType, (int)node.elements.size());
+}
+
 // ============================================================================
 // Assignment Expression
 // ============================================================================

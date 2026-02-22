@@ -94,6 +94,7 @@ class PipeExpression;
 class LambdaExpression;
 class VariableDeclarationExpression;
 class MoveExpression;
+class ArrayLiteralExpression;
 
 // ---- AST statement nodes ----
 class ExpressionStatement;

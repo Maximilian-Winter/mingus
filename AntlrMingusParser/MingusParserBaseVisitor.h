@@ -405,6 +405,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitArrayLiteral(MingusParser::ArrayLiteralContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitPostfixOperation(MingusParser::PostfixOperationContext *ctx) override {
     return visitChildren(ctx);
   }

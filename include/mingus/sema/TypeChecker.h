@@ -93,6 +93,7 @@ public:
     void visit(LambdaExpression& node) override;
     void visit(VariableDeclarationExpression& node) override;
     void visit(MoveExpression& node) override;
+    void visit(ArrayLiteralExpression& node) override;
 
 private:
     SymbolTable& symbolTable_;

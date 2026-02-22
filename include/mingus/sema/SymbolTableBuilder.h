@@ -81,6 +81,7 @@ public:
     void visit(BinaryExpression& node) override;
     void visit(UnaryExpression& node) override;
     void visit(MoveExpression& node) override;
+    void visit(ArrayLiteralExpression& node) override;
     void visit(AssignmentExpression& node) override;
     void visit(TernaryExpression& node) override;
     void visit(IndexExpression& node) override;

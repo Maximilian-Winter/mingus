@@ -1,0 +1,195 @@
+module Test51 {
+
+extern {
+    func printf(string fmt, ...) => int;
+    func puts(string s) => int;
+}
+
+// ============================================================================
+// Test 1: Array parameter — pass int[5] to function
+// ============================================================================
+func sumArray(int[5] arr) => int {
+    int total = 0;
+    for (int i = 0; i < 5; i = i + 1) {
+        total = total + arr[i];
+    }
+    return total;
+}
+
+func test_param() => void {
+    puts("--- test_param ---");
+    int[5] arr;
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = 30;
+    arr[3] = 40;
+    arr[4] = 50;
+    int s = sumArray(arr);
+    printf("sum = %d\n", s);
+}
+
+// ============================================================================
+// Test 2: Array return — function returns int[3]
+// ============================================================================
+func makeArray() => int[3] {
+    int[3] result;
+    result[0] = 100;
+    result[1] = 200;
+    result[2] = 300;
+    return result;
+}
+
+func test_return() => void {
+    puts("--- test_return ---");
+    int[3] arr = makeArray();
+    printf("arr = [%d, %d, %d]\n", arr[0], arr[1], arr[2]);
+}
+
+// ============================================================================
+// Test 3: Array literal initialization
+// ============================================================================
+func test_literal() => void {
+    puts("--- test_literal ---");
+    int[4] arr = [10, 20, 30, 40];
+    printf("arr = [%d, %d, %d, %d]\n", arr[0], arr[1], arr[2], arr[3]);
+}
+
+// ============================================================================
+// Test 4: Array literal with var (type inferred)
+// ============================================================================
+func test_var_literal() => void {
+    puts("--- test_var_literal ---");
+    var arr = [1, 2, 3];
+    printf("arr = [%d, %d, %d]\n", arr[0], arr[1], arr[2]);
+}
+
+// ============================================================================
+// Test 5: Array as function argument (literal directly)
+// ============================================================================
+func sumThree(int[3] arr) => int {
+    return arr[0] + arr[1] + arr[2];
+}
+
+func test_literal_arg() => void {
+    puts("--- test_literal_arg ---");
+    int s = sumThree([100, 200, 300]);
+    printf("sum = %d\n", s);
+}
+
+// ============================================================================
+// Test 6: Array in struct field
+// ============================================================================
+struct Vec4 {
+    int[4] data;
+}
+
+func test_struct_field() => void {
+    puts("--- test_struct_field ---");
+    Vec4 v;
+    v.data[0] = 1;
+    v.data[1] = 2;
+    v.data[2] = 3;
+    v.data[3] = 4;
+    int s = v.data[0] + v.data[1] + v.data[2] + v.data[3];
+    printf("sum = %d\n", s);
+}
+
+// ============================================================================
+// Test 7: Array in class field with constructor
+// ============================================================================
+class Buffer {
+    int[4] data;
+    int count;
+
+    constructor(int a, int b, int c, int d) {
+        this.data[0] = a;
+        this.data[1] = b;
+        this.data[2] = c;
+        this.data[3] = d;
+        this.count = 4;
+    }
+
+    func get(int i) => int {
+        return this.data[i];
+    }
+
+    func sum() => int {
+        int total = 0;
+        for (int i = 0; i < this.count; i = i + 1) {
+            total = total + this.data[i];
+        }
+        return total;
+    }
+}
+
+func test_class_field() => void {
+    puts("--- test_class_field ---");
+    var buf = Buffer(10, 20, 30, 40);
+    printf("buf.get(0) = %d\n", buf.get(0));
+    printf("buf.get(3) = %d\n", buf.get(3));
+    printf("buf.sum() = %d\n", buf.sum());
+}
+
+// ============================================================================
+// Test 8: Array field with literal assignment
+// ============================================================================
+struct Point3 {
+    int[3] coords;
+}
+
+func test_field_literal() => void {
+    puts("--- test_field_literal ---");
+    Point3 p;
+    p.coords = [10, 20, 30];
+    printf("p = (%d, %d, %d)\n", p.coords[0], p.coords[1], p.coords[2]);
+}
+
+// ============================================================================
+// Test 9: Nested array access — pass struct with array to function
+// ============================================================================
+func sumVec4(Vec4 v) => int {
+    return v.data[0] + v.data[1] + v.data[2] + v.data[3];
+}
+
+func test_nested_access() => void {
+    puts("--- test_nested_access ---");
+    Vec4 v;
+    v.data[0] = 5;
+    v.data[1] = 10;
+    v.data[2] = 15;
+    v.data[3] = 20;
+    int s = sumVec4(v);
+    printf("sum = %d\n", s);
+}
+
+// ============================================================================
+// Test 10: Array reassignment with literal
+// ============================================================================
+func test_reassign() => void {
+    puts("--- test_reassign ---");
+    int[3] arr = [1, 2, 3];
+    printf("before: [%d, %d, %d]\n", arr[0], arr[1], arr[2]);
+    arr = [4, 5, 6];
+    printf("after:  [%d, %d, %d]\n", arr[0], arr[1], arr[2]);
+}
+
+// ============================================================================
+// Entry point
+// ============================================================================
+func main() => int {
+    puts("=== Test 51: Arrays ===");
+    test_param();
+    test_return();
+    test_literal();
+    test_var_literal();
+    test_literal_arg();
+    test_struct_field();
+    test_class_field();
+    test_field_literal();
+    test_nested_access();
+    test_reassign();
+    puts("=== Test 51 complete ===");
+    return 0;
+}
+
+}

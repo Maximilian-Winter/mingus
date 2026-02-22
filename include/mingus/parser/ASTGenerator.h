@@ -117,6 +117,7 @@ public:
     std::any visitNewExpression(MingusParser::NewExpressionContext* ctx) override;
     std::any visitTupleExpression(MingusParser::TupleExpressionContext* ctx) override;
     std::any visitMatchExpression(MingusParser::MatchExpressionContext* ctx) override;
+    std::any visitArrayLiteral(MingusParser::ArrayLiteralContext* ctx) override;
     std::any visitMatchArm(MingusParser::MatchArmContext* ctx) override;
     std::any visitCallArguments(MingusParser::CallArgumentsContext* ctx) override;
     std::any visitElementAccess(MingusParser::ElementAccessContext* ctx) override;

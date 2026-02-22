@@ -378,6 +378,7 @@ public:
     virtual void visit(LambdaExpression& node) {}
     virtual void visit(VariableDeclarationExpression& node) {}
     virtual void visit(MoveExpression& node) {}
+    virtual void visit(ArrayLiteralExpression& node) {}
 
     // ---- Statement nodes ----
     virtual void visit(ExpressionStatement& node) {}

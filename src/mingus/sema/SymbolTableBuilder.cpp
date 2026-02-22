@@ -799,6 +799,13 @@ void SymbolTableBuilder::visit(MoveExpression& node) {
     if (node.operand) node.operand->accept(*this);
 }
 
+void SymbolTableBuilder::visit(ArrayLiteralExpression& node) {
+    setScope(node);
+    for (auto& elem : node.elements) {
+        if (elem) elem->accept(*this);
+    }
+}
+
 void SymbolTableBuilder::visit(AssignmentExpression& node) {
     setScope(node);
     if (node.target) node.target->accept(*this);

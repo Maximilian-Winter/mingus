@@ -58,6 +58,7 @@ void PipeExpression::accept(ASTVisitor& v) { v.visit(*this); }
 void LambdaExpression::accept(ASTVisitor& v) { v.visit(*this); }
 void VariableDeclarationExpression::accept(ASTVisitor& v) { v.visit(*this); }
 void MoveExpression::accept(ASTVisitor& v) { v.visit(*this); }
+void ArrayLiteralExpression::accept(ASTVisitor& v) { v.visit(*this); }
 
 // ---- Statements.h ----
 void ExpressionStatement::accept(ASTVisitor& v) { v.visit(*this); }

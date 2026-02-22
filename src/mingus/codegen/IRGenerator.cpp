@@ -232,6 +232,12 @@ llvm::Type* IRGenerator::mapParamType(TypeSymbol* type, bool isReference) {
         return llvm::PointerType::getUnqual(context_);
     }
     if (type->is<InterfaceSymbol>()) return getFatPtrType();
+    // Fixed-size arrays pass by pointer (like structs)
+    if (auto* arr = type->as<ArrayTypeSymbol>()) {
+        if (arr->arraySize > 0) {
+            return llvm::PointerType::getUnqual(context_);
+        }
+    }
     return mapType(type);
 }
 
@@ -1443,6 +1449,15 @@ void IRGenerator::visit(FunctionDeclaration& node) {
             auto* val = builder_.CreateLoad(structTy, argVal, paramSym->getName() + ".val");
             builder_.CreateStore(val, alloca);
             namedValues_[paramSym] = alloca;
+        } else if (paramSym && paramSym->getType() &&
+                   paramSym->getType()->is<ArrayTypeSymbol>() &&
+                   paramSym->getType()->as<ArrayTypeSymbol>()->arraySize > 0) {
+            // Fixed-size array: receive as pointer, load value into local alloca
+            llvm::Type* arrTy = mapType(paramSym->getType());
+            auto* alloca = createEntryBlockAlloca(fn, arrTy, paramSym->getName());
+            auto* val = builder_.CreateLoad(arrTy, argVal, paramSym->getName() + ".val");
+            builder_.CreateStore(val, alloca);
+            namedValues_[paramSym] = alloca;
         } else {
             llvm::Type* paramTy = argVal->getType();
             std::string pName = paramSym ? paramSym->getName() : paramNode->name;
@@ -1512,6 +1527,14 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
             auto* val = builder_.CreateLoad(structTy, argVal, paramSym->getName() + ".val");
             builder_.CreateStore(val, alloca);
             namedValues_[paramSym] = alloca;
+        } else if (paramSym && paramSym->getType() &&
+                   paramSym->getType()->is<ArrayTypeSymbol>() &&
+                   paramSym->getType()->as<ArrayTypeSymbol>()->arraySize > 0) {
+            llvm::Type* arrTy = mapType(paramSym->getType());
+            auto* alloca = createEntryBlockAlloca(fn, arrTy, paramSym->getName());
+            auto* val = builder_.CreateLoad(arrTy, argVal, paramSym->getName() + ".val");
+            builder_.CreateStore(val, alloca);
+            namedValues_[paramSym] = alloca;
         } else {
             llvm::Type* paramTy = argVal->getType();
             std::string pName = paramSym ? paramSym->getName() : ("p" + std::to_string(i));
@@ -1535,6 +1558,18 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
                     if (arg->resolvedType && isUserStructKind(arg->resolvedType.get())) {
                         llvm::Value* argPtr = emitLValue(*arg);
                         if (argPtr) { superArgs.push_back(argPtr); continue; }
+                    }
+                    if (arg->resolvedType && arg->resolvedType->is<ArrayTypeSymbol>() &&
+                        arg->resolvedType->as<ArrayTypeSymbol>()->arraySize > 0) {
+                        llvm::Value* argPtr = emitLValue(*arg);
+                        if (argPtr) { superArgs.push_back(argPtr); continue; }
+                        if (lastValue_->getType()->isArrayTy()) {
+                            auto* tmp = createEntryBlockAlloca(currentFunction_,
+                                lastValue_->getType(), "arr.arg.tmp");
+                            builder_.CreateStore(lastValue_, tmp);
+                            superArgs.push_back(tmp);
+                            continue;
+                        }
                     }
                     superArgs.push_back(lastValue_);
                 }
@@ -1675,6 +1710,14 @@ void IRGenerator::visit(OperatorDeclaration& node) {
             llvm::Type* structTy = mapType(paramSym->getType());
             auto* alloca = createEntryBlockAlloca(fn, structTy, paramSym->getName());
             auto* val = builder_.CreateLoad(structTy, argVal, paramSym->getName() + ".val");
+            builder_.CreateStore(val, alloca);
+            namedValues_[paramSym] = alloca;
+        } else if (paramSym && paramSym->getType() &&
+                   paramSym->getType()->is<ArrayTypeSymbol>() &&
+                   paramSym->getType()->as<ArrayTypeSymbol>()->arraySize > 0) {
+            llvm::Type* arrTy = mapType(paramSym->getType());
+            auto* alloca = createEntryBlockAlloca(fn, arrTy, paramSym->getName());
+            auto* val = builder_.CreateLoad(arrTy, argVal, paramSym->getName() + ".val");
             builder_.CreateStore(val, alloca);
             namedValues_[paramSym] = alloca;
         } else {
@@ -2795,6 +2838,25 @@ void IRGenerator::visit(MoveExpression& node) {
     }
 }
 
+void IRGenerator::visit(ArrayLiteralExpression& node) {
+    auto* arrType = node.resolvedType ? node.resolvedType->as<ArrayTypeSymbol>() : nullptr;
+    if (!arrType || arrType->arraySize <= 0) { lastValue_ = nullptr; return; }
+
+    llvm::Type* elemTy = mapType(arrType->elementType);
+    auto* llvmArrTy = llvm::ArrayType::get(elemTy, arrType->arraySize);
+
+    // Build array value using InsertValue (same pattern as TupleExpression)
+    llvm::Value* arrVal = llvm::UndefValue::get(llvmArrTy);
+    for (size_t i = 0; i < node.elements.size(); ++i) {
+        node.elements[i]->accept(*this);
+        if (lastValue_) {
+            arrVal = builder_.CreateInsertValue(arrVal, lastValue_, {(unsigned)i},
+                "arr.elem." + std::to_string(i));
+        }
+    }
+    lastValue_ = arrVal;
+}
+
 void IRGenerator::visit(UnaryExpression& node) {
     TypeSymbol* operandType = node.operand->resolvedType ?
         node.operand->resolvedType->as<TypeSymbol>() : nullptr;
@@ -3140,6 +3202,18 @@ void IRGenerator::visit(CallExpression& node) {
                                     llvm::Value* argPtr = emitLValue(*arg);
                                     if (argPtr) { ifaceArgs.push_back(argPtr); continue; }
                                 }
+                                if (arg->resolvedType && arg->resolvedType->is<ArrayTypeSymbol>() &&
+                                    arg->resolvedType->as<ArrayTypeSymbol>()->arraySize > 0) {
+                                    llvm::Value* argPtr = emitLValue(*arg);
+                                    if (argPtr) { ifaceArgs.push_back(argPtr); continue; }
+                                    if (lastValue_->getType()->isArrayTy()) {
+                                        auto* tmp = createEntryBlockAlloca(currentFunction_,
+                                            lastValue_->getType(), "arr.arg.tmp");
+                                        builder_.CreateStore(lastValue_, tmp);
+                                        ifaceArgs.push_back(tmp);
+                                        continue;
+                                    }
+                                }
                                 // Interface parameter wrapping for interface dispatch args
                                 if (arg->resolvedType && i < methodSym->parameters.size()) {
                                     auto* pType = methodSym->parameters[i]->getType().get();
@@ -3334,6 +3408,20 @@ void IRGenerator::visit(CallExpression& node) {
                     if (lastValue_->getType()->isStructTy()) {
                         auto* tmp = createEntryBlockAlloca(currentFunction_,
                             lastValue_->getType(), "arg.tmp");
+                        builder_.CreateStore(lastValue_, tmp);
+                        args.push_back(tmp);
+                        continue;
+                    }
+                }
+
+                // Fixed-size array: pass by pointer
+                if (arg->resolvedType && arg->resolvedType->is<ArrayTypeSymbol>() &&
+                    arg->resolvedType->as<ArrayTypeSymbol>()->arraySize > 0) {
+                    llvm::Value* argPtr = emitLValue(*arg);
+                    if (argPtr) { args.push_back(argPtr); continue; }
+                    if (lastValue_->getType()->isArrayTy()) {
+                        auto* tmp = createEntryBlockAlloca(currentFunction_,
+                            lastValue_->getType(), "arr.arg.tmp");
                         builder_.CreateStore(lastValue_, tmp);
                         args.push_back(tmp);
                         continue;
@@ -3592,6 +3680,18 @@ void IRGenerator::visit(NewExpression& node) {
                                 llvm::Value* argPtr = emitLValue(*arg);
                                 if (argPtr) { ctorArgs.push_back(argPtr); continue; }
                             }
+                            if (arg->resolvedType && arg->resolvedType->is<ArrayTypeSymbol>() &&
+                                arg->resolvedType->as<ArrayTypeSymbol>()->arraySize > 0) {
+                                llvm::Value* argPtr = emitLValue(*arg);
+                                if (argPtr) { ctorArgs.push_back(argPtr); continue; }
+                                if (lastValue_->getType()->isArrayTy()) {
+                                    auto* tmp = createEntryBlockAlloca(currentFunction_,
+                                        lastValue_->getType(), "arr.arg.tmp");
+                                    builder_.CreateStore(lastValue_, tmp);
+                                    ctorArgs.push_back(tmp);
+                                    continue;
+                                }
+                            }
                             ctorArgs.push_back(lastValue_);
                         }
                     }
@@ -3682,6 +3782,18 @@ void IRGenerator::visit(NewExpression& node) {
                                 if (arg->resolvedType && isUserStructKind(arg->resolvedType.get())) {
                                     llvm::Value* argPtr = emitLValue(*arg);
                                     if (argPtr) { ctorArgs.push_back(argPtr); continue; }
+                                }
+                                if (arg->resolvedType && arg->resolvedType->is<ArrayTypeSymbol>() &&
+                                    arg->resolvedType->as<ArrayTypeSymbol>()->arraySize > 0) {
+                                    llvm::Value* argPtr = emitLValue(*arg);
+                                    if (argPtr) { ctorArgs.push_back(argPtr); continue; }
+                                    if (lastValue_->getType()->isArrayTy()) {
+                                        auto* tmp = createEntryBlockAlloca(currentFunction_,
+                                            lastValue_->getType(), "arr.arg.tmp");
+                                        builder_.CreateStore(lastValue_, tmp);
+                                        ctorArgs.push_back(tmp);
+                                        continue;
+                                    }
                                 }
                                 ctorArgs.push_back(lastValue_);
                             }

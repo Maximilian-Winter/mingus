@@ -214,6 +214,8 @@ public:
 
     virtual std::any visitPrimaryExpression(MingusParser::PrimaryExpressionContext *context) = 0;
 
+    virtual std::any visitArrayLiteral(MingusParser::ArrayLiteralContext *context) = 0;
+
     virtual std::any visitPostfixOperation(MingusParser::PostfixOperationContext *context) = 0;
 
     virtual std::any visitNewExpression(MingusParser::NewExpressionContext *context) = 0;

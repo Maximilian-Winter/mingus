@@ -655,7 +655,12 @@ primaryExpression
     | tupleExpression
     | newExpression
     | matchExpression
+    | arrayLiteral
     | OpeningRoundBracket expression ClosingRoundBracket
+    ;
+
+arrayLiteral
+    : SquareBracketLeft expression (CommaSeparator expression)* SquareBracketRight
     ;
 
 postfixOperation

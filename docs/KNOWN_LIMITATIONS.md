@@ -1,6 +1,6 @@
 # Mingus Known Limitations
 
-Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 71 passing tests (50 feature + 21 stress).
+Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 72 passing tests (51 feature + 21 stress).
 
 ---
 
@@ -26,13 +26,13 @@ Missing language features that have not been implemented.
 |-----------|-------------|----------|
 | **No generics/templates** | All types are concrete. No parameterized types (`List<T>`) or generic functions (`func map<T, U>(...)`). Each concrete type must be written explicitly. | High |
 | **No standard library** | No built-in data structures, I/O abstractions, or utility functions. Only `extern` C functions (libc) are available for I/O, math, and memory. | High |
-| **No first-class arrays** | Arrays are not first-class types. Must use pointers with manual `malloc`/`free` allocation. Fixed-size array declarations (`int[16]`) exist but are limited to stack allocation. | High |
+| **Limited first-class arrays** | Fixed-size arrays (`int[N]`) are first-class: stack allocation, function parameters/returns (passed by pointer), array literals (`[1, 2, 3]`), and struct/class fields. Dynamic arrays still require pointers via `new T[N]`. No bounds checking. No array length property. | Medium |
 | **No string type** | Strings are C-style null-terminated `char*`. No built-in string class with length tracking, slicing, or Unicode support. String concatenation via `+` produces heap-allocated results registered for RAII cleanup. | Medium |
 | **No garbage collection** | Manual memory management only. Raw heap objects (`new Foo()`) must be explicitly freed with `delete`. Closure environments and shared pointers (`new shared Foo()`) use reference counting. All other heap allocations are manual. | Medium |
 | **No multiple return types (beyond tuples)** | Functions can return tuples, but there is no named-return or multi-value return beyond the tuple mechanism. | Low |
 | **No exceptions** | No `try`/`catch`/`throw`. Error handling must use return codes, error enums, or similar patterns. | Medium |
 | **Range patterns are integer-only** | `match` arm ranges (`1..10`) work only with integer literals. Float or char ranges are not supported. | Low |
-| **Array size must be literal** | `int[N]` requires an integer literal for `N`. Constant expressions or variables cannot be used for array dimensions. | Low |
+| **Array size must be literal** | `int[N]` requires an integer literal for `N`. Constant expressions or variables cannot be used for array dimensions. `int[n]` (variable) is a parse error. Runtime-sized arrays use `new int[n]` (heap allocation). | Low |
 | **Float literal always double** | `1.0` is always `double`. No `1.0f` suffix for `float`. Requires explicit cast for `float` assignment. | Low |
 | **Single compilation unit** | Each `.mingus` file compiles independently. Cross-file interaction uses the `import` system, which links at the LLVM IR level. No header files or forward declarations across modules. | Medium |
 | **No untyped lambda params** | Lambda parameters can syntactically omit types (`[=](x) => x`), but type inference for untyped parameters is not implemented. Sema will report an error. All lambda params must have explicit types. | Low |
@@ -174,9 +174,9 @@ extern {
 }
 ```
 
-### No First-Class Arrays
+### Dynamic Arrays / Bounds Checking
 
-**Problem**: No dynamic arrays with bounds checking or length tracking.
+**Problem**: No dynamic arrays with bounds checking or length tracking. Fixed-size arrays (`int[N]`) now support parameters, returns, literals, and fields. Dynamic arrays still need manual management.
 
 **Workaround**: Implement a DynamicArray as a class with manual memory management:
 ```
@@ -238,6 +238,7 @@ These were documented as limitations in earlier versions but have been fixed and
 | **Lambda literal assignment** | `f = [=](int x) => { ... };` works as assignment RHS. Grammar and ASTGenerator handle lambda expressions in assignment context. | Multiple tests |
 | **Printf special-cased** | Now handled through general varargs support (`...` in extern declarations), not name-based special casing. Any extern can be declared variadic. | test_34 |
 | **No opt-in ARC for heap objects** | `new shared Foo()` creates reference-counted class instances typed as `shared Foo*`. Reuses closure RC infrastructure (`{ i64 strong, i64 weak, ptr cleanup }` header). RAII release at scope exit, retain/release on assignment, `delete` as release. Classes only (not structs). `shared Foo*` and `Foo*` are incompatible types. | test_50 |
+| **No array parameters/returns** | Fixed-size arrays (`int[N]`) can now be passed to and returned from functions. Passed by pointer (like structs) for zero-copy semantics. Array literals `[1, 2, 3]` supported for inline initialization. Arrays work as struct/class fields. | test_51 |
 
 ---
 

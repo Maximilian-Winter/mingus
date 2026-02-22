@@ -332,4 +332,10 @@ public:
     std::shared_ptr<ExpressionBaseNode> operand;
 };
 
+class ArrayLiteralExpression : public ExpressionBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::vector<std::shared_ptr<ExpressionBaseNode>> elements;
+};
+
 } // namespace mingus

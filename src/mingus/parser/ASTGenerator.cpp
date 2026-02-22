@@ -2028,12 +2028,28 @@ std::any ASTGenerator::visitPrimaryExpression(
         return visitMatchExpression(ctx->matchExpression());
     }
 
+    if (ctx->arrayLiteral()) {
+        return visitArrayLiteral(ctx->arrayLiteral());
+    }
+
     if (ctx->expression()) {
         // Parenthesized expression: ( expr )
         return visitExpression(ctx->expression());
     }
 
     return std::any(std::shared_ptr<ExpressionBaseNode>(nullptr));
+}
+
+std::any ASTGenerator::visitArrayLiteral(
+    MingusParser::ArrayLiteralContext* ctx)
+{
+    auto arrLit = std::make_shared<ArrayLiteralExpression>();
+    arrLit->debugInfo = makeDebugInfo(ctx);
+    for (auto* exprCtx : ctx->expression()) {
+        auto elem = anyToNode<ExpressionBaseNode>(visitExpression(exprCtx));
+        if (elem) arrLit->elements.push_back(elem);
+    }
+    return std::any(std::static_pointer_cast<ExpressionBaseNode>(arrLit));
 }
 
 std::any ASTGenerator::visitNewExpression(

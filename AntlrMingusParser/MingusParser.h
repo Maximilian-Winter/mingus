@@ -78,15 +78,15 @@ public:
     RuleBitwiseAnd = 87, RuleEquality = 88, RuleRelational = 89, RuleShift = 90, 
     RuleAdditive = 91, RuleMultiplicative = 92, RuleCastExpression = 93, 
     RuleUnaryExpression = 94, RulePostfixExpression = 95, RulePrimaryExpression = 96, 
-    RulePostfixOperation = 97, RuleNewExpression = 98, RuleCallArguments = 99, 
-    RuleArgumentList = 100, RuleElementAccess = 101, RuleMemberAccess = 102, 
-    RuleTupleExpression = 103, RuleTypeIdentifier = 104, RulePrimitiveType = 105, 
-    RuleFunctionType = 106, RuleTypeList = 107, RuleTupleType = 108, RuleTypeModifier = 109, 
-    RuleRvalueReferenceLevel = 110, RuleReferenceLevel = 111, RuleArrayDimension = 112, 
-    RulePointerLevel = 113, RuleAccessModifier = 114, RuleStaticModifier = 115, 
-    RuleAbstractModifier = 116, RuleQualifiedName = 117, RulePrefixOperator = 118, 
-    RuleIncrementDecrementOperator = 119, RuleTypeSizeOrAlign = 120, RuleString = 121, 
-    RuleStringPart = 122
+    RuleArrayLiteral = 97, RulePostfixOperation = 98, RuleNewExpression = 99, 
+    RuleCallArguments = 100, RuleArgumentList = 101, RuleElementAccess = 102, 
+    RuleMemberAccess = 103, RuleTupleExpression = 104, RuleTypeIdentifier = 105, 
+    RulePrimitiveType = 106, RuleFunctionType = 107, RuleTypeList = 108, 
+    RuleTupleType = 109, RuleTypeModifier = 110, RuleRvalueReferenceLevel = 111, 
+    RuleReferenceLevel = 112, RuleArrayDimension = 113, RulePointerLevel = 114, 
+    RuleAccessModifier = 115, RuleStaticModifier = 116, RuleAbstractModifier = 117, 
+    RuleQualifiedName = 118, RulePrefixOperator = 119, RuleIncrementDecrementOperator = 120, 
+    RuleTypeSizeOrAlign = 121, RuleString = 122, RuleStringPart = 123
   };
 
   explicit MingusParser(antlr4::TokenStream *input);
@@ -203,6 +203,7 @@ public:
   class UnaryExpressionContext;
   class PostfixExpressionContext;
   class PrimaryExpressionContext;
+  class ArrayLiteralContext;
   class PostfixOperationContext;
   class NewExpressionContext;
   class CallArgumentsContext;
@@ -1890,6 +1891,7 @@ public:
     TupleExpressionContext *tupleExpression();
     NewExpressionContext *newExpression();
     MatchExpressionContext *matchExpression();
+    ArrayLiteralContext *arrayLiteral();
     antlr4::tree::TerminalNode *OpeningRoundBracket();
     ExpressionContext *expression();
     antlr4::tree::TerminalNode *ClosingRoundBracket();
@@ -1900,6 +1902,24 @@ public:
   };
 
   PrimaryExpressionContext* primaryExpression();
+
+  class  ArrayLiteralContext : public antlr4::ParserRuleContext {
+  public:
+    ArrayLiteralContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *SquareBracketLeft();
+    std::vector<ExpressionContext *> expression();
+    ExpressionContext* expression(size_t i);
+    antlr4::tree::TerminalNode *SquareBracketRight();
+    std::vector<antlr4::tree::TerminalNode *> CommaSeparator();
+    antlr4::tree::TerminalNode* CommaSeparator(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ArrayLiteralContext* arrayLiteral();
 
   class  PostfixOperationContext : public antlr4::ParserRuleContext {
   public:

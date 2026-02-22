@@ -1,0 +1,25 @@
+=== Test 51: Arrays ===
+--- test_param ---
+sum = 150
+--- test_return ---
+arr = [100, 200, 300]
+--- test_literal ---
+arr = [10, 20, 30, 40]
+--- test_var_literal ---
+arr = [1, 2, 3]
+--- test_literal_arg ---
+sum = 600
+--- test_struct_field ---
+sum = 10
+--- test_class_field ---
+buf.get(0) = 10
+buf.get(3) = 40
+buf.sum() = 100
+--- test_field_literal ---
+p = (10, 20, 30)
+--- test_nested_access ---
+sum = 50
+--- test_reassign ---
+before: [1, 2, 3]
+after:  [4, 5, 6]
+=== Test 51 complete ===

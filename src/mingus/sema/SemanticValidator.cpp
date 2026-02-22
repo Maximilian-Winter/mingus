@@ -905,6 +905,12 @@ void SemanticValidator::visit(MoveExpression& node) {
     if (node.operand) node.operand->accept(*this);
 }
 
+void SemanticValidator::visit(ArrayLiteralExpression& node) {
+    for (auto& elem : node.elements) {
+        if (elem) elem->accept(*this);
+    }
+}
+
 void SemanticValidator::visit(AssignmentExpression& node) {
     if (node.target) node.target->accept(*this);
     if (node.value) node.value->accept(*this);
