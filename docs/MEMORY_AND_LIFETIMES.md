@@ -25,29 +25,32 @@ through RAII (stack objects), reference counting (closure environments), and man
 7. [Class Destructor Epilogue](#7-class-destructor-epilogue)
 8. [String Memory](#8-string-memory)
 9. [Heap Objects](#9-heap-objects)
-10. [Lambda RAII Isolation](#10-lambda-raii-isolation)
-11. [Escape Analysis](#11-escape-analysis)
-12. [Weak Captures](#12-weak-captures)
-13. [Universal Zero-Init](#13-universal-zero-init)
-14. [Known Memory Limitations](#14-known-memory-limitations)
+10. [Shared Pointers (Opt-In ARC)](#10-shared-pointers-opt-in-arc-for-classes)
+11. [Lambda RAII Isolation](#11-lambda-raii-isolation)
+12. [Escape Analysis](#12-escape-analysis)
+13. [Weak Captures](#13-weak-captures)
+14. [Universal Zero-Init](#14-universal-zero-init)
+15. [Known Memory Limitations](#15-known-memory-limitations)
 
 ---
 
 ## 1. Overview
 
-Mingus uses three complementary memory management strategies:
+Mingus uses four complementary memory management strategies:
 
 | Strategy | Applies To | Mechanism |
 |----------|-----------|-----------|
 | **RAII** (stack) | Local variables, struct/class instances, closures, strings | Deterministic destruction at scope exit in LIFO order |
-| **Reference counting** (heap) | Closure capture environments | `retain`/`release` with per-closure cleanup functions |
+| **Reference counting** (heap) | Closure capture environments, shared pointers | `retain`/`release` with per-object cleanup functions |
+| **Shared pointers** (heap) | Class instances created with `new shared` | Opt-in ARC using same RC header as closures; RAII release at scope exit |
 | **Manual** (heap) | Objects created with `new` | Programmer calls `delete`; virtual destructor dispatch via vtable |
 
 There is no garbage collector. The compiler inserts all cleanup code at compile time.
 Stack-allocated objects are automatically destroyed when they go out of scope. Heap-allocated
 closure environments are reference-counted so they can be shared across multiple closures
-and survive past the creating scope. Heap-allocated class instances created with `new` must
-be explicitly freed with `delete`.
+and survive past the creating scope. Heap-allocated class instances created with `new shared`
+are automatically reference-counted and released at scope exit. Raw heap-allocated class
+instances created with `new` must be explicitly freed with `delete`.
 
 ### Allocation Summary
 
@@ -885,7 +888,156 @@ store %DynamicArray %arr.val, ptr %arr
 
 ---
 
-## 10. Lambda RAII Isolation
+## 10. Shared Pointers (Opt-In ARC for Classes)
+
+Mingus provides opt-in automatic reference counting for heap-allocated class instances via
+`new shared`. This reuses the closure RC infrastructure — the same `{ i64 strong, i64 weak,
+ptr cleanup }` header format and the same `retain`/`release` runtime functions.
+
+### Memory Layout
+
+```
+Raw pointer (Foo*):
+  objPtr → [ vtable | field0 | field1 | ... ]
+
+Shared pointer (shared Foo*):
+  rcPtr → [ i64 strong | i64 weak | ptr cleanup | vtable | field0 | field1 | ... ]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+           RC header (same as closures)            ^-- objPtr = rcPtr + headerSize
+```
+
+A single `malloc(headerSize + objSize)` allocation. The variable stores `rcPtr` (pointer to
+the RC header). To access fields and call methods, the compiler computes
+`objPtr = rcPtr + headerSize` via `emitSharedObjPtr()`.
+
+### Creation: `new shared Foo(args)`
+
+```cpp
+// IRGenerator::visit(NewExpression&) — shared path
+auto& dl = module_->getDataLayout();
+auto* headerTy = StructType::get(ctx, {i64, i64, ptr});
+uint64_t headerSize = dl.getTypeAllocSize(headerTy);
+uint64_t totalSize = headerSize + objSize;
+
+// Allocate combined block
+auto* rcPtr = builder_.CreateCall(malloc, {totalSize});
+
+// Init RC header: strong=1, weak=0, cleanup=__shared_cleanup_ClassName
+store(1, GEP(rcPtr, 0));   // strong count
+store(0, GEP(rcPtr, 8));   // weak count
+store(cleanupFn, GEP(rcPtr, 16));  // cleanup function pointer
+
+// Compute object pointer and construct
+auto* objPtr = GEP(i8, rcPtr, headerSize);  // skip past header
+storeVtablePtr(objPtr, classSym);
+call constructor(objPtr, args...);
+
+lastValue_ = rcPtr;  // variable stores rcPtr, NOT objPtr
+```
+
+### Shared Cleanup Functions
+
+Per-class cleanup functions call the destructor on the embedded object. Virtual dispatch
+is used, so deleting through a base-class shared pointer calls the correct derived destructor:
+
+```cpp
+// void __shared_cleanup_ClassName(ptr rcPtr) {
+//     objPtr = GEP(i8, rcPtr, headerSize)
+//     vtable = load(ptr, objPtr)
+//     dtorFn = load(ptr, GEP(vtable, 0))   // vtable slot 0 = destructor
+//     call dtorFn(objPtr)
+// }
+```
+
+The cleanup function is called by `closureReleaseFn` when the strong count reaches zero.
+The release function then frees the allocation if the weak count is also zero.
+
+### RAII Scope Registration
+
+Shared pointer variables are automatically registered for RAII cleanup:
+
+```cpp
+// In visit(VariableDeclaration&):
+if (isSharedPointerKind(varType)) {
+    store(null, alloca);  // zero-init for safe release on uninitialized path
+    registerRAII(alloca, getOrCreateSharedReleaseWrapper());
+}
+```
+
+The release wrapper loads the rcPtr from the alloca and calls `closureReleaseFn`:
+
+```cpp
+// void __mingus_shared_release_wrapper(ptr allocaPtr) {
+//     rcPtr = load(ptr, allocaPtr)
+//     if (rcPtr != null) call closureReleaseFn(rcPtr)
+// }
+```
+
+### Member Access Through Shared Pointers
+
+All member access (`a->speak()`, `a->field`) transparently adjusts from rcPtr to objPtr:
+
+```cpp
+// In emitLValue() and visit(CallExpression&):
+if (isSharedPointerKind(ptrType)) {
+    objPtr = emitSharedObjPtr(rcPtr);  // GEP past RC header
+    // then proceed with normal field GEP / method call using objPtr
+}
+```
+
+### Assignment: Retain/Release
+
+When reassigning a shared pointer variable, the old value is released before the new value
+is stored:
+
+```cpp
+// In visit(AssignmentExpression&):
+if (isSharedPointerKind(targetType)) {
+    oldRcPtr = load(ptr, targetPtr);
+    call closureReleaseFn(oldRcPtr);  // release old
+}
+store(newRcPtr, targetPtr);
+// If storing to a field (not local): retain new
+if (isFieldStore && isSharedPointerKind(targetType)) {
+    call closureRetainFn(newRcPtr);
+}
+```
+
+Local variable assignment does NOT retain because the `new shared` expression already
+initializes the strong count to 1.
+
+### Delete as Release
+
+`delete` on a shared pointer calls `release` instead of directly freeing:
+
+```cpp
+// In visit(DeleteStatement&):
+if (ptrTS->isShared) {
+    call closureReleaseFn(ptrVal);  // decrements RC, cleanup+free if zero
+    return;  // no direct free
+}
+```
+
+### Type Safety
+
+`shared Foo*` and `Foo*` are distinct, incompatible types:
+- No implicit conversion in either direction
+- `null` is compatible with both
+- Inheritance polymorphism works within the shared type family:
+  `shared Animal* a = new shared Dog(...)` is valid
+
+### Reused Infrastructure
+
+| Component | Reused From | Purpose |
+|-----------|-------------|---------|
+| `closureRetainFn` | Closure RC | Increment strong count |
+| `closureReleaseFn` | Closure RC | Decrement, cleanup at zero, free |
+| RC header layout | Closure env | `{ i64 strong, i64 weak, ptr cleanup }` |
+| `registerRAII()` | RAII stack | Auto-release at scope exit |
+
+---
+
+## 11. Lambda RAII Isolation
 
 Lambdas create separate LLVM functions but share the same `IRGenerator` instance. Without
 isolation, the RAII scope stack from the parent function would leak into the lambda, causing
@@ -931,7 +1083,7 @@ the closure env struct and fat pointer).
 
 ---
 
-## 11. Escape Analysis
+## 12. Escape Analysis
 
 Pass 4 (`SemanticValidator`) performs a simple escape analysis for lambda expressions.
 Lambdas that are passed directly as function arguments (without being stored in a variable
@@ -968,7 +1120,7 @@ is in place for future use.
 
 ---
 
-## 12. Weak Captures
+## 13. Weak Captures
 
 ### Purpose
 
@@ -1044,7 +1196,7 @@ var b = [weak a]() => { a(); };     // b captures a weakly
 
 ---
 
-## 13. Universal Zero-Init
+## 14. Universal Zero-Init
 
 Four distinct zero-initialization sites prevent use of uninitialized memory:
 
@@ -1120,7 +1272,7 @@ null pointer, maintaining the fat pointer invariant.
 
 ---
 
-## 14. Known Memory Limitations
+## 15. Known Memory Limitations
 
 ### By-Reference Captures That Escape
 

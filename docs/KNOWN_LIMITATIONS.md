@@ -1,6 +1,6 @@
 # Mingus Known Limitations
 
-Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 70 passing tests (49 feature + 21 stress).
+Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 71 passing tests (50 feature + 21 stress).
 
 ---
 
@@ -28,7 +28,7 @@ Missing language features that have not been implemented.
 | **No standard library** | No built-in data structures, I/O abstractions, or utility functions. Only `extern` C functions (libc) are available for I/O, math, and memory. | High |
 | **No first-class arrays** | Arrays are not first-class types. Must use pointers with manual `malloc`/`free` allocation. Fixed-size array declarations (`int[16]`) exist but are limited to stack allocation. | High |
 | **No string type** | Strings are C-style null-terminated `char*`. No built-in string class with length tracking, slicing, or Unicode support. String concatenation via `+` produces heap-allocated results registered for RAII cleanup. | Medium |
-| **No garbage collection** | Manual memory management only. Heap objects must be explicitly freed with `delete`. Closure environments use reference counting, but all other heap allocations are manual. | Medium |
+| **No garbage collection** | Manual memory management only. Raw heap objects (`new Foo()`) must be explicitly freed with `delete`. Closure environments and shared pointers (`new shared Foo()`) use reference counting. All other heap allocations are manual. | Medium |
 | **No multiple return types (beyond tuples)** | Functions can return tuples, but there is no named-return or multi-value return beyond the tuple mechanism. | Low |
 | **No exceptions** | No `try`/`catch`/`throw`. Error handling must use return codes, error enums, or similar patterns. | Medium |
 | **Range patterns are integer-only** | `match` arm ranges (`1..10`) work only with integer literals. Float or char ranges are not supported. | Low |
@@ -237,6 +237,7 @@ These were documented as limitations in earlier versions but have been fixed and
 | **Nullable closures** | `NullType` is compatible with `FunctionType` in sema. Null converts to zero fat pointer `{ null, null }` in codegen. | test_21, stress tests |
 | **Lambda literal assignment** | `f = [=](int x) => { ... };` works as assignment RHS. Grammar and ASTGenerator handle lambda expressions in assignment context. | Multiple tests |
 | **Printf special-cased** | Now handled through general varargs support (`...` in extern declarations), not name-based special casing. Any extern can be declared variadic. | test_34 |
+| **No opt-in ARC for heap objects** | `new shared Foo()` creates reference-counted class instances typed as `shared Foo*`. Reuses closure RC infrastructure (`{ i64 strong, i64 weak, ptr cleanup }` header). RAII release at scope exit, retain/release on assignment, `delete` as release. Classes only (not structs). `shared Foo*` and `Foo*` are incompatible types. | test_50 |
 
 ---
 
