@@ -40,6 +40,9 @@ public:
     };
     std::vector<Error> errors;
 
+    // Source file name (propagated to all DebugInfo nodes)
+    void setSourceFile(const std::string& file) { sourceFile_ = file; }
+
     // Entry point
     std::shared_ptr<ProgramNode> generate(MingusParser::ProgramContext* ctx);
 
@@ -150,6 +153,9 @@ public:
     std::any visitString(MingusParser::StringContext* ctx) override;
 
 private:
+    // Source file name for DebugInfo
+    std::string sourceFile_;
+
     // DebugInfo helper
     std::shared_ptr<DebugInfo> makeDebugInfo(antlr4::ParserRuleContext* ctx);
 

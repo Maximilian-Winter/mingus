@@ -1,0 +1,4 @@
+unknown type 'FakeType'
+type mismatch: cannot convert 'string' to 'int' (return)
+undefined identifier 'missingVar'
+type mismatch: cannot convert 'string' to 'int' (argument)

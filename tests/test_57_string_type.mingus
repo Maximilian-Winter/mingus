@@ -1,0 +1,52 @@
+module Test57 {
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func main() => int {
+        printf("=== String Type ===\n");
+
+        // Construction from literal
+        String s = "hello";
+        printf("s: %s\n", s);
+        printf("len: %d\n", s.length());
+
+        // Concatenation
+        String t = s + " world";
+        printf("concat: %s\n", t);
+        printf("concat len: %d\n", t.length());
+
+        // Mixed concat (String + string literal)
+        String u = s + "!";
+        printf("mixed: %s\n", u);
+
+        // Equality
+        String a = "abc";
+        String b = "abc";
+        String c = "xyz";
+        if (a == b) { puts("a == b: true"); }
+        if (a != c) { puts("a != c: true"); }
+
+        // Slice
+        String sub = t.slice(0, 5);
+        printf("slice: %s\n", sub);
+
+        // CharAt
+        int ch = s.charAt(0);
+        printf("charAt(0): %c\n", ch);
+
+        // Compound assignment
+        String r = "foo";
+        r += "bar";
+        printf("+=: %s\n", r);
+
+        // C interop (String passed to printf/puts)
+        puts(s);
+
+        // cstr() explicit extraction
+        string cval = s.cstr();
+        puts(cval);
+
+        printf("=== All String type tests passed ===\n");
+        return 0;
+    }
+}

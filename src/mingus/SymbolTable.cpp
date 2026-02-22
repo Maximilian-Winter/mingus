@@ -28,6 +28,7 @@ void SymbolTable::registerPrimitives() {
     voidType_   = std::make_shared<PrimitiveTypeSymbol>("void",   PrimitiveKind::Void,   0);
     errorType_  = std::make_shared<ErrorTypeSymbol>();
     nullType_   = std::make_shared<NullTypeSymbol>();
+    stringObjectType_ = std::make_shared<StringObjectSymbol>();
 
     // Register in the interning map
     types_["int"]     = intType_;
@@ -40,6 +41,7 @@ void SymbolTable::registerPrimitives() {
     types_["void"]    = voidType_;
     types_["<error>"] = errorType_;
     types_["null"]    = nullType_;
+    types_["String"]  = stringObjectType_;
 }
 
 // ============================================================================
@@ -112,6 +114,7 @@ std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getBoolType() const   { return
 std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getVoidType() const   { return voidType_; }
 std::shared_ptr<ErrorTypeSymbol> SymbolTable::getErrorType() const      { return errorType_; }
 std::shared_ptr<NullTypeSymbol> SymbolTable::getNullType() const        { return nullType_; }
+std::shared_ptr<StringObjectSymbol> SymbolTable::getStringObjectType() const { return stringObjectType_; }
 
 // ============================================================================
 // Type interning — compound types
@@ -259,6 +262,16 @@ bool SymbolTable::isCompatible(TypeSymbol* from, TypeSymbol* to) const {
             if (fromPrim->primitiveKind == PrimitiveKind::Float &&
                 toPrim->primitiveKind == PrimitiveKind::Double) return true;
         }
+    }
+
+    // 4b. StringObject ↔ string primitive (bidirectional implicit conversion)
+    if (from->is<StringObjectSymbol>()) {
+        if (auto* toPrim = to->as<PrimitiveTypeSymbol>())
+            if (toPrim->primitiveKind == PrimitiveKind::String) return true;
+    }
+    if (auto* fromPrim2 = from->as<PrimitiveTypeSymbol>()) {
+        if (fromPrim2->primitiveKind == PrimitiveKind::String)
+            if (to->is<StringObjectSymbol>()) return true;
     }
 
     // 5. Enum ↔ underlying (bidirectional, with widening)

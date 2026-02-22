@@ -1,0 +1,18 @@
+module Test59 {
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    func add(int a, int b) => int {
+        int result = a + b;
+        return result;
+    }
+
+    func main() => int {
+        int x = 10;
+        int y = 20;
+        int sum = add(x, y);
+        printf("sum = %d\n", sum);
+        puts("debug info test passed");
+        return 0;
+    }
+}

@@ -72,7 +72,7 @@ namespace fs = std::filesystem;
 
 class VerboseErrorListener : public antlr4::BaseErrorListener {
 public:
-    bool hasErrors = false;
+    std::vector<mingus::Diagnostic> syntaxErrors;
 
     void syntaxError(antlr4::Recognizer* /*recognizer*/,
                      antlr4::Token* offendingSymbol,
@@ -80,13 +80,16 @@ public:
                      const std::string& msg,
                      std::exception_ptr /*e*/) override
     {
-        hasErrors = true;
-        std::cerr << "syntax error at " << line << ":" << charPositionInLine;
+        auto loc = std::make_shared<mingus::DebugInfo>(
+            static_cast<int>(line), static_cast<int>(charPositionInLine));
+        std::string fullMsg = msg;
         if (offendingSymbol) {
-            std::cerr << " near '" << offendingSymbol->getText() << "'";
+            fullMsg = "near '" + offendingSymbol->getText() + "': " + msg;
         }
-        std::cerr << ": " << msg << "\n";
+        syntaxErrors.push_back({mingus::DiagnosticLevel::Error, fullMsg, loc});
     }
+
+    bool hasErrors() const { return !syntaxErrors.empty(); }
 };
 
 //================================================================================
@@ -109,7 +112,8 @@ static std::string readFile(const std::string& path) {
 //================================================================================
 
 static std::shared_ptr<mingus::ProgramNode> parseFile(
-    const std::string& source, const std::string& fileName)
+    const std::string& source, const std::string& fileName,
+    mingus::ErrorReporter* errors = nullptr)
 {
     antlr4::ANTLRInputStream input(source);
     MingusLexer lexer(&input);
@@ -123,19 +127,40 @@ static std::shared_ptr<mingus::ProgramNode> parseFile(
 
     auto* tree = parser.program();
 
-    if (errorListener.hasErrors) {
-        std::cerr << "error: parse errors in '" << fileName << "'\n";
+    if (errorListener.hasErrors()) {
+        if (errors) {
+            for (auto& diag : errorListener.syntaxErrors) {
+                if (diag.location) diag.location->sourceFile = fileName;
+                errors->error(diag.message, diag.location);
+            }
+        } else {
+            for (const auto& diag : errorListener.syntaxErrors) {
+                std::cerr << "syntax error at ";
+                if (diag.location) std::cerr << diag.location->toString();
+                std::cerr << ": " << diag.message << "\n";
+            }
+            std::cerr << "error: parse errors in '" << fileName << "'\n";
+        }
         return nullptr;
     }
 
     mingus::parser::ASTGenerator generator;
+    generator.setSourceFile(fileName);
     auto program = generator.generate(tree);
 
     if (generator.hasErrors()) {
-        std::cerr << "error: AST generation errors in '" << fileName << "':\n";
-        for (const auto& err : generator.errors) {
-            std::cerr << "  " << err.line << ":" << err.column
-                      << ": " << err.message << "\n";
+        if (errors) {
+            for (const auto& err : generator.errors) {
+                auto loc = std::make_shared<mingus::DebugInfo>(err.line, err.column);
+                loc->sourceFile = fileName;
+                errors->error(err.message, loc);
+            }
+        } else {
+            std::cerr << "error: AST generation errors in '" << fileName << "':\n";
+            for (const auto& err : generator.errors) {
+                std::cerr << "  " << err.line << ":" << err.column
+                          << ": " << err.message << "\n";
+            }
         }
         return nullptr;
     }
@@ -304,7 +329,8 @@ int main(int argc, char* argv[]) {
                   << "  --emit <out.ll>   Write LLVM IR to file\n"
                   << "  --entry <func>    Inject C main() wrapper calling <func>\n"
                   << "  --run <func>      Compile and run (implies --entry)\n"
-                  << "  --opt <0|1|2>     Optimization level (default: 0)\n";
+                  << "  --opt <0|1|2>     Optimization level (default: 0)\n"
+                  << "  --debug / -g      Emit DWARF debug info (use with --opt 0)\n";
         return 1;
     }
 
@@ -313,6 +339,7 @@ int main(int argc, char* argv[]) {
     std::string entryFunc;
     std::string runFunc;
     int optLevel = 0;
+    bool debugMode = false;
 
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -325,7 +352,14 @@ int main(int argc, char* argv[]) {
             entryFunc = runFunc;  // --run implies --entry
         } else if (arg == "--opt" && i + 1 < argc) {
             optLevel = std::stoi(argv[++i]);
+        } else if (arg == "--debug" || arg == "-g") {
+            debugMode = true;
         }
+    }
+
+    if (debugMode && optLevel > 0) {
+        std::cerr << "warning: debug info with --opt " << optLevel
+                  << " may produce limited debug data; use --opt 0 for best results\n";
     }
 
     // ---- Read source file ----
@@ -350,42 +384,55 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // ---- Semantic Analysis (4 passes) ----
+    // ---- Semantic Analysis (4 passes, multi-error recovery) ----
     mingus::SymbolTable symbolTable;
     mingus::ErrorReporter errors;
+    errors.setDefaultSourceFile(sourceFile);
+    errors.setErrorLimit(20);
 
     // Pass 1: Build scope tree and symbols
     mingus::SymbolTableBuilder pass1(symbolTable, errors);
     pass1.build(*program);
-    if (errors.hasErrors()) {
-        std::cerr << "Pass 1 (SymbolTableBuilder) errors:\n";
-        errors.dump();
-        return 1;
-    }
 
-    // Pass 2: Resolve types
-    mingus::TypeResolver pass2(symbolTable, errors);
-    pass2.resolve(*program);
-    if (errors.hasErrors()) {
-        std::cerr << "Pass 2 (TypeResolver) errors:\n";
-        errors.dump();
-        return 1;
+    // Pass 2: Resolve types (continue even after Pass 1 errors — ErrorType prevents cascading)
+    if (!errors.atErrorLimit()) {
+        try {
+            mingus::TypeResolver pass2(symbolTable, errors);
+            pass2.resolve(*program);
+        } catch (const std::exception& e) {
+            errors.error(std::string("internal: type resolver crashed: ") + e.what());
+        } catch (...) {
+            errors.error("internal: type resolver crashed with unknown exception");
+        }
     }
 
     // Pass 3: Type checking
-    mingus::TypeChecker pass3(symbolTable, errors);
-    pass3.check(*program);
-    if (errors.hasErrors()) {
-        std::cerr << "Pass 3 (TypeChecker) errors:\n";
-        errors.dump();
-        return 1;
+    if (!errors.atErrorLimit()) {
+        try {
+            mingus::TypeChecker pass3(symbolTable, errors);
+            pass3.check(*program);
+        } catch (const std::exception& e) {
+            errors.error(std::string("internal: type checker crashed: ") + e.what());
+        } catch (...) {
+            errors.error("internal: type checker crashed with unknown exception");
+        }
     }
 
     // Pass 4: Semantic validation + RAII analysis
+    // Declared outside try-catch because pass4.getRAIIInfo() is needed by codegen
     mingus::SemanticValidator pass4(symbolTable, errors);
-    pass4.validate(*program);
+    if (!errors.atErrorLimit()) {
+        try {
+            pass4.validate(*program);
+        } catch (const std::exception& e) {
+            errors.error(std::string("internal: semantic validator crashed: ") + e.what());
+        } catch (...) {
+            errors.error("internal: semantic validator crashed with unknown exception");
+        }
+    }
+
+    // Report ALL accumulated errors
     if (errors.hasErrors()) {
-        std::cerr << "Pass 4 (SemanticValidator) errors:\n";
         errors.dump();
         return 1;
     }
@@ -400,7 +447,8 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- IR Generation ----
-    mingus::codegen::IRGenerator irgen(symbolTable, pass4.getRAIIInfo());
+    mingus::codegen::IRGenerator irgen(symbolTable, pass4.getRAIIInfo(),
+                                        debugMode, sourceFile);
     auto llvmModule = irgen.generate(*program);
     if (!llvmModule) {
         std::cerr << "error: IR generation failed\n";

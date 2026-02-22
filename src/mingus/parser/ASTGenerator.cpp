@@ -79,7 +79,9 @@ std::shared_ptr<DebugInfo> ASTGenerator::makeDebugInfo(antlr4::ParserRuleContext
     int endCol    = stop ? static_cast<int>(stop->getCharPositionInLine()
                           + stop->getText().length()) : startCol;
 
-    return std::make_shared<DebugInfo>(startLine, startCol, endLine, endCol);
+    auto info = std::make_shared<DebugInfo>(startLine, startCol, endLine, endCol);
+    info->sourceFile = sourceFile_;
+    return info;
 }
 
 //================================================================================

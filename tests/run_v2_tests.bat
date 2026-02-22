@@ -90,6 +90,9 @@ call :run_test test_53_forward_refs Test53_main "Forward Type References"
 call :run_test test_54_float_suffix Test54_main "Float Literal Suffix"
 call :run_test test_55_ctor_overloading Test55_main "Constructor Overloading"
 call :run_test test_56_definite_assign Test56_main "Definite Assignment"
+call :run_test test_57_string_type Test57_main "String Type"
+call :run_error_test test_58_error_recovery "Error Recovery"
+call :run_debug_test test_59_debug_info Test59_main "Debug Info"
 
 echo.
 echo ============================================================
@@ -170,6 +173,115 @@ if "!SHOW_OUTPUT!"=="1" (
 )
 
 :: Step 4: Compare against expected output
+if exist %FILE%.expected (
+    fc /b %FILE%.expected %FILE%.actual >nul 2>&1
+    if errorlevel 1 (
+        echo   FAIL: output mismatch
+        echo.
+        echo   --- Expected ---
+        type %FILE%.expected
+        echo   --- Actual ---
+        type %FILE%.actual
+        echo   ---------------
+        echo.
+        set /a FAIL+=1
+    ) else (
+        echo   PASS
+        set /a PASS+=1
+    )
+) else (
+    echo   WARN: no .expected file, showing output:
+    echo.
+    type %FILE%.actual
+    echo.
+    set /a PASS+=1
+    set /a WARN+=1
+)
+echo.
+goto :eof
+
+:run_error_test
+set /a TOTAL+=1
+set FILE=%~1
+set DESC=%~2
+
+echo -------- %DESC% [%FILE%.mingus] --------
+
+:: Step 1: Run compiler — expect it to FAIL (nonzero exit)
+.\mingus_v2_tool.exe %FILE%.mingus --emit %FILE%.ll --entry Test58_main --opt 2 >nul 2>%FILE%.actual
+if not errorlevel 1 (
+    echo   FAIL: expected compilation to fail, but it succeeded
+    set /a FAIL+=1
+    echo.
+    goto :eof
+)
+
+:: Step 2: Check that all expected error patterns appear
+if exist %FILE%.errors (
+    set ERROR_MISSING=0
+    for /f "usebackq delims=" %%P in (%FILE%.errors) do (
+        findstr /c:"%%P" %FILE%.actual >nul 2>&1
+        if errorlevel 1 (
+            echo   FAIL: missing expected error: %%P
+            set ERROR_MISSING=1
+        )
+    )
+    if !ERROR_MISSING! equ 0 (
+        echo   PASS
+        set /a PASS+=1
+    ) else (
+        echo   --- Actual errors ---
+        type %FILE%.actual
+        echo   --------------------
+        set /a FAIL+=1
+    )
+) else (
+    echo   WARN: no .errors file
+    set /a PASS+=1
+    set /a WARN+=1
+)
+echo.
+goto :eof
+
+:run_debug_test
+set /a TOTAL+=1
+set FILE=%~1
+set ENTRY=%~2
+set DESC=%~3
+
+echo -------- %DESC% [%FILE%.mingus] --------
+
+:: Step 1: Generate IR with --debug --opt 0
+.\mingus_v2_tool.exe %FILE%.mingus --emit %FILE%.ll --entry %ENTRY% --debug --opt 0 >nul 2>&1
+if errorlevel 1 (
+    echo   FAIL: IR generation failed
+    set /a FAIL+=1
+    echo.
+    goto :eof
+)
+
+:: Step 2: Check for debug metadata in IR
+findstr /c:"!dbg" %FILE%.ll >nul 2>&1
+if errorlevel 1 (
+    echo   FAIL: no !dbg metadata found in IR
+    set /a FAIL+=1
+    echo.
+    goto :eof
+)
+
+:: Step 3: Compile with clang -g
+clang %FILE%.ll -o %FILE%.exe -g 2>nul
+if errorlevel 1 (
+    echo   FAIL: clang compilation failed
+    set /a FAIL+=1
+    echo.
+    goto :eof
+)
+
+:: Step 4: Run and capture output
+.\%FILE%.exe > %FILE%.actual 2>&1
+
+:: Step 5: Compare against expected output
 if exist %FILE%.expected (
     fc /b %FILE%.expected %FILE%.actual >nul 2>&1
     if errorlevel 1 (

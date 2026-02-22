@@ -1,0 +1,28 @@
+module Test58 {
+    extern func puts(string s) => int;
+
+    // Error 1: unknown type in parameter (caught by TypeResolver)
+    func useUnknown(FakeType x) => int {
+        return 0;
+    }
+
+    // Error 2: type mismatch in return (caught by TypeChecker)
+    func typeMismatch() => int {
+        return "hello";
+    }
+
+    // Error 3: undefined variable (caught by TypeChecker)
+    func undefVar() => int {
+        return missingVar;
+    }
+
+    // Error 4: wrong argument type (caught by TypeChecker)
+    func takeInt(int x) => int { return x; }
+    func wrongArgs() => int {
+        return takeInt("bad");
+    }
+
+    func main() => int {
+        return 0;
+    }
+}

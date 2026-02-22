@@ -1,0 +1,14 @@
+=== String Type ===
+s: hello
+len: 5
+concat: hello world
+concat len: 11
+mixed: hello!
+a == b: true
+a != c: true
+slice: hello
+charAt(0): h
++=: foobar
+hello
+hello
+=== All String type tests passed ===

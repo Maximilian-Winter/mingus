@@ -20,6 +20,10 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/IR/DIBuilder.h>
+#include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/DebugLoc.h>
+#include <llvm/BinaryFormat/Dwarf.h>
 #pragma warning(pop)
 
 #include <cassert>
@@ -100,10 +104,14 @@ bool IRGenerator::isFunctionKind(TypeSymbol* t) {
 // Constructor
 //================================================================================
 IRGenerator::IRGenerator(SymbolTable& symbolTable,
-                         const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo)
+                         const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo,
+                         bool debugMode,
+                         const std::string& sourceFile)
     : builder_(context_)
     , symbolTable_(symbolTable)
     , raiiInfo_(raiiInfo)
+    , debugMode_(debugMode)
+    , sourceFile_(sourceFile)
 {}
 
 //================================================================================
@@ -112,6 +120,29 @@ IRGenerator::IRGenerator(SymbolTable& symbolTable,
 std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     module_ = std::make_unique<llvm::Module>("mingus_module", context_);
     module_->setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+
+    // Debug info initialization
+    if (debugMode_) {
+        diBuilder_ = std::make_unique<llvm::DIBuilder>(*module_);
+
+        std::string fileName = sourceFile_;
+        std::string directory = ".";
+        auto lastSlash = sourceFile_.find_last_of("/\\");
+        if (lastSlash != std::string::npos) {
+            directory = sourceFile_.substr(0, lastSlash);
+            fileName = sourceFile_.substr(lastSlash + 1);
+        }
+
+        diFile_ = diBuilder_->createFile(fileName, directory);
+        diCompileUnit_ = diBuilder_->createCompileUnit(
+            llvm::dwarf::DW_LANG_C, diFile_,
+            "mingus_v2_tool",  // producer
+            false, "", 0);
+
+        module_->addModuleFlag(llvm::Module::Warning, "Dwarf Version", 4);
+        module_->addModuleFlag(llvm::Module::Warning, "Debug Info Version",
+                               llvm::DEBUG_METADATA_VERSION);
+    }
 
     // Phase A: Forward declarations
     declareStructTypes(program);
@@ -123,7 +154,90 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     // Phase B: Function bodies (visitor-based)
     program.accept(*this);
 
+    // Finalize debug info
+    if (debugMode_ && diBuilder_) {
+        diBuilder_->finalize();
+    }
+
     return std::move(module_);
+}
+
+//================================================================================
+// Debug Info Helpers
+//================================================================================
+
+void IRGenerator::emitLocation(AstBaseNode* node) {
+    if (!debugMode_ || !node || !node->debugInfo) return;
+    emitLocation(node->debugInfo);
+}
+
+void IRGenerator::emitLocation(const std::shared_ptr<DebugInfo>& debugInfo) {
+    if (!debugMode_ || !debugInfo || diScopeStack_.empty()) return;
+    auto loc = llvm::DILocation::get(
+        context_, debugInfo->lineNumber, debugInfo->columnNumber, currentDIScope());
+    builder_.SetCurrentDebugLocation(loc);
+}
+
+void IRGenerator::pushDIScope(llvm::DIScope* scope) {
+    if (scope) diScopeStack_.push_back(scope);
+}
+
+void IRGenerator::popDIScope() {
+    if (!diScopeStack_.empty()) diScopeStack_.pop_back();
+}
+
+llvm::DIScope* IRGenerator::currentDIScope() const {
+    return diScopeStack_.empty() ? static_cast<llvm::DIScope*>(diFile_)
+                                 : diScopeStack_.back();
+}
+
+llvm::DIType* IRGenerator::mapDebugType(TypeSymbol* type) {
+    if (!type || !diBuilder_) return nullptr;
+
+    if (auto* prim = type->as<PrimitiveTypeSymbol>()) {
+        switch (prim->primitiveKind) {
+            case PrimitiveKind::Int:
+                return diBuilder_->createBasicType("int", 32, llvm::dwarf::DW_ATE_signed);
+            case PrimitiveKind::Double:
+                return diBuilder_->createBasicType("double", 64, llvm::dwarf::DW_ATE_float);
+            case PrimitiveKind::Float:
+                return diBuilder_->createBasicType("float", 32, llvm::dwarf::DW_ATE_float);
+            case PrimitiveKind::Byte:
+                return diBuilder_->createBasicType("byte", 8, llvm::dwarf::DW_ATE_unsigned);
+            case PrimitiveKind::Char:
+                return diBuilder_->createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char);
+            case PrimitiveKind::Bool:
+                return diBuilder_->createBasicType("bool", 8, llvm::dwarf::DW_ATE_boolean);
+            case PrimitiveKind::String:
+                return diBuilder_->createPointerType(
+                    diBuilder_->createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char), 64);
+            case PrimitiveKind::Void:
+                return nullptr;
+        }
+    }
+
+    if (type->is<PointerTypeSymbol>()) {
+        return diBuilder_->createPointerType(nullptr, 64);
+    }
+
+    // For complex types (struct/class/enum/etc.), use unspecified type placeholder
+    return diBuilder_->createUnspecifiedType(type->getName());
+}
+
+llvm::DISubroutineType* IRGenerator::createFunctionDebugType(FunctionSymbol* sym) {
+    if (!diBuilder_ || !sym) return nullptr;
+
+    llvm::SmallVector<llvm::Metadata*, 8> paramTypes;
+
+    // Return type (element 0 of subroutine type array)
+    paramTypes.push_back(sym->returnType ? mapDebugType(sym->returnType.get()) : nullptr);
+
+    // Parameter types
+    for (auto& param : sym->parameters) {
+        paramTypes.push_back(param->getType() ? mapDebugType(param->getType().get()) : nullptr);
+    }
+
+    return diBuilder_->createSubroutineType(diBuilder_->getOrCreateTypeArray(paramTypes));
 }
 
 //================================================================================
@@ -154,6 +268,11 @@ llvm::Type* IRGenerator::mapType(TypeSymbol* type) {
             case PrimitiveKind::Void:   return llvm::Type::getVoidTy(context_);
             case PrimitiveKind::String: return llvm::PointerType::getUnqual(context_);
         }
+    }
+
+    // String object type → { ptr, i32, i32 }
+    if (type->is<StringObjectSymbol>()) {
+        return getStringObjectLLVMType();
     }
 
     // Pointer types
@@ -229,6 +348,10 @@ llvm::Type* IRGenerator::mapParamType(TypeSymbol* type, bool isReference) {
     if (isReference) return llvm::PointerType::getUnqual(context_);
     if (!type) return llvm::Type::getInt32Ty(context_);
     if (type->is<ClassSymbol>() || type->is<StructSymbol>()) {
+        return llvm::PointerType::getUnqual(context_);
+    }
+    // String object passed by pointer (like structs)
+    if (type->is<StringObjectSymbol>()) {
         return llvm::PointerType::getUnqual(context_);
     }
     if (type->is<InterfaceSymbol>()) return getFatPtrType();
@@ -1399,6 +1522,304 @@ llvm::Value* IRGenerator::emitStringConcat(llvm::Value* left, llvm::Value* right
 }
 
 //================================================================================
+// String Object support — { ptr data, i32 len, i32 cap }
+//================================================================================
+
+bool IRGenerator::isStringObjectKind(TypeSymbol* t) {
+    return t && t->is<StringObjectSymbol>();
+}
+
+llvm::StructType* IRGenerator::getStringObjectLLVMType() {
+    if (!stringObjectLLVMType_) {
+        stringObjectLLVMType_ = llvm::StructType::create(context_,
+            { llvm::PointerType::getUnqual(context_),
+              llvm::Type::getInt32Ty(context_),
+              llvm::Type::getInt32Ty(context_) },
+            "String");
+    }
+    return stringObjectLLVMType_;
+}
+
+// __mingus_String_from_cstr(ptr) → { ptr, i32, i32 }
+llvm::Function* IRGenerator::getOrCreateStringFromCstrFn() {
+    if (stringFromCstrFn_) return stringFromCstrFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* i32Ty = llvm::Type::getInt32Ty(context_);
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+    auto* soTy = getStringObjectLLVMType();
+
+    auto* fnTy = llvm::FunctionType::get(soTy, {ptrTy}, false);
+    stringFromCstrFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_String_from_cstr", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", stringFromCstrFn_);
+    llvm::IRBuilder<> b(entry);
+
+    auto* cstr = stringFromCstrFn_->getArg(0);
+
+    // len = strlen(cstr)
+    auto strlenCallee = module_->getOrInsertFunction("strlen",
+        llvm::FunctionType::get(i64Ty, {ptrTy}, false));
+    auto* len64 = b.CreateCall(strlenCallee, {cstr}, "len64");
+    auto* len = b.CreateTrunc(len64, i32Ty, "len");
+
+    // cap = len + 1
+    auto* cap = b.CreateAdd(len, llvm::ConstantInt::get(i32Ty, 1), "cap");
+    auto* cap64 = b.CreateZExt(cap, i64Ty, "cap64");
+
+    // buf = malloc(cap)
+    auto mallocCallee = module_->getOrInsertFunction("malloc",
+        llvm::FunctionType::get(ptrTy, {i64Ty}, false));
+    auto* buf = b.CreateCall(mallocCallee, {cap64}, "buf");
+
+    // memcpy(buf, cstr, cap) — copies including null terminator
+    auto memcpyCallee = module_->getOrInsertFunction("memcpy",
+        llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy, i64Ty}, false));
+    b.CreateCall(memcpyCallee, {buf, cstr, cap64});
+
+    // return { buf, len, cap }
+    llvm::Value* result = llvm::UndefValue::get(soTy);
+    result = b.CreateInsertValue(result, buf, {0});
+    result = b.CreateInsertValue(result, len, {1});
+    result = b.CreateInsertValue(result, cap, {2});
+    b.CreateRet(result);
+
+    return stringFromCstrFn_;
+}
+
+// __mingus_String_free(ptr_to_alloca) → void
+llvm::Function* IRGenerator::getOrCreateStringObjectFreeFn() {
+    if (stringObjectFreeFn_) return stringObjectFreeFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* i32Ty = llvm::Type::getInt32Ty(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+    auto* soTy = getStringObjectLLVMType();
+
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    stringObjectFreeFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_String_free", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", stringObjectFreeFn_);
+    auto* freeBB = llvm::BasicBlock::Create(context_, "free", stringObjectFreeFn_);
+    auto* doneBB = llvm::BasicBlock::Create(context_, "done", stringObjectFreeFn_);
+    llvm::IRBuilder<> b(entry);
+
+    auto* allocaPtr = stringObjectFreeFn_->getArg(0);
+
+    // Load the String struct from alloca
+    auto* strObj = b.CreateLoad(soTy, allocaPtr, "str");
+    auto* cap = b.CreateExtractValue(strObj, {2}, "cap");
+
+    // if cap > 0: free data
+    auto* cond = b.CreateICmpSGT(cap, llvm::ConstantInt::get(i32Ty, 0), "owned");
+    b.CreateCondBr(cond, freeBB, doneBB);
+
+    b.SetInsertPoint(freeBB);
+    auto* data = b.CreateExtractValue(strObj, {0}, "data");
+    auto freeCallee = module_->getOrInsertFunction("free",
+        llvm::FunctionType::get(voidTy, {ptrTy}, false));
+    b.CreateCall(freeCallee, {data});
+    b.CreateBr(doneBB);
+
+    b.SetInsertPoint(doneBB);
+    b.CreateRetVoid();
+
+    return stringObjectFreeFn_;
+}
+
+// __mingus_String_concat(ptr_a, ptr_b) → { ptr, i32, i32 }
+llvm::Function* IRGenerator::getOrCreateStringConcatFn() {
+    if (stringConcatFn_) return stringConcatFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* i32Ty = llvm::Type::getInt32Ty(context_);
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+    auto* i8Ty  = llvm::Type::getInt8Ty(context_);
+    auto* soTy  = getStringObjectLLVMType();
+
+    auto* fnTy = llvm::FunctionType::get(soTy, {ptrTy, ptrTy}, false);
+    stringConcatFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_String_concat", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", stringConcatFn_);
+    llvm::IRBuilder<> b(entry);
+
+    auto* aPtr = stringConcatFn_->getArg(0);
+    auto* bPtr = stringConcatFn_->getArg(1);
+
+    // Load structs
+    auto* aStr = b.CreateLoad(soTy, aPtr, "a");
+    auto* bStr = b.CreateLoad(soTy, bPtr, "b");
+    auto* aData = b.CreateExtractValue(aStr, {0}, "a.data");
+    auto* aLen  = b.CreateExtractValue(aStr, {1}, "a.len");
+    auto* bData = b.CreateExtractValue(bStr, {0}, "b.data");
+    auto* bLen  = b.CreateExtractValue(bStr, {1}, "b.len");
+
+    // new_len = a.len + b.len
+    auto* newLen = b.CreateAdd(aLen, bLen, "new.len");
+    auto* cap = b.CreateAdd(newLen, llvm::ConstantInt::get(i32Ty, 1), "cap");
+    auto* cap64 = b.CreateZExt(cap, i64Ty, "cap64");
+
+    // buf = malloc(cap)
+    auto mallocCallee = module_->getOrInsertFunction("malloc",
+        llvm::FunctionType::get(ptrTy, {i64Ty}, false));
+    auto* buf = b.CreateCall(mallocCallee, {cap64}, "buf");
+
+    // memcpy(buf, a.data, a.len)
+    auto memcpyCallee = module_->getOrInsertFunction("memcpy",
+        llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy, i64Ty}, false));
+    auto* aLen64 = b.CreateZExt(aLen, i64Ty, "a.len64");
+    b.CreateCall(memcpyCallee, {buf, aData, aLen64});
+
+    // memcpy(buf + a.len, b.data, b.len)
+    auto* dst = b.CreateGEP(i8Ty, buf, aLen64, "dst");
+    auto* bLen64 = b.CreateZExt(bLen, i64Ty, "b.len64");
+    b.CreateCall(memcpyCallee, {dst, bData, bLen64});
+
+    // null-terminate: buf[new_len] = 0
+    auto* newLen64 = b.CreateZExt(newLen, i64Ty, "new.len64");
+    auto* endPtr = b.CreateGEP(i8Ty, buf, newLen64, "end");
+    b.CreateStore(llvm::ConstantInt::get(i8Ty, 0), endPtr);
+
+    // return { buf, new_len, cap }
+    llvm::Value* result = llvm::UndefValue::get(soTy);
+    result = b.CreateInsertValue(result, buf, {0});
+    result = b.CreateInsertValue(result, newLen, {1});
+    result = b.CreateInsertValue(result, cap, {2});
+    b.CreateRet(result);
+
+    return stringConcatFn_;
+}
+
+// __mingus_String_eq(ptr_a, ptr_b) → i1
+llvm::Function* IRGenerator::getOrCreateStringEqFn() {
+    if (stringEqFn_) return stringEqFn_;
+
+    auto* ptrTy  = llvm::PointerType::getUnqual(context_);
+    auto* i1Ty   = llvm::Type::getInt1Ty(context_);
+    auto* i32Ty  = llvm::Type::getInt32Ty(context_);
+    auto* i64Ty  = llvm::Type::getInt64Ty(context_);
+    auto* soTy   = getStringObjectLLVMType();
+
+    auto* fnTy = llvm::FunctionType::get(i1Ty, {ptrTy, ptrTy}, false);
+    stringEqFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_String_eq", module_.get());
+
+    auto* entry   = llvm::BasicBlock::Create(context_, "entry", stringEqFn_);
+    auto* cmpBB   = llvm::BasicBlock::Create(context_, "cmp", stringEqFn_);
+    auto* falseBB = llvm::BasicBlock::Create(context_, "false", stringEqFn_);
+    llvm::IRBuilder<> b(entry);
+
+    auto* aPtr = stringEqFn_->getArg(0);
+    auto* bPtr = stringEqFn_->getArg(1);
+
+    auto* aStr = b.CreateLoad(soTy, aPtr, "a");
+    auto* bStr = b.CreateLoad(soTy, bPtr, "b");
+    auto* aLen = b.CreateExtractValue(aStr, {1}, "a.len");
+    auto* bLen = b.CreateExtractValue(bStr, {1}, "b.len");
+
+    // if a.len != b.len: return false
+    auto* lenEq = b.CreateICmpEQ(aLen, bLen, "len.eq");
+    b.CreateCondBr(lenEq, cmpBB, falseBB);
+
+    // Compare data
+    b.SetInsertPoint(cmpBB);
+    auto* aData = b.CreateExtractValue(aStr, {0}, "a.data");
+    auto* bData = b.CreateExtractValue(bStr, {0}, "b.data");
+    auto* aLen64 = b.CreateZExt(aLen, i64Ty, "a.len64");
+    auto memcmpCallee = module_->getOrInsertFunction("memcmp",
+        llvm::FunctionType::get(i32Ty, {ptrTy, ptrTy, i64Ty}, false));
+    auto* cmpResult = b.CreateCall(memcmpCallee, {aData, bData, aLen64}, "cmp");
+    auto* eq = b.CreateICmpEQ(cmpResult, llvm::ConstantInt::get(i32Ty, 0), "eq");
+    b.CreateRet(eq);
+
+    b.SetInsertPoint(falseBB);
+    b.CreateRet(llvm::ConstantInt::get(i1Ty, 0));
+
+    return stringEqFn_;
+}
+
+// __mingus_String_slice(ptr_s, i32 start, i32 end) → { ptr, i32, i32 }
+llvm::Function* IRGenerator::getOrCreateStringSliceFn() {
+    if (stringSliceFn_) return stringSliceFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* i32Ty = llvm::Type::getInt32Ty(context_);
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+    auto* i8Ty  = llvm::Type::getInt8Ty(context_);
+    auto* soTy  = getStringObjectLLVMType();
+
+    auto* fnTy = llvm::FunctionType::get(soTy, {ptrTy, i32Ty, i32Ty}, false);
+    stringSliceFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_String_slice", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", stringSliceFn_);
+    llvm::IRBuilder<> b(entry);
+
+    auto* sPtr = stringSliceFn_->getArg(0);
+    auto* start = stringSliceFn_->getArg(1);
+    auto* end = stringSliceFn_->getArg(2);
+
+    auto* sStr = b.CreateLoad(soTy, sPtr, "s");
+    auto* sData = b.CreateExtractValue(sStr, {0}, "s.data");
+
+    // sliceLen = end - start
+    auto* sliceLen = b.CreateSub(end, start, "slice.len");
+    auto* cap = b.CreateAdd(sliceLen, llvm::ConstantInt::get(i32Ty, 1), "cap");
+    auto* cap64 = b.CreateZExt(cap, i64Ty, "cap64");
+
+    // buf = malloc(cap)
+    auto mallocCallee = module_->getOrInsertFunction("malloc",
+        llvm::FunctionType::get(ptrTy, {i64Ty}, false));
+    auto* buf = b.CreateCall(mallocCallee, {cap64}, "buf");
+
+    // memcpy(buf, data + start, sliceLen)
+    auto* start64 = b.CreateZExt(start, i64Ty, "start64");
+    auto* src = b.CreateGEP(i8Ty, sData, start64, "src");
+    auto memcpyCallee = module_->getOrInsertFunction("memcpy",
+        llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy, i64Ty}, false));
+    auto* sliceLen64 = b.CreateZExt(sliceLen, i64Ty, "slice.len64");
+    b.CreateCall(memcpyCallee, {buf, src, sliceLen64});
+
+    // null-terminate
+    auto* endPtr = b.CreateGEP(i8Ty, buf, sliceLen64, "end");
+    b.CreateStore(llvm::ConstantInt::get(i8Ty, 0), endPtr);
+
+    // return { buf, sliceLen, cap }
+    llvm::Value* result = llvm::UndefValue::get(soTy);
+    result = b.CreateInsertValue(result, buf, {0});
+    result = b.CreateInsertValue(result, sliceLen, {1});
+    result = b.CreateInsertValue(result, cap, {2});
+    b.CreateRet(result);
+
+    return stringSliceFn_;
+}
+
+// Convert char* (string) → String object value
+llvm::Value* IRGenerator::emitStringToStringObject(llvm::Value* cstrPtr) {
+    return builder_.CreateCall(getOrCreateStringFromCstrFn(), {cstrPtr}, "str.obj");
+}
+
+// Convert String object alloca → char* (extract data field)
+llvm::Value* IRGenerator::emitStringObjectToString(llvm::Value* soAlloca) {
+    auto* soTy = getStringObjectLLVMType();
+    auto* strObj = builder_.CreateLoad(soTy, soAlloca, "str.load");
+    return builder_.CreateExtractValue(strObj, {0}, "str.data");
+}
+
+// Concatenate two String objects (from allocas) → new String value
+llvm::Value* IRGenerator::emitStringObjectConcat(llvm::Value* leftAlloca, llvm::Value* rightAlloca) {
+    return builder_.CreateCall(getOrCreateStringConcatFn(), {leftAlloca, rightAlloca}, "str.concat");
+}
+
+//================================================================================
 // Program structure visitors
 //================================================================================
 void IRGenerator::visit(ProgramNode& node) {
@@ -1434,6 +1855,21 @@ void IRGenerator::visit(FunctionDeclaration& node) {
 
     auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
     builder_.SetInsertPoint(entryBB);
+
+    // Debug info: create DISubprogram for this function
+    llvm::DISubprogram* diSP = nullptr;
+    if (debugMode_ && diBuilder_) {
+        auto* diSubType = createFunctionDebugType(funcSym);
+        unsigned lineNo = node.debugInfo ? node.debugInfo->lineNumber : 0;
+        diSP = diBuilder_->createFunction(
+            currentDIScope(), funcSym->getName(), mangleName(funcSym),
+            diFile_, lineNo, diSubType, lineNo,
+            llvm::DINode::FlagPrototyped,
+            llvm::DISubprogram::SPFlagDefinition);
+        fn->setSubprogram(diSP);
+        pushDIScope(diSP);
+        emitLocation(&node);
+    }
 
     auto* prevFunction = currentFunction_;
     auto* prevThisPtr = currentThisPtr_;
@@ -1500,6 +1936,8 @@ void IRGenerator::visit(FunctionDeclaration& node) {
 
     popRAIIScope();
 
+    if (diSP) popDIScope();
+
     namedValues_ = savedNamedValues;
     currentFunction_ = prevFunction;
     currentThisPtr_ = prevThisPtr;
@@ -1517,6 +1955,23 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
 
     auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
     builder_.SetInsertPoint(entryBB);
+
+    // Debug info: create DISubprogram for constructor
+    llvm::DISubprogram* diSP = nullptr;
+    if (debugMode_ && diBuilder_) {
+        unsigned lineNo = node.debugInfo ? node.debugInfo->lineNumber : 0;
+        auto* diSubType = diBuilder_->createSubroutineType(
+            diBuilder_->getOrCreateTypeArray({}));
+        std::string ctorName = currentClassSym_->getName() + "::constructor";
+        diSP = diBuilder_->createFunction(
+            currentDIScope(), ctorName, mangleName(ctorSym),
+            diFile_, lineNo, diSubType, lineNo,
+            llvm::DINode::FlagPrototyped,
+            llvm::DISubprogram::SPFlagDefinition);
+        fn->setSubprogram(diSP);
+        pushDIScope(diSP);
+        emitLocation(&node);
+    }
 
     auto* prevFunction = currentFunction_;
     auto* prevThisPtr = currentThisPtr_;
@@ -1622,6 +2077,8 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
         builder_.CreateRetVoid();
     }
 
+    if (diSP) popDIScope();
+
     namedValues_ = savedNamedValues;
     currentFunction_ = prevFunction;
     currentThisPtr_ = prevThisPtr;
@@ -1639,6 +2096,23 @@ void IRGenerator::visit(DestructorDeclaration& node) {
 
     auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
     builder_.SetInsertPoint(entryBB);
+
+    // Debug info: create DISubprogram for destructor
+    llvm::DISubprogram* diSP = nullptr;
+    if (debugMode_ && diBuilder_) {
+        unsigned lineNo = node.debugInfo ? node.debugInfo->lineNumber : 0;
+        auto* diSubType = diBuilder_->createSubroutineType(
+            diBuilder_->getOrCreateTypeArray({}));
+        std::string dtorName = currentClassSym_->getName() + "::destructor";
+        diSP = diBuilder_->createFunction(
+            currentDIScope(), dtorName, mangleName(dtorSym),
+            diFile_, lineNo, diSubType, lineNo,
+            llvm::DINode::FlagPrototyped,
+            llvm::DISubprogram::SPFlagDefinition);
+        fn->setSubprogram(diSP);
+        pushDIScope(diSP);
+        emitLocation(&node);
+    }
 
     auto* prevFunction = currentFunction_;
     auto* prevThisPtr = currentThisPtr_;
@@ -1685,6 +2159,8 @@ void IRGenerator::visit(DestructorDeclaration& node) {
         builder_.CreateRetVoid();
     }
 
+    if (diSP) popDIScope();
+
     namedValues_ = savedNamedValues;
     currentFunction_ = prevFunction;
     currentThisPtr_ = prevThisPtr;
@@ -1703,6 +2179,27 @@ void IRGenerator::visit(OperatorDeclaration& node) {
 
     auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
     builder_.SetInsertPoint(entryBB);
+
+    // Debug info: create DISubprogram for operator
+    llvm::DISubprogram* diSP = nullptr;
+    if (debugMode_ && diBuilder_) {
+        unsigned lineNo = node.debugInfo ? node.debugInfo->lineNumber : 0;
+        auto* diSubType = diBuilder_->createSubroutineType(
+            diBuilder_->getOrCreateTypeArray({}));
+        std::string opName = "operator_" + opToString(opSym->op);
+        if (currentClassSym_)
+            opName = currentClassSym_->getName() + "::" + opName;
+        else if (currentStructSym_)
+            opName = currentStructSym_->getName() + "::" + opName;
+        diSP = diBuilder_->createFunction(
+            currentDIScope(), opName, mangleName(opSym),
+            diFile_, lineNo, diSubType, lineNo,
+            llvm::DINode::FlagPrototyped,
+            llvm::DISubprogram::SPFlagDefinition);
+        fn->setSubprogram(diSP);
+        pushDIScope(diSP);
+        emitLocation(&node);
+    }
 
     auto* prevFunction = currentFunction_;
     auto* prevThisPtr = currentThisPtr_;
@@ -1757,6 +2254,8 @@ void IRGenerator::visit(OperatorDeclaration& node) {
             builder_.CreateRet(llvm::UndefValue::get(fn->getReturnType()));
         }
     }
+
+    if (diSP) popDIScope();
 
     namedValues_ = savedNamedValues;
     currentFunction_ = prevFunction;
@@ -1815,10 +2314,23 @@ void IRGenerator::visit(InterfaceDeclaration& /*node*/) {}
 void IRGenerator::visit(BlockStatementNode& node) {
     pushRAIIScope();
 
+    // Debug info: create lexical block scope
+    bool pushedDIBlock = false;
+    if (debugMode_ && diBuilder_ && !diScopeStack_.empty()) {
+        unsigned lineNo = node.debugInfo ? node.debugInfo->lineNumber : 0;
+        unsigned colNo = node.debugInfo ? node.debugInfo->columnNumber : 0;
+        auto* diBlock = diBuilder_->createLexicalBlock(
+            currentDIScope(), diFile_, lineNo, colNo);
+        pushDIScope(diBlock);
+        pushedDIBlock = true;
+    }
+
     for (auto& stmt : node.statements) {
         stmt->accept(*this);
         if (builder_.GetInsertBlock()->getTerminator()) break;
     }
+
+    if (pushedDIBlock) popDIScope();
 
     if (!builder_.GetInsertBlock()->getTerminator()) {
         emitScopeDestructors();
@@ -1827,10 +2339,12 @@ void IRGenerator::visit(BlockStatementNode& node) {
 }
 
 void IRGenerator::visit(ExpressionStatement& node) {
+    emitLocation(&node);
     node.expression->accept(*this);
 }
 
 void IRGenerator::visit(ReturnStatement& node) {
+    emitLocation(&node);
     if (node.value) {
         // Mark returned RAII variable for suppression
         if (auto* ident = node.value->as<IdentifierExpression>()) {
@@ -1861,6 +2375,7 @@ void IRGenerator::visit(ReturnStatement& node) {
 }
 
 void IRGenerator::visit(IfStatement& node) {
+    emitLocation(&node);
     node.condition->accept(*this);
     llvm::Value* condVal = lastValue_;
     if (!condVal) condVal = llvm::ConstantInt::getFalse(context_);
@@ -1995,6 +2510,7 @@ void IRGenerator::visit(SwitchStatement& node) {
 }
 
 void IRGenerator::visit(ForStatement& node) {
+    emitLocation(&node);
     for (auto& initDecl : node.initDeclarations) {
         if (initDecl) initDecl->accept(*this);
     }
@@ -2048,6 +2564,7 @@ void IRGenerator::visit(ForStatement& node) {
 }
 
 void IRGenerator::visit(WhileStatement& node) {
+    emitLocation(&node);
     auto* condBB = llvm::BasicBlock::Create(context_, "while.cond", currentFunction_);
     auto* bodyBB = llvm::BasicBlock::Create(context_, "while.body", currentFunction_);
     auto* exitBB = llvm::BasicBlock::Create(context_, "while.exit", currentFunction_);
@@ -2082,6 +2599,7 @@ void IRGenerator::visit(WhileStatement& node) {
 }
 
 void IRGenerator::visit(DoWhileStatement& node) {
+    emitLocation(&node);
     auto* bodyBB = llvm::BasicBlock::Create(context_, "dowhile.body", currentFunction_);
     auto* condBB = llvm::BasicBlock::Create(context_, "dowhile.cond", currentFunction_);
     auto* exitBB = llvm::BasicBlock::Create(context_, "dowhile.exit", currentFunction_);
@@ -2235,6 +2753,20 @@ void IRGenerator::visit(VariableDeclaration& node) {
     auto* alloca = createEntryBlockAlloca(currentFunction_, varTy, node.name);
     namedValues_[varSym] = alloca;
 
+    // Debug info: create local variable descriptor
+    if (debugMode_ && diBuilder_ && !diScopeStack_.empty()) {
+        unsigned lineNo = node.debugInfo ? node.debugInfo->lineNumber : 0;
+        auto* diLocalVar = diBuilder_->createAutoVariable(
+            currentDIScope(), node.name, diFile_, lineNo,
+            mapDebugType(varSym->getType().get()));
+        diBuilder_->insertDeclare(
+            alloca, diLocalVar, diBuilder_->createExpression(),
+            llvm::DILocation::get(context_, lineNo,
+                node.debugInfo ? node.debugInfo->columnNumber : 0,
+                currentDIScope()),
+            builder_.GetInsertBlock());
+    }
+
     // Zero-init closure allocas
     if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
         builder_.CreateStore(llvm::ConstantAggregateZero::get(varTy), alloca);
@@ -2277,6 +2809,23 @@ void IRGenerator::visit(VariableDeclaration& node) {
             if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>() &&
                 llvm::isa<llvm::ConstantPointerNull>(lastValue_)) {
                 lastValue_ = llvm::ConstantAggregateZero::get(getFatPtrType());
+            }
+
+            // Implicit string → String conversion
+            if (varSym->getType() && isStringObjectKind(varSym->getType().get())) {
+                if (node.initializer->resolvedType &&
+                    isStringKind(node.initializer->resolvedType.get())) {
+                    lastValue_ = emitStringToStringObject(lastValue_);
+                }
+            }
+
+            // Implicit String → string conversion
+            if (varSym->getType() && isStringKind(varSym->getType().get())) {
+                if (node.initializer->resolvedType &&
+                    isStringObjectKind(node.initializer->resolvedType.get())) {
+                    // lastValue_ is a String struct; extract data ptr
+                    lastValue_ = builder_.CreateExtractValue(lastValue_, {0}, "str.data");
+                }
             }
 
             builder_.CreateStore(lastValue_, alloca);
@@ -2342,6 +2891,11 @@ void IRGenerator::visit(VariableDeclaration& node) {
     // Register RAII for shared pointer variables
     if (isSharedPointerKind(varSym->getType().get())) {
         registerRAII(alloca, getOrCreateSharedReleaseWrapper());
+    }
+
+    // Register RAII for String object variables
+    if (varSym->getType() && isStringObjectKind(varSym->getType().get())) {
+        registerRAII(alloca, getOrCreateStringObjectFreeFn());
     }
 }
 
@@ -2615,6 +3169,7 @@ void IRGenerator::visit(MemberAccessExpression& node) {
 }
 
 void IRGenerator::visit(BinaryExpression& node) {
+    emitLocation(&node);
     // Operator overload
     if (node.isOperatorOverload && node.resolvedOperatorFunction) {
         auto it = functionCache_.find(node.resolvedOperatorFunction.get());
@@ -2712,7 +3267,61 @@ void IRGenerator::visit(BinaryExpression& node) {
     TypeSymbol* rightType = node.right->resolvedType ?
         node.right->resolvedType->as<TypeSymbol>() : nullptr;
 
-    // String concatenation
+    // String object operations
+    {
+        bool leftIsSO = isStringObjectKind(leftType);
+        bool rightIsSO = isStringObjectKind(rightType);
+        bool leftIsStr = isStringKind(leftType);
+        bool rightIsStr = isStringKind(rightType);
+
+        if ((leftIsSO || rightIsSO) && (leftIsSO || leftIsStr) && (rightIsSO || rightIsStr)) {
+            auto* soTy = getStringObjectLLVMType();
+
+            // Ensure both sides are String objects in allocas
+            llvm::Value* leftAlloca = nullptr;
+            llvm::Value* rightAlloca = nullptr;
+
+            if (leftIsSO) {
+                // leftVal is a String struct value; store to temp alloca
+                leftAlloca = createEntryBlockAlloca(currentFunction_, soTy, "so.left.tmp");
+                builder_.CreateStore(leftVal, leftAlloca);
+            } else {
+                // leftVal is a char*; convert to String, store
+                auto* converted = emitStringToStringObject(leftVal);
+                leftAlloca = createEntryBlockAlloca(currentFunction_, soTy, "so.left.cvt");
+                builder_.CreateStore(converted, leftAlloca);
+            }
+
+            if (rightIsSO) {
+                rightAlloca = createEntryBlockAlloca(currentFunction_, soTy, "so.right.tmp");
+                builder_.CreateStore(rightVal, rightAlloca);
+            } else {
+                auto* converted = emitStringToStringObject(rightVal);
+                rightAlloca = createEntryBlockAlloca(currentFunction_, soTy, "so.right.cvt");
+                builder_.CreateStore(converted, rightAlloca);
+            }
+
+            if (node.op == BinaryOp::Add) {
+                lastValue_ = emitStringObjectConcat(leftAlloca, rightAlloca);
+                // Note: do NOT register temp for RAII here — the consumer
+                // (VariableDeclaration) will register the owning variable.
+                return;
+            }
+            if (node.op == BinaryOp::Equal) {
+                lastValue_ = builder_.CreateCall(getOrCreateStringEqFn(),
+                    {leftAlloca, rightAlloca}, "str.eq");
+                return;
+            }
+            if (node.op == BinaryOp::NotEqual) {
+                auto* eq = builder_.CreateCall(getOrCreateStringEqFn(),
+                    {leftAlloca, rightAlloca}, "str.eq");
+                lastValue_ = builder_.CreateNot(eq, "str.ne");
+                return;
+            }
+        }
+    }
+
+    // String (char*) concatenation
     if (isStringKind(leftType) && isStringKind(rightType) && node.op == BinaryOp::Add) {
         lastValue_ = emitStringConcat(leftVal, rightVal);
         return;
@@ -2950,6 +3559,7 @@ void IRGenerator::visit(UnaryExpression& node) {
 }
 
 void IRGenerator::visit(AssignmentExpression& node) {
+    emitLocation(&node);
     llvm::Value* targetPtr = emitLValue(*node.target);
     if (!targetPtr) { lastValue_ = nullptr; return; }
 
@@ -3014,6 +3624,52 @@ void IRGenerator::visit(AssignmentExpression& node) {
             }
         }
     } else {
+        // String object compound assignment (+=)
+        if (isStringObjectKind(targetType) && node.op == AssignOp::AddAssign) {
+            node.value->accept(*this);
+            llvm::Value* rhsVal = lastValue_;
+            if (!rhsVal) return;
+
+            auto* soTy = getStringObjectLLVMType();
+
+            // If RHS is string (char*), convert to StringObject
+            llvm::Value* rhsAlloca = nullptr;
+            if (node.value->resolvedType && isStringKind(node.value->resolvedType.get())) {
+                auto* converted = emitStringToStringObject(rhsVal);
+                rhsAlloca = createEntryBlockAlloca(currentFunction_, soTy, "so.rhs.cvt");
+                builder_.CreateStore(converted, rhsAlloca);
+            } else {
+                rhsAlloca = createEntryBlockAlloca(currentFunction_, soTy, "so.rhs.tmp");
+                builder_.CreateStore(rhsVal, rhsAlloca);
+            }
+
+            // Concat old + rhs
+            auto* result = emitStringObjectConcat(targetPtr, rhsAlloca);
+
+            // Free old buffer if owned (cap > 0)
+            auto* oldStr = builder_.CreateLoad(soTy, targetPtr, "so.old");
+            auto* oldCap = builder_.CreateExtractValue(oldStr, {2}, "so.old.cap");
+            auto* i32Ty = llvm::Type::getInt32Ty(context_);
+            auto* owned = builder_.CreateICmpSGT(oldCap, llvm::ConstantInt::get(i32Ty, 0), "so.owned");
+            auto* freeBB = llvm::BasicBlock::Create(context_, "so.free", currentFunction_);
+            auto* doneBB = llvm::BasicBlock::Create(context_, "so.done", currentFunction_);
+            builder_.CreateCondBr(owned, freeBB, doneBB);
+
+            builder_.SetInsertPoint(freeBB);
+            auto* oldData = builder_.CreateExtractValue(oldStr, {0}, "so.old.data");
+            auto freeCallee = module_->getOrInsertFunction("free",
+                llvm::FunctionType::get(llvm::Type::getVoidTy(context_),
+                    {llvm::PointerType::getUnqual(context_)}, false));
+            builder_.CreateCall(freeCallee, {oldData});
+            builder_.CreateBr(doneBB);
+
+            builder_.SetInsertPoint(doneBB);
+            // Store new concat result
+            builder_.CreateStore(result, targetPtr);
+            lastValue_ = result;
+            return;
+        }
+
         // Compound assignment
         llvm::Type* valTy = mapType(targetType);
         llvm::Value* oldVal = builder_.CreateLoad(valTy, targetPtr, "old");
@@ -3099,6 +3755,7 @@ void IRGenerator::visit(TernaryExpression& node) {
 }
 
 void IRGenerator::visit(CallExpression& node) {
+    emitLocation(&node);
     llvm::Function* calleeFn = nullptr;
     llvm::Value* calleeVal = nullptr;
     llvm::Value* thisPtr = nullptr;
@@ -3183,6 +3840,115 @@ void IRGenerator::visit(CallExpression& node) {
 
                 registerRAII(buf, getOrCreateStringFreeFn());
                 lastValue_ = buf;
+            }
+            return;
+        }
+        // String object methods (for `String` value type)
+        else if (memAccess->isStringObjectMethod) {
+            // Get the alloca of the String object
+            llvm::Value* soAlloca = nullptr;
+            if (auto* ident = memAccess->object->as<IdentifierExpression>()) {
+                auto* vs = ident->resolvedSymbol ? ident->resolvedSymbol->as<VariableSymbol>() : nullptr;
+                if (vs) {
+                    auto it = namedValues_.find(vs);
+                    if (it != namedValues_.end()) soAlloca = it->second;
+                }
+            }
+            if (!soAlloca) {
+                // Fallback: evaluate expression, store to temp alloca
+                memAccess->object->accept(*this);
+                if (!lastValue_) { lastValue_ = nullptr; return; }
+                soAlloca = createEntryBlockAlloca(currentFunction_, getStringObjectLLVMType(), "so.tmp");
+                builder_.CreateStore(lastValue_, soAlloca);
+            }
+
+            auto* soTy = getStringObjectLLVMType();
+            auto* ptrTy = llvm::PointerType::getUnqual(context_);
+            auto* i32Ty = llvm::Type::getInt32Ty(context_);
+            auto* i64Ty = llvm::Type::getInt64Ty(context_);
+            auto* i8Ty  = llvm::Type::getInt8Ty(context_);
+
+            auto* strObj = builder_.CreateLoad(soTy, soAlloca, "so.load");
+
+            if (memAccess->memberName == "length") {
+                lastValue_ = builder_.CreateExtractValue(strObj, {1}, "so.len");
+            } else if (memAccess->memberName == "capacity") {
+                lastValue_ = builder_.CreateExtractValue(strObj, {2}, "so.cap");
+            } else if (memAccess->memberName == "charAt") {
+                auto* data = builder_.CreateExtractValue(strObj, {0}, "so.data");
+                llvm::Value* idx = llvm::ConstantInt::get(i32Ty, 0);
+                if (node.arguments && !node.arguments->expressions.empty()) {
+                    node.arguments->expressions[0]->accept(*this);
+                    idx = lastValue_;
+                }
+                if (idx->getType()->isIntegerTy(32))
+                    idx = builder_.CreateSExt(idx, i64Ty, "idx.i64");
+                auto* charPtr = builder_.CreateGEP(i8Ty, data, idx, "so.charAt");
+                lastValue_ = builder_.CreateLoad(i8Ty, charPtr, "char");
+            } else if (memAccess->memberName == "cstr") {
+                lastValue_ = builder_.CreateExtractValue(strObj, {0}, "so.cstr");
+            } else if (memAccess->memberName == "slice") {
+                llvm::Value* start = llvm::ConstantInt::get(i32Ty, 0);
+                llvm::Value* end = llvm::ConstantInt::get(i32Ty, 0);
+                if (node.arguments && node.arguments->expressions.size() >= 2) {
+                    node.arguments->expressions[0]->accept(*this);
+                    start = lastValue_;
+                    node.arguments->expressions[1]->accept(*this);
+                    end = lastValue_;
+                }
+                lastValue_ = builder_.CreateCall(getOrCreateStringSliceFn(),
+                    {soAlloca, start, end}, "so.slice");
+                // Note: do NOT register temp for RAII here — the consumer
+                // (VariableDeclaration) will register the owning variable.
+            } else if (memAccess->memberName == "indexOf") {
+                auto* data = builder_.CreateExtractValue(strObj, {0}, "so.data");
+                llvm::Value* needleVal = nullptr;
+                if (node.arguments && !node.arguments->expressions.empty()) {
+                    node.arguments->expressions[0]->accept(*this);
+                    needleVal = lastValue_;
+                    // If argument is StringObject, extract data ptr
+                    if (node.arguments->expressions[0]->resolvedType &&
+                        isStringObjectKind(node.arguments->expressions[0]->resolvedType.get())) {
+                        needleVal = builder_.CreateExtractValue(needleVal, {0}, "needle.data");
+                    }
+                }
+                if (!needleVal) { lastValue_ = llvm::ConstantInt::get(i32Ty, -1); return; }
+                auto strstrCallee = module_->getOrInsertFunction("strstr",
+                    llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy}, false));
+                auto* found = builder_.CreateCall(strstrCallee, {data, needleVal}, "found");
+                auto* isNull = builder_.CreateICmpEQ(found,
+                    llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_)), "is.null");
+                auto* offset = builder_.CreatePtrDiff(i8Ty, found, data, "offset");
+                auto* offset32 = builder_.CreateTrunc(offset, i32Ty, "offset.i32");
+                lastValue_ = builder_.CreateSelect(isNull,
+                    llvm::ConstantInt::get(i32Ty, -1), offset32, "indexOf.result");
+            } else if (memAccess->memberName == "contains") {
+                auto* data = builder_.CreateExtractValue(strObj, {0}, "so.data");
+                llvm::Value* needleVal = nullptr;
+                if (node.arguments && !node.arguments->expressions.empty()) {
+                    node.arguments->expressions[0]->accept(*this);
+                    needleVal = lastValue_;
+                    if (node.arguments->expressions[0]->resolvedType &&
+                        isStringObjectKind(node.arguments->expressions[0]->resolvedType.get())) {
+                        needleVal = builder_.CreateExtractValue(needleVal, {0}, "needle.data");
+                    }
+                }
+                if (!needleVal) { lastValue_ = llvm::ConstantInt::get(llvm::Type::getInt1Ty(context_), 0); return; }
+                auto strstrCallee = module_->getOrInsertFunction("strstr",
+                    llvm::FunctionType::get(ptrTy, {ptrTy, ptrTy}, false));
+                auto* found = builder_.CreateCall(strstrCallee, {data, needleVal}, "found");
+                lastValue_ = builder_.CreateICmpNE(found,
+                    llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_)), "contains");
+            } else if (memAccess->memberName == "toInt") {
+                auto* data = builder_.CreateExtractValue(strObj, {0}, "so.data");
+                auto atoiCallee = module_->getOrInsertFunction("atoi",
+                    llvm::FunctionType::get(i32Ty, {ptrTy}, false));
+                lastValue_ = builder_.CreateCall(atoiCallee, {data}, "toInt");
+            } else if (memAccess->memberName == "toDouble") {
+                auto* data = builder_.CreateExtractValue(strObj, {0}, "so.data");
+                auto atofCallee = module_->getOrInsertFunction("atof",
+                    llvm::FunctionType::get(llvm::Type::getDoubleTy(context_), {ptrTy}, false));
+                lastValue_ = builder_.CreateCall(atofCallee, {data}, "toDouble");
             }
             return;
         }
@@ -3477,6 +4243,45 @@ void IRGenerator::visit(CallExpression& node) {
                             }
                         }
                     }
+                }
+
+                // String object → string (char*) conversion at call sites
+                // When arg is StringObject but param expects string, extract data ptr
+                if (arg->resolvedType && isStringObjectKind(arg->resolvedType.get()) && lastValue_) {
+                    bool needConvert = false;
+                    // Check if expected param is string (char*)
+                    if (expectedParamType && isStringKind(expectedParamType)) {
+                        needConvert = true;
+                    }
+                    // For varargs: always extract data ptr
+                    if (calleeFuncSym && calleeFuncSym->isVariadic) {
+                        size_t fixedCount = calleeFuncSym->parameters.size();
+                        if (argI >= fixedCount) needConvert = true;
+                    }
+                    if (needConvert) {
+                        // lastValue_ is a String struct; extract data field
+                        lastValue_ = builder_.CreateExtractValue(lastValue_, {0}, "so.to.str");
+                    } else if (!needConvert) {
+                        // StringObject param: pass by pointer (like struct)
+                        if (lastValue_->getType()->isStructTy()) {
+                            auto* tmp = createEntryBlockAlloca(currentFunction_,
+                                lastValue_->getType(), "so.arg.tmp");
+                            builder_.CreateStore(lastValue_, tmp);
+                            args.push_back(tmp);
+                            continue;
+                        }
+                    }
+                }
+
+                // string → String object conversion at call sites
+                if (arg->resolvedType && isStringKind(arg->resolvedType.get()) &&
+                    expectedParamType && isStringObjectKind(expectedParamType) && lastValue_) {
+                    auto* converted = emitStringToStringObject(lastValue_);
+                    auto* tmp = createEntryBlockAlloca(currentFunction_,
+                        getStringObjectLLVMType(), "so.param.tmp");
+                    builder_.CreateStore(converted, tmp);
+                    args.push_back(tmp);
+                    continue;
                 }
 
                 // Varargs promotion: small ints → i32, float → double
@@ -4218,6 +5023,8 @@ void IRGenerator::visit(LambdaExpression& node) {
     auto savedInsertPointIt = builder_.GetInsertPoint();
     auto savedRAIIStack = std::move(raiiScopeStack_);
     raiiScopeStack_.clear();
+    auto savedDIScopeStack = std::move(diScopeStack_);
+    diScopeStack_.clear();
 
     currentFunction_ = lambdaFn;
     currentThisPtr_ = nullptr;
@@ -4225,6 +5032,22 @@ void IRGenerator::visit(LambdaExpression& node) {
 
     auto* entryBB = llvm::BasicBlock::Create(context_, "entry", lambdaFn);
     builder_.SetInsertPoint(entryBB);
+
+    // Debug info: create DISubprogram for lambda
+    llvm::DISubprogram* diSP = nullptr;
+    if (debugMode_ && diBuilder_) {
+        unsigned lineNo = node.debugInfo ? node.debugInfo->lineNumber : 0;
+        auto* diSubType = diBuilder_->createSubroutineType(
+            diBuilder_->getOrCreateTypeArray({}));
+        diSP = diBuilder_->createFunction(
+            diFile_, lambdaName, lambdaName,
+            diFile_, lineNo, diSubType, lineNo,
+            llvm::DINode::FlagPrototyped,
+            llvm::DISubprogram::SPFlagDefinition | llvm::DISubprogram::SPFlagLocalToUnit);
+        lambdaFn->setSubprogram(diSP);
+        pushDIScope(diSP);
+        emitLocation(&node);
+    }
 
     // V2 IMPROVEMENT: use ParameterNode::resolvedSymbol directly (no scanForParamSymbols!)
     unsigned argIdx = 0;
@@ -4413,6 +5236,8 @@ void IRGenerator::visit(LambdaExpression& node) {
         }
     }
 
+    if (diSP) popDIScope();
+
     popRAIIScope();
 
     // Restore state
@@ -4420,6 +5245,7 @@ void IRGenerator::visit(LambdaExpression& node) {
     currentThisPtr_ = prevThisPtr;
     namedValues_ = savedNamedValues;
     raiiScopeStack_ = std::move(savedRAIIStack);
+    diScopeStack_ = std::move(savedDIScopeStack);
     builder_.SetInsertPoint(savedInsertPoint, savedInsertPointIt);
 
     if (hasCaptures) {

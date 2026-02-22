@@ -58,6 +58,9 @@ public:
     std::shared_ptr<ErrorTypeSymbol> getErrorType() const;
     std::shared_ptr<NullTypeSymbol> getNullType() const;
 
+    // Built-in String object type
+    std::shared_ptr<StringObjectSymbol> getStringObjectType() const;
+
     // Intern compound types (get-or-create)
     std::shared_ptr<PointerTypeSymbol> getPointerType(TypeSymbolPtr baseType);
     std::shared_ptr<PointerTypeSymbol> getSharedPointerType(TypeSymbolPtr baseType);
@@ -99,6 +102,7 @@ private:
     std::shared_ptr<PrimitiveTypeSymbol> voidType_;
     std::shared_ptr<ErrorTypeSymbol> errorType_;
     std::shared_ptr<NullTypeSymbol> nullType_;
+    std::shared_ptr<StringObjectSymbol> stringObjectType_;
 
     // Scope stack for push/pop during construction
     std::vector<ScopePtr> scopeStack_;

@@ -244,4 +244,22 @@ std::string NullTypeSymbol::getInterningKey() const {
     return "null";
 }
 
+// ============================================================================
+// StringObjectSymbol
+// ============================================================================
+
+StringObjectSymbol::StringObjectSymbol()
+    : TypeSymbol("String", /*isPrimaryType=*/true)
+{
+    sizeInBytes = 16;  // { ptr(8), i32(4), i32(4) }
+}
+
+std::string StringObjectSymbol::getTypeDescription() const {
+    return "String";
+}
+
+std::string StringObjectSymbol::getInterningKey() const {
+    return "String";
+}
+
 } // namespace mingus

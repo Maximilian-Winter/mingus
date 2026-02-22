@@ -37,6 +37,9 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/IR/DIBuilder.h>
+#include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/DebugLoc.h>
 #pragma warning(pop)
 
 #include <map>
@@ -54,7 +57,9 @@ namespace codegen {
 class IRGenerator : public ASTVisitor {
 public:
     IRGenerator(SymbolTable& symbolTable,
-                const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo);
+                const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo,
+                bool debugMode = false,
+                const std::string& sourceFile = "");
 
     // Entry point — generates LLVM IR and returns the module
     std::unique_ptr<llvm::Module> generate(ProgramNode& program);
@@ -144,6 +149,24 @@ private:
     const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo_;
 
     //==========================================================================
+    // Debug info (DWARF emission, gated by debugMode_)
+    //==========================================================================
+    bool debugMode_ = false;
+    std::string sourceFile_;
+    std::unique_ptr<llvm::DIBuilder> diBuilder_;
+    llvm::DICompileUnit* diCompileUnit_ = nullptr;
+    llvm::DIFile* diFile_ = nullptr;
+    std::vector<llvm::DIScope*> diScopeStack_;
+
+    void emitLocation(AstBaseNode* node);
+    void emitLocation(const std::shared_ptr<DebugInfo>& debugInfo);
+    llvm::DISubroutineType* createFunctionDebugType(FunctionSymbol* sym);
+    llvm::DIType* mapDebugType(TypeSymbol* type);
+    void pushDIScope(llvm::DIScope* scope);
+    void popDIScope();
+    llvm::DIScope* currentDIScope() const;
+
+    //==========================================================================
     // Codegen state
     //==========================================================================
     llvm::Function* currentFunction_ = nullptr;
@@ -198,11 +221,32 @@ private:
     std::vector<RAIIScope> raiiScopeStack_;
 
     //==========================================================================
-    // String RAII
+    // String RAII (for char* / string primitive)
     //==========================================================================
     llvm::Function* stringFreeFn_ = nullptr;
     llvm::Function* getOrCreateStringFreeFn();
     llvm::Value* emitStringConcat(llvm::Value* left, llvm::Value* right);
+
+    //==========================================================================
+    // String object support (for `String` value type)
+    //==========================================================================
+    llvm::StructType* stringObjectLLVMType_ = nullptr;
+    llvm::Function* stringObjectFreeFn_ = nullptr;
+    llvm::Function* stringFromCstrFn_ = nullptr;
+    llvm::Function* stringConcatFn_ = nullptr;
+    llvm::Function* stringEqFn_ = nullptr;
+    llvm::Function* stringSliceFn_ = nullptr;
+
+    llvm::StructType* getStringObjectLLVMType();
+    llvm::Function* getOrCreateStringObjectFreeFn();
+    llvm::Function* getOrCreateStringFromCstrFn();
+    llvm::Function* getOrCreateStringConcatFn();
+    llvm::Function* getOrCreateStringEqFn();
+    llvm::Function* getOrCreateStringSliceFn();
+    bool isStringObjectKind(TypeSymbol* t);
+    llvm::Value* emitStringObjectConcat(llvm::Value* leftAlloca, llvm::Value* rightAlloca);
+    llvm::Value* emitStringToStringObject(llvm::Value* cstrPtr);
+    llvm::Value* emitStringObjectToString(llvm::Value* soAlloca);
 
     //==========================================================================
     // Closure reference counting

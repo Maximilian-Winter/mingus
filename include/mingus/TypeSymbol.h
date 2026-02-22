@@ -205,4 +205,20 @@ public:
     std::string getInterningKey() const override;
 };
 
+// ============================================================================
+// StringObjectSymbol — Built-in String value type { ptr, i32, i32 }
+//
+// A managed string with length tracking. Layout: { data, len, cap }.
+// Distinct from PrimitiveKind::String (which is raw char*).
+// Implicit conversion both directions for C interop.
+// ============================================================================
+
+class StringObjectSymbol : public TypeSymbol {
+public:
+    StringObjectSymbol();
+
+    std::string getTypeDescription() const override;
+    std::string getInterningKey() const override;
+};
+
 } // namespace mingus

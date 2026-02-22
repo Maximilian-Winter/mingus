@@ -126,8 +126,11 @@ public:
     bool isEnumAccess = false;
     bool isStringEnumAccess = false;
 
-    // String builtin methods (length, substring, etc.)
+    // String builtin methods (length, substring, etc.) — for `string` (char*)
     bool isStringBuiltinMethod = false;
+
+    // String object methods (length, slice, etc.) — for `String` value type
+    bool isStringObjectMethod = false;
 
     // Static method access: ClassName.staticMethod()
     bool isStaticAccess = false;

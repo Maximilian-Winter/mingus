@@ -693,7 +693,7 @@ void TypeChecker::visit(MemberAccessExpression& node) {
         }
     }
 
-    // String builtin methods
+    // String builtin methods (for `string` / char*)
     if (objType.get() == symbolTable_.getStringType().get()) {
         if (node.memberName == "length" || node.memberName == "charAt" ||
             node.memberName == "substring" || node.memberName == "indexOf" ||
@@ -701,6 +701,19 @@ void TypeChecker::visit(MemberAccessExpression& node) {
             node.isStringBuiltinMethod = true;
             // Return type will be resolved when the CallExpression visits this
             node.resolvedType = symbolTable_.getIntType();  // placeholder
+            return;
+        }
+    }
+
+    // String object methods (for `String` value type)
+    if (objType.get() == symbolTable_.getStringObjectType().get()) {
+        if (node.memberName == "length" || node.memberName == "capacity" ||
+            node.memberName == "charAt" || node.memberName == "slice" ||
+            node.memberName == "append" || node.memberName == "indexOf" ||
+            node.memberName == "contains" || node.memberName == "cstr" ||
+            node.memberName == "toInt" || node.memberName == "toDouble") {
+            node.isStringObjectMethod = true;
+            node.resolvedType = symbolTable_.getIntType();  // placeholder, resolved in CallExpression
             return;
         }
     }
@@ -757,7 +770,20 @@ void TypeChecker::visit(BinaryExpression& node) {
     switch (node.op) {
         // Arithmetic
         case BinaryOp::Add: {
-            // String concatenation
+            // String object concatenation (String + String, String + string, string + String)
+            {
+                auto* soType = symbolTable_.getStringObjectType().get();
+                auto* sType  = symbolTable_.getStringType().get();
+                bool leftIsSO  = (leftType.get() == soType);
+                bool rightIsSO = (rightType.get() == soType);
+                bool leftIsStr = (leftType.get() == sType);
+                bool rightIsStr = (rightType.get() == sType);
+                if ((leftIsSO || rightIsSO) && (leftIsSO || leftIsStr) && (rightIsSO || rightIsStr)) {
+                    node.resolvedType = symbolTable_.getStringObjectType();
+                    return;
+                }
+            }
+            // String (char*) concatenation
             if (leftType.get() == symbolTable_.getStringType().get() ||
                 rightType.get() == symbolTable_.getStringType().get()) {
                 node.resolvedType = symbolTable_.getStringType();
@@ -1117,6 +1143,26 @@ void TypeChecker::visit(CallExpression& node) {
             } else if (memberAccess->memberName == "toDouble") {
                 node.resolvedType = symbolTable_.getDoubleType();
             } else if (memberAccess->memberName == "substring") {
+                node.resolvedType = symbolTable_.getStringType();
+            } else {
+                node.resolvedType = symbolTable_.getIntType();
+            }
+            return;
+        }
+
+        // String object method call
+        if (memberAccess->isStringObjectMethod) {
+            const auto& name = memberAccess->memberName;
+            if (name == "length" || name == "capacity" || name == "charAt" ||
+                name == "indexOf" || name == "toInt") {
+                node.resolvedType = symbolTable_.getIntType();
+            } else if (name == "toDouble") {
+                node.resolvedType = symbolTable_.getDoubleType();
+            } else if (name == "contains") {
+                node.resolvedType = symbolTable_.getBoolType();
+            } else if (name == "slice") {
+                node.resolvedType = symbolTable_.getStringObjectType();
+            } else if (name == "cstr") {
                 node.resolvedType = symbolTable_.getStringType();
             } else {
                 node.resolvedType = symbolTable_.getIntType();
