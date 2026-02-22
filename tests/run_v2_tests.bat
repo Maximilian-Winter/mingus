@@ -86,6 +86,10 @@ call :run_test test_49_weak_captures Test49_main "Weak Captures"
 call :run_test test_50_shared_pointers Test50_main "Shared Pointers"
 call :run_test test_51_arrays Test51_main "Arrays"
 call :run_test test_52_tier1_fixes Test52_main "Tier 1 Fixes"
+call :run_test test_53_forward_refs Test53_main "Forward Type References"
+call :run_test test_54_float_suffix Test54_main "Float Literal Suffix"
+call :run_test test_55_ctor_overloading Test55_main "Constructor Overloading"
+call :run_test test_56_definite_assign Test56_main "Definite Assignment"
 
 echo.
 echo ============================================================

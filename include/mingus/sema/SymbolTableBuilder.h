@@ -119,6 +119,12 @@ private:
     // Import resolution (Phase 1b)
     void resolveAllImports(ProgramNode& program);
 
+    // Forward reference pre-registration (Sub-pass A)
+    void preRegisterType(ClassDeclaration& node);
+    void preRegisterType(StructDeclaration& node);
+    void preRegisterType(InterfaceDeclaration& node);
+    void preRegisterType(EnumDeclaration& node);
+
     // State tracking
     bool inTypeScope_ = false;   // true when inside struct/class members
     std::shared_ptr<ClassSymbol> currentClass_;  // for ctor/dtor context

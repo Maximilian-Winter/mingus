@@ -1,0 +1,134 @@
+// test_55_ctor_overloading.mingus — Constructor overloading
+// Multiple constructors with different parameter signatures
+
+module Test55 {
+
+extern func printf(string fmt, ...) => int;
+
+// Class with multiple constructor overloads
+class Point {
+    int x;
+    int y;
+
+    // Default constructor (no params)
+    constructor() {
+        this.x = 0;
+        this.y = 0;
+    }
+
+    // Single-param constructor
+    constructor(int v) {
+        this.x = v;
+        this.y = v;
+    }
+
+    // Two-param constructor
+    constructor(int px, int py) {
+        this.x = px;
+        this.y = py;
+    }
+
+    func print() => void {
+        printf("Point(%d, %d)\n", this.x, this.y);
+    }
+}
+
+// Class with string + int overloads
+class Named {
+    string name;
+    int id;
+
+    constructor(string n) {
+        this.name = n;
+        this.id = 0;
+    }
+
+    constructor(string n, int i) {
+        this.name = n;
+        this.id = i;
+    }
+
+    func print() => void {
+        printf("Named(%s, %d)\n", this.name, this.id);
+    }
+}
+
+// Inheritance: derived class calls specific base ctor
+class Animal {
+    string name;
+    int age;
+
+    constructor(string n) {
+        this.name = n;
+        this.age = 0;
+    }
+
+    constructor(string n, int a) {
+        this.name = n;
+        this.age = a;
+    }
+
+    func describe() => void {
+        printf("Animal(%s, %d)\n", this.name, this.age);
+    }
+}
+
+class Dog : Animal {
+    string breed;
+
+    constructor(string n, string b) : super(n) {
+        this.breed = b;
+    }
+
+    func describe() => void {
+        printf("Dog(%s, breed=%s, age=%d)\n", this.name, this.breed, this.age);
+    }
+}
+
+func main() => int {
+    printf("=== Constructor Overloading ===\n");
+
+    // Stack construction with different overloads
+    var p0 = Point();
+    p0.print();
+
+    var p1 = Point(5);
+    p1.print();
+
+    var p2 = Point(3, 7);
+    p2.print();
+
+    // Heap construction with different overloads
+    var hp0 = new Point();
+    hp0->print();
+
+    var hp1 = new Point(10);
+    hp1->print();
+
+    var hp2 = new Point(4, 8);
+    hp2->print();
+
+    // Named class overloads
+    var n1 = new Named("Alice");
+    n1->print();
+
+    var n2 = new Named("Bob", 42);
+    n2->print();
+
+    // Inheritance with super()
+    var dog = new Dog("Rex", "Labrador");
+    dog->describe();
+
+    printf("=== All ctor overloading tests passed ===\n");
+
+    delete hp0;
+    delete hp1;
+    delete hp2;
+    delete n1;
+    delete n2;
+    delete dog;
+
+    return 0;
+}
+
+}

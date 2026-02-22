@@ -390,6 +390,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Emit warnings (if any) even when no errors
+    for (const auto& d : errors.diagnostics()) {
+        if (d.level == mingus::DiagnosticLevel::Warning) {
+            std::cerr << "warning: ";
+            if (d.location) std::cerr << d.location->toString() << ": ";
+            std::cerr << d.message << "\n";
+        }
+    }
+
     // ---- IR Generation ----
     mingus::codegen::IRGenerator irgen(symbolTable, pass4.getRAIIInfo());
     auto llvmModule = irgen.generate(*program);

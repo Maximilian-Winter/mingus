@@ -208,7 +208,7 @@ public:
     std::vector<std::shared_ptr<VariableDeclaration>> fields;
     std::vector<std::shared_ptr<FunctionDeclaration>> methods;
     std::vector<std::shared_ptr<OperatorDeclaration>> operators;
-    std::shared_ptr<ConstructorDeclaration> constructor;       // nullptr if auto-generated
+    std::vector<std::shared_ptr<ConstructorDeclaration>> constructors;  // overloaded constructors
     std::shared_ptr<ConstructorDeclaration> copyConstructor;  // constructor(ClassName& other)
     std::shared_ptr<ConstructorDeclaration> moveConstructor;  // constructor(ClassName&& other)
     std::shared_ptr<DestructorDeclaration> destructor;        // nullptr if auto-generated

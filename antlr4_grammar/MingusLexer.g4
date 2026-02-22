@@ -191,8 +191,8 @@ SquareBracketRight:     ']';
 // ============================================================================
 
 FloatingLiteral:
-    Fractionalconstant Exponentpart?
-    | Digitsequence Exponentpart
+    Fractionalconstant Exponentpart? [fF]?
+    | Digitsequence Exponentpart [fF]?
     ;
 
 IntegerLiteral:

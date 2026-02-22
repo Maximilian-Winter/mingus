@@ -191,7 +191,7 @@ public:
     std::vector<std::shared_ptr<VariableSymbol>> fields;     // own fields only
     std::vector<std::shared_ptr<VariableSymbol>> allFields;  // inherited + own (LLVM GEP order)
 
-    std::shared_ptr<ConstructorSymbol> constructor;
+    std::vector<std::shared_ptr<ConstructorSymbol>> constructors;  // overloaded constructors
     std::shared_ptr<ConstructorSymbol> copyConstructor;  // constructor(ClassName& other)
     std::shared_ptr<ConstructorSymbol> moveConstructor;  // constructor(ClassName&& other)
     std::shared_ptr<DestructorSymbol> destructor;

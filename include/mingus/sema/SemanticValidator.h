@@ -155,6 +155,9 @@ private:
     // ---- By-reference capture escape tracking ----
     std::set<Symbol*> refCaptureVars_;  // variables holding closures with by-ref captures
 
+    // ---- Definite assignment tracking (4f) ----
+    std::set<VariableSymbol*> definitelyAssigned_;
+
     // ---- Helpers ----
     void visitStatements(std::vector<std::shared_ptr<StatementBaseNode>>& stmts);
 

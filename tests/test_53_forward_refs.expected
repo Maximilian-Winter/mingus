@@ -1,0 +1,8 @@
+=== Forward Type References ===
+Woof! I'm Rex, a Labrador
+Age: 5
+Printer: Hello World
+Pair: 10, 20
+Color: Green
+Woof! I'm Rex, a Labrador
+=== All forward ref tests passed ===

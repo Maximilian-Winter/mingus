@@ -443,9 +443,9 @@ void TypeResolver::visit(ClassDeclaration& node) {
         if (field) field->accept(*this);
     }
 
-    // Constructor
-    if (node.constructor) {
-        node.constructor->accept(*this);
+    // Constructors
+    for (auto& ctor : node.constructors) {
+        if (ctor) ctor->accept(*this);
     }
     if (node.copyConstructor) {
         node.copyConstructor->accept(*this);

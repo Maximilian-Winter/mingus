@@ -1,0 +1,91 @@
+// test_56_definite_assign.mingus — Definite assignment analysis
+// Tests that properly assigned variables work correctly at runtime.
+// The compiler now warns on possibly-uninitialized reads (not tested here
+// since warnings go to stderr and don't affect output).
+
+module Test56 {
+
+extern func printf(string fmt, ...) => int;
+
+// Test 1: Simple assignment before use
+func testSimpleAssign() => void {
+    int x;
+    x = 42;
+    printf("simple: %d\n", x);
+}
+
+// Test 2: Assignment via initializer
+func testInitializer() => void {
+    int x = 10;
+    printf("init: %d\n", x);
+}
+
+// Test 3: Assignment in both if/else branches
+func testIfElse(int cond) => void {
+    int x;
+    if (cond > 0) {
+        x = 100;
+    } else {
+        x = 200;
+    }
+    printf("if-else: %d\n", x);
+}
+
+// Test 4: Assignment in loop (assigned before loop)
+func testLoop() => void {
+    int sum = 0;
+    for (int i = 0; i < 5; i = i + 1) {
+        sum = sum + i;
+    }
+    printf("loop: %d\n", sum);
+}
+
+// Test 5: Multiple variables
+func testMultiple() => void {
+    int a = 1;
+    int b = 2;
+    int c = a + b;
+    printf("multi: %d\n", c);
+}
+
+// Test 6: Do-while (body runs at least once)
+func testDoWhile() => void {
+    int x;
+    int count = 0;
+    do {
+        x = 99;
+        count = count + 1;
+    } while (count < 1);
+    printf("do-while: %d\n", x);
+}
+
+// Test 7: Function parameters are always assigned
+func testParams(int a, int b) => void {
+    int c = a + b;
+    printf("params: %d\n", c);
+}
+
+// Test 8: String variable
+func testString() => void {
+    string s = "hello";
+    printf("string: %s\n", s);
+}
+
+func main() => int {
+    printf("=== Definite Assignment ===\n");
+
+    testSimpleAssign();
+    testInitializer();
+    testIfElse(1);
+    testIfElse(-1);
+    testLoop();
+    testMultiple();
+    testDoWhile();
+    testParams(3, 4);
+    testString();
+
+    printf("=== All definite assign tests passed ===\n");
+    return 0;
+}
+
+}

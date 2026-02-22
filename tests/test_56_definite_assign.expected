@@ -1,0 +1,11 @@
+=== Definite Assignment ===
+simple: 42
+init: 10
+if-else: 100
+if-else: 200
+loop: 10
+multi: 3
+do-while: 99
+params: 7
+string: hello
+=== All definite assign tests passed ===

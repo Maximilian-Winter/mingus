@@ -1,0 +1,47 @@
+// test_54_float_suffix.mingus — Float literal suffix ('f'/'F')
+// 1.0f creates a float, 1.0 creates a double
+
+module Test54 {
+
+extern func printf(string fmt, ...) => int;
+
+func main() => int {
+    printf("=== Float Literal Suffix ===\n");
+
+    // Float suffix: 1.0f is float (32-bit)
+    float x = 3.14f;
+    printf("float x = %.2f\n", (double)x);
+
+    // Double (no suffix): 1.0 is double (64-bit)
+    double y = 3.14;
+    printf("double y = %.2f\n", y);
+
+    // Float arithmetic
+    float a = 1.5f;
+    float b = 2.5f;
+    float c = a + b;
+    printf("float 1.5 + 2.5 = %.1f\n", (double)c);
+
+    // Float multiplication
+    float d = 2.0f;
+    float e = 3.0f;
+    float f = d * e;
+    printf("float 2.0 * 3.0 = %.1f\n", (double)f);
+
+    // Exponent with suffix
+    float g = 1.5e2f;
+    printf("float 1.5e2f = %.1f\n", (double)g);
+
+    // Capital F suffix
+    float h = 42.0F;
+    printf("float 42.0F = %.1f\n", (double)h);
+
+    // sizeof check: float is 4, double is 8
+    printf("sizeof(float) = %d\n", sizeof(float));
+    printf("sizeof(double) = %d\n", sizeof(double));
+
+    printf("=== All float suffix tests passed ===\n");
+    return 0;
+}
+
+}

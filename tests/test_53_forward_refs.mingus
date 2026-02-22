@@ -1,0 +1,129 @@
+// test_53_forward_refs.mingus — Forward type references
+// Classes/structs/interfaces/enums can reference types defined later in the same module
+
+module Test53 {
+
+extern func printf(string fmt, ...) => int;
+
+// === Forward class inheritance ===
+// Dog references Animal which is defined AFTER Dog
+
+class Dog : Animal {
+    string breed;
+
+    constructor(string n, int a, string b) : super(n, a) {
+        this.breed = b;
+    }
+
+    func speak() => void {
+        printf("Woof! I'm %s, a %s\n", this.name, this.breed);
+    }
+}
+
+class Animal {
+    string name;
+    int age;
+
+    constructor(string n, int a) {
+        this.name = n;
+        this.age = a;
+    }
+
+    func speak() => void {
+        printf("...\n");
+    }
+
+    func getAge() => int {
+        return this.age;
+    }
+}
+
+// === Forward interface implementation ===
+// Printer references Printable which is defined AFTER Printer
+
+class Printer : Printable {
+    string label;
+
+    constructor(string l) {
+        this.label = l;
+    }
+
+    func print() => void {
+        printf("Printer: %s\n", this.label);
+    }
+}
+
+interface Printable {
+    func print() => void;
+}
+
+// === Forward struct field reference ===
+
+struct Node {
+    int value;
+}
+
+struct Pair {
+    Node first;
+    Node second;
+}
+
+// === Forward enum reference ===
+// Function uses Color which is defined after
+
+func getColorName(int c) => string {
+    if (c == 0) {
+        return "Red";
+    }
+    if (c == 1) {
+        return "Green";
+    }
+    return "Blue";
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+// === Main test ===
+
+func main() => int {
+    printf("=== Forward Type References ===\n");
+
+    // Forward class inheritance
+    var dog = new Dog("Rex", 5, "Labrador");
+    dog->speak();
+    printf("Age: %d\n", dog->getAge());
+
+    // Forward interface implementation
+    var printer = new Printer("Hello World");
+    printer->print();
+
+    // Forward struct reference
+    var n1 = Node();
+    n1.value = 10;
+    var n2 = Node();
+    n2.value = 20;
+    var pair = Pair();
+    pair.first = n1;
+    pair.second = n2;
+    printf("Pair: %d, %d\n", pair.first.value, pair.second.value);
+
+    // Forward enum reference
+    printf("Color: %s\n", getColorName(Color.Green));
+
+    // Polymorphism with forward-declared base
+    Animal* animal = dog;
+    animal->speak();
+
+    printf("=== All forward ref tests passed ===\n");
+
+    delete dog;
+    delete printer;
+
+    return 0;
+}
+
+}

@@ -508,6 +508,11 @@ void SemanticValidator::visit(VariableDeclaration& node) {
         trackRAIIVariable(node.resolvedVariable.get());
     }
 
+    // Definite assignment: mark as assigned if has initializer
+    if (node.resolvedVariable && node.initializer) {
+        definitelyAssigned_.insert(node.resolvedVariable.get());
+    }
+
     // Self-capture detection
     checkSelfCapture(node);
 
@@ -534,6 +539,11 @@ void SemanticValidator::visit(VariableDeclarationExpression& node) {
         && node.resolvedVariable->role == VariableRole::Local) {
         trackRAIIVariable(node.resolvedVariable.get());
     }
+
+    // Definite assignment: mark as assigned if has initializer
+    if (node.resolvedVariable && node.initializer) {
+        definitelyAssigned_.insert(node.resolvedVariable.get());
+    }
 }
 
 void SemanticValidator::visit(TupleDestructuringDeclaration& node) {
@@ -547,6 +557,13 @@ void SemanticValidator::visit(TupleDestructuringDeclaration& node) {
             if (var) lambdaStack_.back().localSymbols.insert(var.get());
         }
     }
+
+    // Definite assignment: all destructured elements are assigned
+    if (node.initializer) {
+        for (auto& var : node.resolvedVariables) {
+            if (var) definitelyAssigned_.insert(var.get());
+        }
+    }
 }
 
 // ============================================================================
@@ -558,10 +575,16 @@ void SemanticValidator::visit(FunctionDeclaration& node) {
 
     auto savedScope = currentScope_;
     auto savedReturnType = currentReturnType_;
+    auto savedAssigned = definitelyAssigned_;
 
     if (node.resolvedFunction) {
         currentScope_ = node.resolvedFunction.get();
         currentReturnType_ = node.resolvedFunction->returnType;
+
+        // Mark all parameters as definitely assigned
+        for (auto& param : node.resolvedFunction->parameters) {
+            if (param) definitelyAssigned_.insert(param.get());
+        }
     }
 
     visitStatements(node.body->statements);
@@ -574,6 +597,7 @@ void SemanticValidator::visit(FunctionDeclaration& node) {
 
     currentScope_ = savedScope;
     currentReturnType_ = savedReturnType;
+    definitelyAssigned_ = savedAssigned;
 }
 
 void SemanticValidator::visit(ConstructorDeclaration& node) {
@@ -581,9 +605,15 @@ void SemanticValidator::visit(ConstructorDeclaration& node) {
 
     auto savedScope = currentScope_;
     auto savedReturnType = currentReturnType_;
+    auto savedAssigned = definitelyAssigned_;
 
     if (node.resolvedConstructor) {
         currentScope_ = node.resolvedConstructor.get();
+
+        // Mark all parameters as definitely assigned
+        for (auto& param : node.resolvedConstructor->parameters) {
+            if (param) definitelyAssigned_.insert(param.get());
+        }
     }
     currentReturnType_ = symbolTable_.getVoidType();  // constructors return void
 
@@ -591,6 +621,7 @@ void SemanticValidator::visit(ConstructorDeclaration& node) {
 
     currentScope_ = savedScope;
     currentReturnType_ = savedReturnType;
+    definitelyAssigned_ = savedAssigned;
 }
 
 void SemanticValidator::visit(DestructorDeclaration& node) {
@@ -683,7 +714,9 @@ void SemanticValidator::visit(ClassDeclaration& node) {
         if (field) field->accept(*this);
     }
 
-    if (node.constructor) node.constructor->accept(*this);
+    for (auto& ctor : node.constructors) {
+        if (ctor) ctor->accept(*this);
+    }
     if (node.copyConstructor) node.copyConstructor->accept(*this);
     if (node.moveConstructor) node.moveConstructor->accept(*this);
     if (node.destructor) node.destructor->accept(*this);
@@ -740,12 +773,47 @@ void SemanticValidator::visit(ReturnStatement& node) {
 
 void SemanticValidator::visit(IfStatement& node) {
     if (node.condition) node.condition->accept(*this);
+
+    // Save state before branches for definite assignment analysis
+    auto preIfAssigned = definitelyAssigned_;
+
+    // Then branch
     if (node.thenBody) node.thenBody->accept(*this);
-    for (auto& elseIf : node.elseIfClauses) {
-        if (elseIf.condition) elseIf.condition->accept(*this);
-        if (elseIf.body) elseIf.body->accept(*this);
+    auto thenAssigned = definitelyAssigned_;
+
+    if (node.elseBody || !node.elseIfClauses.empty()) {
+        // Has else: intersect then/else assignments
+        // Process else-if clauses
+        for (auto& elseIf : node.elseIfClauses) {
+            definitelyAssigned_ = preIfAssigned;  // restore for each else-if
+            if (elseIf.condition) elseIf.condition->accept(*this);
+            if (elseIf.body) elseIf.body->accept(*this);
+            // Intersect with thenAssigned
+            std::set<VariableSymbol*> intersection;
+            for (auto* v : thenAssigned) {
+                if (definitelyAssigned_.count(v)) intersection.insert(v);
+            }
+            thenAssigned = intersection;
+        }
+
+        if (node.elseBody) {
+            definitelyAssigned_ = preIfAssigned;  // restore for else
+            node.elseBody->accept(*this);
+            // Final intersection: thenAssigned ∩ elseAssigned
+            std::set<VariableSymbol*> intersection;
+            for (auto* v : thenAssigned) {
+                if (definitelyAssigned_.count(v)) intersection.insert(v);
+            }
+            definitelyAssigned_ = intersection;
+        } else {
+            // else-if but no else: conservative, restore pre-if
+            definitelyAssigned_ = preIfAssigned;
+            // Merge in only what was assigned on ALL branches including "no branch"
+        }
+    } else {
+        // No else: conservative — restore pre-if state (then-only assignments not guaranteed)
+        definitelyAssigned_ = preIfAssigned;
     }
-    if (node.elseBody) node.elseBody->accept(*this);
 }
 
 void SemanticValidator::visit(ForStatement& node) {
@@ -759,17 +827,22 @@ void SemanticValidator::visit(ForStatement& node) {
         // For loop may create its own scope
     }
 
+    // Init declarations may introduce assigned variables
     for (auto& initDecl : node.initDeclarations) {
         if (initDecl) initDecl->accept(*this);
     }
     for (auto& initExpr : node.initExpressions) {
         if (initExpr) initExpr->accept(*this);
     }
+
+    // Conservative: save pre-loop state, body assignments are not guaranteed
+    auto preLoopAssigned = definitelyAssigned_;
     if (node.condition) node.condition->accept(*this);
     for (auto& iter : node.iterators) {
         if (iter) iter->accept(*this);
     }
     if (node.body) node.body->accept(*this);
+    definitelyAssigned_ = preLoopAssigned;
 
     currentScope_ = savedScope;
     loopLabelStack_.pop_back();
@@ -780,8 +853,11 @@ void SemanticValidator::visit(WhileStatement& node) {
     pendingLabel_.clear();
     loopLabelStack_.push_back(label);
 
+    // Conservative: loop body may not execute
+    auto preLoopAssigned = definitelyAssigned_;
     if (node.condition) node.condition->accept(*this);
     if (node.body) node.body->accept(*this);
+    definitelyAssigned_ = preLoopAssigned;
 
     loopLabelStack_.pop_back();
 }
@@ -791,6 +867,7 @@ void SemanticValidator::visit(DoWhileStatement& node) {
     pendingLabel_.clear();
     loopLabelStack_.push_back(label);
 
+    // do-while body runs at least once — keep body assignments
     if (node.body) node.body->accept(*this);
     if (node.condition) node.condition->accept(*this);
 
@@ -878,6 +955,16 @@ void SemanticValidator::visit(InterpolatedStringExpression& node) {
 void SemanticValidator::visit(IdentifierExpression& node) {
     // 4a: Lambda capture analysis — this is the trigger point
     checkLambdaCapture(node);
+
+    // 4f: Definite assignment check — warn on reading uninitialized locals
+    if (auto* varSym = node.resolvedSymbol
+            ? node.resolvedSymbol->as<VariableSymbol>() : nullptr) {
+        if (varSym->role == VariableRole::Local
+            && definitelyAssigned_.find(varSym) == definitelyAssigned_.end()) {
+            errors_.warning("variable '" + varSym->getName()
+                + "' may be used before being assigned", node.debugInfo);
+        }
+    }
 }
 
 void SemanticValidator::visit(QualifiedNameExpression& node) {
@@ -912,8 +999,21 @@ void SemanticValidator::visit(ArrayLiteralExpression& node) {
 }
 
 void SemanticValidator::visit(AssignmentExpression& node) {
-    if (node.target) node.target->accept(*this);
+    // Visit value first (RHS), then mark target as assigned, then visit target
+    // This order prevents false warnings like "x may be uninitialized" for "x = 42"
     if (node.value) node.value->accept(*this);
+
+    // Definite assignment: mark target as assigned BEFORE visiting target
+    if (auto* ident = node.target ? node.target->as<IdentifierExpression>() : nullptr) {
+        if (auto* varSym = ident->resolvedSymbol
+                ? ident->resolvedSymbol->as<VariableSymbol>() : nullptr) {
+            if (varSym->role == VariableRole::Local) {
+                definitelyAssigned_.insert(varSym);
+            }
+        }
+    }
+
+    if (node.target) node.target->accept(*this);
 
     // Escape analysis: reject storing ref-capture closures in fields
     bool isFieldStore = false;
@@ -1037,6 +1137,16 @@ void SemanticValidator::visit(LambdaExpression& node) {
 
     lambdaStack_.push_back(std::move(ctx));
 
+    // Save/restore definite assignment set (lambda is a separate scope)
+    auto savedAssigned = definitelyAssigned_;
+    // Mark lambda parameters as assigned
+    for (auto& param : node.parameters) {
+        if (param && param->resolvedSymbol) {
+            definitelyAssigned_.insert(
+                param->resolvedSymbol->as<VariableSymbol>());
+        }
+    }
+
     // Visit body — this triggers checkLambdaCapture for all identifiers
     if (node.body) {
         if (auto* block = node.body->as<BlockStatementNode>()) {
@@ -1046,6 +1156,7 @@ void SemanticValidator::visit(LambdaExpression& node) {
         }
     }
 
+    definitelyAssigned_ = savedAssigned;
     lambdaStack_.pop_back();
 }
 

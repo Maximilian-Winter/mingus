@@ -352,7 +352,9 @@ void TypeChecker::visit(ClassDeclaration& node) {
         if (field) field->accept(*this);
     }
 
-    if (node.constructor) node.constructor->accept(*this);
+    for (auto& ctor : node.constructors) {
+        if (ctor) ctor->accept(*this);
+    }
     if (node.copyConstructor) node.copyConstructor->accept(*this);
     if (node.moveConstructor) node.moveConstructor->accept(*this);
     if (node.destructor) node.destructor->accept(*this);
@@ -507,7 +509,8 @@ void TypeChecker::visit(IntegerLiteral& node) {
 }
 
 void TypeChecker::visit(FloatLiteral& node) {
-    node.resolvedType = symbolTable_.getDoubleType();
+    node.resolvedType = node.isFloat
+        ? symbolTable_.getFloatType() : symbolTable_.getDoubleType();
 }
 
 void TypeChecker::visit(BoolLiteral& node) {
@@ -1137,10 +1140,22 @@ void TypeChecker::visit(CallExpression& node) {
     // Constructor call: callee is a type name
     if (!funcType && calleeType->is<ClassSymbol>()) {
         auto* classSym = calleeType->as<ClassSymbol>();
-        if (classSym && classSym->constructor) {
-            funcSym = classSym->constructor;
-            funcTypeHolder = classSym->constructor->buildFunctionType();
-            if (funcTypeHolder) funcType = funcTypeHolder.get();
+        if (classSym && !classSym->constructors.empty()) {
+            if (classSym->constructors.size() > 1) {
+                // Overload resolution among constructors
+                std::vector<std::shared_ptr<FunctionSymbol>> candidates(
+                    classSym->constructors.begin(), classSym->constructors.end());
+                auto best = resolveOverload(candidates, node.arguments);
+                if (best) {
+                    funcSym = best;
+                    funcTypeHolder = best->buildFunctionType();
+                    if (funcTypeHolder) funcType = funcTypeHolder.get();
+                }
+            } else {
+                funcSym = classSym->constructors[0];
+                funcTypeHolder = classSym->constructors[0]->buildFunctionType();
+                if (funcTypeHolder) funcType = funcTypeHolder.get();
+            }
         }
         // Result of constructor call is the class type (stack-allocated value)
         // Only 'new' expressions produce pointer types
@@ -1250,6 +1265,33 @@ void TypeChecker::visit(NewExpression& node) {
             node.resolvedType = symbolTable_.getPointerType(node.type->resolvedType);
         } else {
             node.resolvedType = symbolTable_.getPointerType(node.type->resolvedType);
+        }
+
+        // Resolve constructor overload for class types
+        if (auto* classSym = allocType->as<ClassSymbol>()) {
+            if (classSym->constructors.size() > 1) {
+                std::vector<std::shared_ptr<FunctionSymbol>> candidates(
+                    classSym->constructors.begin(), classSym->constructors.end());
+                auto best = resolveOverload(candidates, node.arguments);
+                if (best) {
+                    node.resolvedConstructor = best;
+                }
+            } else if (!classSym->constructors.empty()) {
+                node.resolvedConstructor = classSym->constructors[0];
+            }
+
+            // Set isReference on arguments based on resolved constructor
+            if (node.resolvedConstructor && node.arguments) {
+                auto ctorFuncType = node.resolvedConstructor->buildFunctionType();
+                if (ctorFuncType) {
+                    node.arguments->isReference.clear();
+                    for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
+                        bool isRef = (i < ctorFuncType->parameters.size())
+                            ? ctorFuncType->parameters[i].isReference : false;
+                        node.arguments->isReference.push_back(isRef);
+                    }
+                }
+            }
         }
     } else {
         node.resolvedType = symbolTable_.getErrorType();

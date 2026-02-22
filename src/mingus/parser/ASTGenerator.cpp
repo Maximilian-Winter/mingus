@@ -665,7 +665,7 @@ std::any ASTGenerator::visitClassDeclaration(
                     ctor->isCopyConstructor = true;
                     cls->copyConstructor = ctor;
                 } else {
-                    cls->constructor = ctor;
+                    cls->constructors.push_back(ctor);
                 }
 
             } else if (memberCtx->destructorDeclaration()) {
@@ -1999,7 +1999,12 @@ std::any ASTGenerator::visitPrimaryExpression(
     if (ctx->FloatingLiteral()) {
         auto lit = std::make_shared<FloatLiteral>();
         lit->debugInfo = makeDebugInfo(ctx);
-        lit->value = std::stod(ctx->FloatingLiteral()->getText());
+        std::string text = ctx->FloatingLiteral()->getText();
+        if (!text.empty() && (text.back() == 'f' || text.back() == 'F')) {
+            lit->isFloat = true;
+            text.pop_back();
+        }
+        lit->value = std::stod(text);
         return std::any(std::static_pointer_cast<ExpressionBaseNode>(lit));
     }
 
@@ -2231,7 +2236,12 @@ std::any ASTGenerator::visitLiteralPattern(
     } else if (ctx->FloatingLiteral()) {
         auto lit = std::make_shared<FloatLiteral>();
         lit->debugInfo = makeDebugInfo(ctx);
-        lit->value = std::stod(ctx->FloatingLiteral()->getText());
+        std::string text = ctx->FloatingLiteral()->getText();
+        if (!text.empty() && (text.back() == 'f' || text.back() == 'F')) {
+            lit->isFloat = true;
+            text.pop_back();
+        }
+        lit->value = std::stod(text);
         pat->value = lit;
 
     } else if (ctx->BooleanLiteral()) {

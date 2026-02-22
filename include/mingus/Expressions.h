@@ -39,6 +39,7 @@ class FloatLiteral : public ExpressionBaseNode {
 public:
     void accept(ASTVisitor& visitor) override;
     double value = 0.0;
+    bool isFloat = false;  // true if suffix 'f'/'F' → float, else double
 };
 
 class BoolLiteral : public ExpressionBaseNode {
@@ -225,6 +226,9 @@ public:
     bool isArray = false;
     bool isShared = false;                     // true for "new shared Foo()"
     std::shared_ptr<ExpressionBaseNode> arraySize;  // for new T[size]
+
+    // Sema-resolved: which constructor overload to call (set by TypeChecker)
+    std::shared_ptr<FunctionSymbol> resolvedConstructor;
 };
 
 class SizeOfExpression : public ExpressionBaseNode {

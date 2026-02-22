@@ -1,0 +1,10 @@
+=== Float Literal Suffix ===
+float x = 3.14
+double y = 3.14
+float 1.5 + 2.5 = 4.0
+float 2.0 * 3.0 = 6.0
+float 1.5e2f = 150.0
+float 42.0F = 42.0
+sizeof(float) = 4
+sizeof(double) = 8
+=== All float suffix tests passed ===

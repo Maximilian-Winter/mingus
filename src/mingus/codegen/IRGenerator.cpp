@@ -332,6 +332,16 @@ std::string IRGenerator::mangleName(Symbol* sym) {
             }
             return qn + "_move";
         }
+        // Overloaded constructors: append type signature
+        if (ctorSym->hasOverloads) {
+            std::string name = ctorSym->getQualifiedName() + "$";
+            for (auto& param : ctorSym->parameters) {
+                if (param->getType()) {
+                    name += "_" + mangleTypeTag(param->getType().get());
+                }
+            }
+            return name;
+        }
         return ctorSym->getQualifiedName();
     }
 
@@ -607,9 +617,9 @@ void IRGenerator::declareFunctions(ProgramNode& program) {
                         }
                     }
                 }
-                // Constructor
-                if (classSym->constructor) {
-                    declareFunctionSymbol(classSym->constructor.get());
+                // Constructors
+                for (auto& ctor : classSym->constructors) {
+                    if (ctor) declareFunctionSymbol(ctor.get());
                 }
                 // Copy constructor
                 if (classSym->copyConstructor) {
@@ -1551,9 +1561,10 @@ void IRGenerator::visit(ConstructorDeclaration& node) {
 
     // Super constructor call
     if (node.hasSuperCall && currentClassSym_->resolvedBaseClass &&
-        currentClassSym_->resolvedBaseClass->constructor) {
+        !currentClassSym_->resolvedBaseClass->constructors.empty()) {
+        // TODO: resolve super() overload by argument types
         auto baseCtorIt = functionCache_.find(
-            currentClassSym_->resolvedBaseClass->constructor.get());
+            currentClassSym_->resolvedBaseClass->constructors[0].get());
         if (baseCtorIt != functionCache_.end()) {
             std::vector<llvm::Value*> superArgs;
             superArgs.push_back(currentThisPtr_);
@@ -1774,8 +1785,8 @@ void IRGenerator::visit(ClassDeclaration& node) {
     auto* prevClassSym = currentClassSym_;
     currentClassSym_ = node.resolvedClass.get();
 
-    if (node.constructor) {
-        node.constructor->accept(*this);
+    for (auto& ctor : node.constructors) {
+        if (ctor) ctor->accept(*this);
     }
     if (node.copyConstructor) {
         node.copyConstructor->accept(*this);
@@ -2360,7 +2371,11 @@ void IRGenerator::visit(IntegerLiteral& node) {
 }
 
 void IRGenerator::visit(FloatLiteral& node) {
-    lastValue_ = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context_), node.value);
+    if (node.isFloat) {
+        lastValue_ = llvm::ConstantFP::get(llvm::Type::getFloatTy(context_), node.value);
+    } else {
+        lastValue_ = llvm::ConstantFP::get(llvm::Type::getDoubleTy(context_), node.value);
+    }
 }
 
 void IRGenerator::visit(BoolLiteral& node) {
@@ -3317,11 +3332,17 @@ void IRGenerator::visit(CallExpression& node) {
     else if (auto* ident = node.callee->as<IdentifierExpression>()) {
         if (ident->resolvedSymbol) {
             if (auto* classSym = ident->resolvedSymbol->as<ClassSymbol>()) {
-                if (classSym->constructor) {
-                    auto it = functionCache_.find(classSym->constructor.get());
+                // Use TypeChecker-resolved constructor (supports overloads)
+                auto* targetCtor = node.resolvedCallee
+                    ? node.resolvedCallee->as<ConstructorSymbol>() : nullptr;
+                if (!targetCtor && !classSym->constructors.empty()) {
+                    targetCtor = classSym->constructors[0].get();
+                }
+                if (targetCtor) {
+                    auto it = functionCache_.find(targetCtor);
                     if (it != functionCache_.end()) {
                         calleeFn = it->second;
-                        calleeFuncSym = classSym->constructor.get();
+                        calleeFuncSym = targetCtor;
                         isCtorCall = true;
                         llvm::Type* objTy = mapType(classSym);
                         thisPtr = createEntryBlockAlloca(currentFunction_, objTy, "ctor.tmp");
@@ -3660,8 +3681,11 @@ void IRGenerator::visit(NewExpression& node) {
                 }
             }
         }
-        if (!targetCtor && classSym->constructor) {
-            targetCtor = classSym->constructor.get();
+        if (!targetCtor && node.resolvedConstructor) {
+            targetCtor = node.resolvedConstructor->as<ConstructorSymbol>();
+        }
+        if (!targetCtor && !classSym->constructors.empty()) {
+            targetCtor = classSym->constructors[0].get();
         }
 
         if (targetCtor) {
@@ -3758,8 +3782,11 @@ void IRGenerator::visit(NewExpression& node) {
                 }
             }
 
-            if (!targetCtor && classSym->constructor) {
-                targetCtor = classSym->constructor.get();
+            if (!targetCtor && node.resolvedConstructor) {
+                targetCtor = node.resolvedConstructor->as<ConstructorSymbol>();
+            }
+            if (!targetCtor && !classSym->constructors.empty()) {
+                targetCtor = classSym->constructors[0].get();
             }
 
             if (targetCtor) {

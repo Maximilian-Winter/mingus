@@ -214,8 +214,8 @@ public:
         out << "\n";
         indent++;
         for (const auto& f : node.fields) f->accept(*this);
-        if (node.constructor) {
-            node.constructor->accept(*this);
+        for (const auto& ctor : node.constructors) {
+            if (ctor) ctor->accept(*this);
         }
         if (node.destructor) {
             node.destructor->accept(*this);

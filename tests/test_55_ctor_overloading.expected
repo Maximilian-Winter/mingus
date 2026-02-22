@@ -1,0 +1,11 @@
+=== Constructor Overloading ===
+Point(0, 0)
+Point(5, 5)
+Point(3, 7)
+Point(0, 0)
+Point(10, 10)
+Point(4, 8)
+Named(Alice, 0)
+Named(Bob, 42)
+Dog(Rex, breed=Labrador, age=0)
+=== All ctor overloading tests passed ===

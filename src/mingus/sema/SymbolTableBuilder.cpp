@@ -78,11 +78,79 @@ void SymbolTableBuilder::visit(ModuleNode& node) {
     node.astScopeNode = moduleSym;
     node.resolvedModule = moduleSym;
 
+    // Sub-pass A: pre-register all type names (enables forward references)
+    for (auto& decl : node.declarations) {
+        if (!decl) continue;
+        if (auto* cls = decl->as<ClassDeclaration>())        preRegisterType(*cls);
+        else if (auto* s = decl->as<StructDeclaration>())    preRegisterType(*s);
+        else if (auto* i = decl->as<InterfaceDeclaration>()) preRegisterType(*i);
+        else if (auto* e = decl->as<EnumDeclaration>())      preRegisterType(*e);
+    }
+
+    // Sub-pass B: full processing (existing traversal)
     for (auto& decl : node.declarations) {
         if (decl) decl->accept(*this);
     }
 
+    // Sub-pass C: finalize inheritance (copy inherited fields for forward-ref bases)
+    for (auto& decl : node.declarations) {
+        if (!decl) continue;
+        if (auto* cls = decl->as<ClassDeclaration>()) {
+            auto* classSym = cls->resolvedClass.get();
+            if (classSym && classSym->resolvedBaseClass) {
+                // Re-build allFields from base (base is now fully populated)
+                classSym->allFields = classSym->resolvedBaseClass->allFields;
+                for (auto& field : classSym->fields) {
+                    classSym->allFields.push_back(field);
+                }
+                // Re-build vtable (base vtable is now complete)
+                classSym->vtable.clear();
+                classSym->vtableSize = 0;
+                buildVtable(classSym);
+            }
+        }
+    }
+
     symbolTable_.popScope();
+}
+
+// ============================================================================
+// Forward reference pre-registration (Sub-pass A)
+// ============================================================================
+
+void SymbolTableBuilder::preRegisterType(ClassDeclaration& node) {
+    auto classSym = std::make_shared<ClassSymbol>(
+        node.name, symbolTable_.getCurrentScope());
+    classSym->accessLevel = node.accessModifier;
+    classSym->isAbstract = node.isAbstract;
+    classSym->baseClassNames = node.baseClasses;
+    symbolTable_.defineSymbol(classSym);
+    symbolTable_.registerType(node.name, classSym);
+    node.resolvedClass = classSym;
+}
+
+void SymbolTableBuilder::preRegisterType(StructDeclaration& node) {
+    auto structSym = std::make_shared<StructSymbol>(node.name);
+    structSym->accessLevel = node.accessModifier;
+    symbolTable_.defineSymbol(structSym);
+    symbolTable_.registerType(node.name, structSym);
+    node.resolvedStruct = structSym;
+}
+
+void SymbolTableBuilder::preRegisterType(InterfaceDeclaration& node) {
+    auto ifaceSym = std::make_shared<InterfaceSymbol>(node.name);
+    ifaceSym->accessLevel = node.accessModifier;
+    symbolTable_.defineSymbol(ifaceSym);
+    symbolTable_.registerType(node.name, ifaceSym);
+    node.resolvedInterface = ifaceSym;
+}
+
+void SymbolTableBuilder::preRegisterType(EnumDeclaration& node) {
+    auto enumSym = std::make_shared<EnumSymbol>(node.name);
+    enumSym->accessLevel = node.accessModifier;
+    symbolTable_.defineSymbol(enumSym);
+    symbolTable_.registerType(node.name, enumSym);
+    node.resolvedEnum = enumSym;
 }
 
 // ============================================================================
@@ -212,7 +280,7 @@ void SymbolTableBuilder::visit(ConstructorDeclaration& node) {
         } else if (node.isCopyConstructor) {
             currentClass_->copyConstructor = ctorSym;
         } else {
-            currentClass_->constructor = ctorSym;
+            currentClass_->constructors.push_back(ctorSym);
         }
     }
 
@@ -297,11 +365,16 @@ void SymbolTableBuilder::visit(OperatorDeclaration& node) {
 void SymbolTableBuilder::visit(EnumDeclaration& node) {
     setScope(node);
 
-    auto enumSym = std::make_shared<EnumSymbol>(node.name);
-    enumSym->accessLevel = node.accessModifier;
-    symbolTable_.defineSymbol(enumSym);
-    symbolTable_.registerType(node.name, enumSym);
-    node.resolvedEnum = enumSym;
+    std::shared_ptr<EnumSymbol> enumSym;
+    if (node.resolvedEnum) {
+        enumSym = node.resolvedEnum;  // already pre-registered
+    } else {
+        enumSym = std::make_shared<EnumSymbol>(node.name);
+        enumSym->accessLevel = node.accessModifier;
+        symbolTable_.defineSymbol(enumSym);
+        symbolTable_.registerType(node.name, enumSym);
+        node.resolvedEnum = enumSym;
+    }
 
     // Populate members: explicit integer values or auto-increment
     int64_t nextValue = 0;
@@ -334,11 +407,16 @@ void SymbolTableBuilder::visit(EnumDeclaration& node) {
 void SymbolTableBuilder::visit(StructDeclaration& node) {
     setScope(node);
 
-    auto structSym = std::make_shared<StructSymbol>(node.name);
-    structSym->accessLevel = node.accessModifier;
-    symbolTable_.defineSymbol(structSym);
-    symbolTable_.registerType(node.name, structSym);
-    node.resolvedStruct = structSym;
+    std::shared_ptr<StructSymbol> structSym;
+    if (node.resolvedStruct) {
+        structSym = node.resolvedStruct;  // already pre-registered
+    } else {
+        structSym = std::make_shared<StructSymbol>(node.name);
+        structSym->accessLevel = node.accessModifier;
+        symbolTable_.defineSymbol(structSym);
+        symbolTable_.registerType(node.name, structSym);
+        node.resolvedStruct = structSym;
+    }
 
     // StructSymbol IS the member scope — push it
     symbolTable_.pushScope(structSym);
@@ -377,14 +455,19 @@ void SymbolTableBuilder::visit(StructDeclaration& node) {
 void SymbolTableBuilder::visit(ClassDeclaration& node) {
     setScope(node);
 
-    auto classSym = std::make_shared<ClassSymbol>(
-        node.name, symbolTable_.getCurrentScope());
-    classSym->accessLevel = node.accessModifier;
-    classSym->isAbstract = node.isAbstract;
-    classSym->baseClassNames = node.baseClasses;
-    symbolTable_.defineSymbol(classSym);
-    symbolTable_.registerType(node.name, classSym);
-    node.resolvedClass = classSym;
+    std::shared_ptr<ClassSymbol> classSym;
+    if (node.resolvedClass) {
+        classSym = node.resolvedClass;  // already pre-registered
+    } else {
+        classSym = std::make_shared<ClassSymbol>(
+            node.name, symbolTable_.getCurrentScope());
+        classSym->accessLevel = node.accessModifier;
+        classSym->isAbstract = node.isAbstract;
+        classSym->baseClassNames = node.baseClasses;
+        symbolTable_.defineSymbol(classSym);
+        symbolTable_.registerType(node.name, classSym);
+        node.resolvedClass = classSym;
+    }
 
     // Resolve base class (single inheritance, first name)
     if (!node.baseClasses.empty()) {
@@ -436,14 +519,13 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
         }
     }
 
-    // Constructor (explicit or auto-generated)
-    if (node.constructor) {
-        node.constructor->accept(*this);
-    } else if (!node.copyConstructor && !node.moveConstructor) {
-        // Only auto-generate if there's no explicit constructor at all
-        autoGenerateConstructor(node, classSym);
+    // Constructors (explicit or auto-generated)
+    if (!node.constructors.empty()) {
+        for (auto& ctor : node.constructors) {
+            ctor->accept(*this);
+        }
     } else {
-        // Has copy/move constructor but no regular constructor — auto-generate regular
+        // No explicit regular constructor — auto-generate default
         autoGenerateConstructor(node, classSym);
     }
 
@@ -477,6 +559,13 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
     // Build vtable after all members are registered
     buildVtable(classSym.get());
 
+    // Mark constructor overloads for name mangling
+    if (classSym->constructors.size() > 1) {
+        for (auto& ctor : classSym->constructors) {
+            ctor->hasOverloads = true;
+        }
+    }
+
     inTypeScope_ = savedInType;
     currentClass_ = savedClass;
     symbolTable_.popScope();
@@ -485,11 +574,16 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
 void SymbolTableBuilder::visit(InterfaceDeclaration& node) {
     setScope(node);
 
-    auto ifaceSym = std::make_shared<InterfaceSymbol>(node.name);
-    ifaceSym->accessLevel = node.accessModifier;
-    symbolTable_.defineSymbol(ifaceSym);
-    symbolTable_.registerType(node.name, ifaceSym);
-    node.resolvedInterface = ifaceSym;
+    std::shared_ptr<InterfaceSymbol> ifaceSym;
+    if (node.resolvedInterface) {
+        ifaceSym = node.resolvedInterface;  // already pre-registered
+    } else {
+        ifaceSym = std::make_shared<InterfaceSymbol>(node.name);
+        ifaceSym->accessLevel = node.accessModifier;
+        symbolTable_.defineSymbol(ifaceSym);
+        symbolTable_.registerType(node.name, ifaceSym);
+        node.resolvedInterface = ifaceSym;
+    }
 
     // InterfaceSymbol IS the scope for its method signatures
     symbolTable_.pushScope(ifaceSym);
@@ -527,15 +621,16 @@ void SymbolTableBuilder::autoGenerateConstructor(
 {
     auto ctorSym = std::make_shared<ConstructorSymbol>(classSym->getName());
     symbolTable_.defineSymbol(ctorSym);
-    classSym->constructor = ctorSym;
+    classSym->constructors.push_back(ctorSym);
 
     // Create empty body node for AST consistency
     auto body = std::make_shared<BlockStatementNode>();
     body->astScopeNode = ctorSym;
-    node.constructor = std::make_shared<ConstructorDeclaration>();
-    node.constructor->body = body;
-    node.constructor->resolvedConstructor = ctorSym;
-    setScope(*node.constructor);
+    auto ctorDecl = std::make_shared<ConstructorDeclaration>();
+    ctorDecl->body = body;
+    ctorDecl->resolvedConstructor = ctorSym;
+    node.constructors.push_back(ctorDecl);
+    setScope(*node.constructors.back());
 }
 
 void SymbolTableBuilder::autoGenerateDestructor(

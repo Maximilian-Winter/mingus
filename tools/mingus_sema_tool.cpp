@@ -277,9 +277,11 @@ static void dumpScope(Scope* scope, std::ostream& out, int depth) {
                 << " (fields: " << classSym->fields.size()
                 << ", RAII: " << (classSym->hasRAII() ? "yes" : "no") << ")\n";
 
-            if (classSym->constructor) {
-                out << ind(depth + 2) << "Constructor("
-                    << paramListStr(classSym->constructor->parameters) << ")\n";
+            for (auto& ctor : classSym->constructors) {
+                if (ctor) {
+                    out << ind(depth + 2) << "Constructor("
+                        << paramListStr(ctor->parameters) << ")\n";
+                }
             }
             if (classSym->destructor) {
                 out << ind(depth + 2) << "Destructor (RAII cleanup)\n";
@@ -424,7 +426,9 @@ public:
         if (!sym || !sym->is<ClassSymbol>()) return;
         enterNamedScope(sym->as<TypeSymbol>()->memberScope);
 
-        if (node.constructor) node.constructor->accept(*this);
+        for (auto& ctor : node.constructors) {
+            if (ctor) ctor->accept(*this);
+        }
         if (node.copyConstructor) node.copyConstructor->accept(*this);
         if (node.moveConstructor) node.moveConstructor->accept(*this);
         if (node.destructor) node.destructor->accept(*this);
