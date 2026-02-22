@@ -41,6 +41,28 @@ static int64_t parseIntegerLiteral(const std::string& text) {
     return std::stoll(text, nullptr, 0);
 }
 
+static char parseCharLiteral(const std::string& text) {
+    // text includes surrounding quotes: 'x' or '\n'
+    if (text.length() < 3) return '\0';
+    if (text[1] == '\\' && text.length() >= 4) {
+        switch (text[2]) {
+            case 'n':  return '\n';
+            case 't':  return '\t';
+            case 'r':  return '\r';
+            case '0':  return '\0';
+            case '\\': return '\\';
+            case '\'': return '\'';
+            case '"':  return '"';
+            case 'a':  return '\a';
+            case 'b':  return '\b';
+            case 'f':  return '\f';
+            case 'v':  return '\v';
+            default:   return text[2];  // unknown escape, pass through
+        }
+    }
+    return text[1];
+}
+
 //================================================================================
 // DebugInfo Helper
 //================================================================================
@@ -305,9 +327,12 @@ std::any ASTGenerator::visitImportDefinition(
     if (ctx->FromDirective() && ctx->qualifiedName()) {
         // import X from Module.Sub;
         imp->sourcePath = parseQualifiedName(ctx->qualifiedName());
-    } else if (ctx->qualifiedName()) {
-        // import Module;
-        imp->sourcePath = parseQualifiedName(ctx->qualifiedName());
+    } else if (!ctx->FromDirective() && !imp->targets.empty()) {
+        // import Module; — whole-module import
+        // Grammar parses "OpLib" as an importTarget, but without "from",
+        // the target is actually the module name.
+        imp->sourcePath.push_back(imp->targets[0].name);
+        imp->targets.clear();
         imp->isWholeModule = true;
     }
 
@@ -1989,7 +2014,7 @@ std::any ASTGenerator::visitPrimaryExpression(
         auto lit = std::make_shared<CharLiteral>();
         lit->debugInfo = makeDebugInfo(ctx);
         std::string text = ctx->CharLiteral()->getText();
-        lit->value = (text.length() >= 3) ? text[1] : '\0';
+        lit->value = parseCharLiteral(text);
         return std::any(std::static_pointer_cast<ExpressionBaseNode>(lit));
     }
 
@@ -2219,7 +2244,7 @@ std::any ASTGenerator::visitLiteralPattern(
         auto lit = std::make_shared<CharLiteral>();
         lit->debugInfo = makeDebugInfo(ctx);
         std::string text = ctx->CharLiteral()->getText();
-        lit->value = (text.length() >= 3) ? text[1] : '\0';
+        lit->value = parseCharLiteral(text);
         pat->value = lit;
 
     } else if (ctx->string()) {

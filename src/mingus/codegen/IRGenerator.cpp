@@ -572,8 +572,13 @@ void IRGenerator::declareExternFunctions(ProgramNode& program) {
                                                 paramTypes, true);
             }
 
-            auto* fn = llvm::Function::Create(fnTy,
-                llvm::Function::ExternalLinkage, funcSym->getName(), module_.get());
+            // Check if extern with same name already exists in LLVM module
+            // (prevents @sin.1 duplicates when multiple modules declare same extern)
+            llvm::Function* fn = module_->getFunction(funcSym->getName());
+            if (!fn) {
+                fn = llvm::Function::Create(fnTy,
+                    llvm::Function::ExternalLinkage, funcSym->getName(), module_.get());
+            }
             functionCache_[funcSym] = fn;
         }
     }

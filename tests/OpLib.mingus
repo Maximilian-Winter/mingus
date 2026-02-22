@@ -1,0 +1,42 @@
+// OpLib.mingus -- reusable struct with operator overloads
+// Imported by test_52
+
+module OpLib {
+
+extern func printf(string fmt, ...) => int;
+
+struct Vec2 {
+    double x;
+    double y;
+
+    func operator+(Vec2 other) => Vec2 {
+        Vec2 result;
+        result.x = this.x + other.x;
+        result.y = this.y + other.y;
+        return result;
+    }
+
+    func operator*(double s) => Vec2 {
+        Vec2 result;
+        result.x = this.x * s;
+        result.y = this.y * s;
+        return result;
+    }
+
+    func operator==(Vec2 other) => bool {
+        return this.x == other.x && this.y == other.y;
+    }
+
+    func print() => void {
+        printf("(%f, %f)", this.x, this.y);
+    }
+}
+
+func makeVec2(double x, double y) => Vec2 {
+    Vec2 v;
+    v.x = x;
+    v.y = y;
+    return v;
+}
+
+}

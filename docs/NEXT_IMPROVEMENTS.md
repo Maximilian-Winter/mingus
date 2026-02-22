@@ -2,13 +2,13 @@
 
 Prioritized roadmap for fixing issues and removing limitations, ranked by impact-to-effort ratio.
 Excludes generics/templates and standard library (deferred to later milestones).
-Current baseline: 72 passing tests (51 feature + 21 stress).
+Current baseline: 73 passing tests (52 feature + 21 stress).
 
 ---
 
-## Tier 1: Quick Bug Fixes
+## Tier 1: Quick Bug Fixes [COMPLETED]
 
-Small effort, real impact. Can be tackled as a single batch session.
+All three Tier 1 fixes implemented and verified in test_52. 73/73 tests pass.
 
 ### 1.1 Char Literal Escape Processing
 

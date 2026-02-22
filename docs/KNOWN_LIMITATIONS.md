@@ -1,6 +1,6 @@
 # Mingus Known Limitations
 
-Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 72 passing tests (51 feature + 21 stress).
+Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 73 passing tests (52 feature + 21 stress).
 
 ---
 
@@ -104,13 +104,13 @@ Limitations in the four semantic analysis passes (SymbolTableBuilder, TypeResolv
 | **Lambda return type inference** | Block-bodied lambdas infer their return type from the first `return` statement encountered. Conflicting return types in different branches are not cross-checked. | Low |
 | **No definite assignment analysis** | Variables can be read before assignment without a compiler error. Uninitialized variables contain whatever was in the alloca (zero for zero-initialized structs, undefined for primitives). | Medium |
 | **No null safety** | Pointers and nullable closures can be dereferenced without null checks. No `?.` safe-navigation operator or nullable type system. | Medium |
-| **Operator imports not transferred** | Whole-module import (`import Mod;`) transfers named symbols but does not transfer operator overload definitions. Operators from imported modules may not be available. | Low |
+| ~~**Operator imports not transferred**~~ | Fixed — see [Previously Known Limitations](#8-previously-known-limitations-now-fixed). | ~~Low~~ |
 | **Limited constructor forms** | Each class supports one regular constructor, one copy constructor (`T&`), and one move constructor (`T&&`). General constructor overloading with arbitrary signatures is not supported. Only one destructor per class. | Low |
 | **Vtable ordering is alphabetical** | New virtual methods introduced in derived classes are ordered alphabetically (from `std::map` iteration), not in source order. This affects vtable layout but not correctness for single-inheritance. | Low |
 | **Enum exhaustiveness is name-based** | Match exhaustiveness checking for enums uses case names only. Numeric patterns, complex expressions, or range patterns covering enum values are not recognized as exhaustive. | Low |
 | **Loop return analysis is conservative** | `for`/`while` bodies are always classified as `NeverReturns` for return completeness checking, even for provably infinite loops. Functions that return only inside a loop may get false "missing return" warnings. | Low |
 | **Limited dangling reference detection** | `[&x]` captures that escape via return or field store are detected and rejected. However, escaping via function arguments that store the closure (requires interprocedural analysis) is not detected. | Low |
-| **Char literal escape processing** | ASTGenerator reads `text[1]` for char literals without fully processing escape sequences. `'\n'`, `'\t'`, etc. may not produce the expected control characters. | Low |
+| ~~**Char literal escape processing**~~ | Fixed — see [Previously Known Limitations](#8-previously-known-limitations-now-fixed). | ~~Low~~ |
 
 ---
 
@@ -120,7 +120,7 @@ Limitations in the LLVM IR generation stage.
 
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
-| **Duplicate cross-module externs** | If two modules both declare `extern func sin(double x) => double;`, codegen creates `@sin` and `@sin.1` (LLVM name deduplication). The linker then fails because `@sin.1` has no definition. **Workaround**: Declare the extern in one module and `import` it in others. | Medium |
+| ~~**Duplicate cross-module externs**~~ | Fixed — see [Previously Known Limitations](#8-previously-known-limitations-now-fixed). | ~~Medium~~ |
 | **No debug locations on RC ops** | Retain, release, and destructor calls emitted by the closure RC system have no `DebugLoc` attached. They appear as "unknown location" if debug info were enabled. | Low |
 
 ---
@@ -129,7 +129,7 @@ Limitations in the LLVM IR generation stage.
 
 Documented workarounds for the limitations above.
 
-### Duplicate Cross-Module Externs
+### ~~Duplicate Cross-Module Externs~~ (Fixed)
 
 **Problem**: Two modules declaring the same `extern func` causes linker errors.
 
@@ -239,6 +239,9 @@ These were documented as limitations in earlier versions but have been fixed and
 | **Printf special-cased** | Now handled through general varargs support (`...` in extern declarations), not name-based special casing. Any extern can be declared variadic. | test_34 |
 | **No opt-in ARC for heap objects** | `new shared Foo()` creates reference-counted class instances typed as `shared Foo*`. Reuses closure RC infrastructure (`{ i64 strong, i64 weak, ptr cleanup }` header). RAII release at scope exit, retain/release on assignment, `delete` as release. Classes only (not structs). `shared Foo*` and `Foo*` are incompatible types. | test_50 |
 | **No array parameters/returns** | Fixed-size arrays (`int[N]`) can now be passed to and returned from functions. Passed by pointer (like structs) for zero-copy semantics. Array literals `[1, 2, 3]` supported for inline initialization. Arrays work as struct/class fields. | test_51 |
+| **Char literal escape processing** | `parseCharLiteral()` helper in ASTGenerator now processes all standard escape sequences (`\n`, `\t`, `\0`, `\\`, `\'`, `\"`, `\r`, `\a`, `\b`, `\f`, `\v`). Previously read `text[1]` naively. | test_52 |
+| **Duplicate cross-module externs** | `declareExternFunctions()` checks `module_->getFunction(name)` before `Function::Create()`. Reuses existing LLVM function declaration, preventing `@sin.1` duplicates. | test_52 |
+| **Whole-module import broken** | ASTGenerator's `visitImportDefinition()` now handles `import Module;` correctly. Grammar parses the module name as an `importTarget`; AST generator detects the no-`from` case and converts target to `sourcePath` with `isWholeModule=true`. Previously, `sourcePath` was empty, causing the entire import to be silently skipped. | test_52 |
 
 ---
 

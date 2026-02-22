@@ -1,0 +1,82 @@
+// test_52_tier1_fixes.mingus — Tests for Tier 1 bug fixes:
+//   1. Char literal escape processing (\n, \t, \\, etc.)
+//   2. Duplicate cross-module externs (import module that also declares printf)
+//   3. Whole-module import (import OpLib; without selective targets)
+
+module Test52 {
+
+extern func printf(string fmt, ...) => int;
+extern func puts(string s) => int;
+extern func putchar(int c) => int;
+
+// Whole-module import — OpLib also declares extern printf
+import OpLib;
+
+func testCharEscapes() => void {
+    puts("--- char escapes ---");
+
+    // Newline
+    var nl = '\n';
+    printf("newline: %d\n", (int)nl);  // expect 10
+
+    // Tab
+    var tab = '\t';
+    printf("tab: %d\n", (int)tab);  // expect 9
+
+    // Null
+    var nul = '\0';
+    printf("null: %d\n", (int)nul);  // expect 0
+
+    // Backslash
+    var bs = '\\';
+    printf("backslash: %d\n", (int)bs);  // expect 92
+
+    // Single quote
+    var sq = '\'';
+    printf("single-quote: %d\n", (int)sq);  // expect 39
+
+    // Regular char (no escape)
+    var ch = 'A';
+    printf("A: %d\n", (int)ch);  // expect 65
+}
+
+func testWholeModuleImport() => void {
+    puts("--- whole-module import ---");
+
+    // makeVec2 is available via import OpLib;
+    var a = makeVec2(1.0, 2.0);
+    var b = makeVec2(3.0, 4.0);
+
+    // operator+ across module boundary
+    var c = a + b;
+    printf("a + b = (%f, %f)\n", c.x, c.y);
+
+    // operator* across module boundary
+    var d = a * 2.0;
+    printf("a * 2 = (%f, %f)\n", d.x, d.y);
+
+    // operator== across module boundary
+    var e = makeVec2(4.0, 6.0);
+    if (c == e) {
+        puts("c == e: true");
+    } else {
+        puts("c == e: false");
+    }
+
+    // Vec2.print() method across module boundary
+    printf("c = ");
+    c.print();
+    printf("\n");
+}
+
+func main() => int {
+    puts("=== Tier 1 Fixes ===");
+
+    testCharEscapes();
+    testWholeModuleImport();
+
+    puts("=== done ===");
+    return 0;
+}
+
+}

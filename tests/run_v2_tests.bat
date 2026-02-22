@@ -85,6 +85,7 @@ call :run_test test_48_ref_capture_escape Test48_main "Ref Capture Escape Analys
 call :run_test test_49_weak_captures Test49_main "Weak Captures"
 call :run_test test_50_shared_pointers Test50_main "Shared Pointers"
 call :run_test test_51_arrays Test51_main "Arrays"
+call :run_test test_52_tier1_fixes Test52_main "Tier 1 Fixes"
 
 echo.
 echo ============================================================

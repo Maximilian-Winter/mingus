@@ -1,0 +1,14 @@
+=== Tier 1 Fixes ===
+--- char escapes ---
+newline: 10
+tab: 9
+null: 0
+backslash: 92
+single-quote: 39
+A: 65
+--- whole-module import ---
+a + b = (4.000000, 6.000000)
+a * 2 = (2.000000, 4.000000)
+c == e: true
+c = (4.000000, 6.000000)
+=== done ===
