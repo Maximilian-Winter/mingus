@@ -66,6 +66,7 @@ NullReference:       'null';
 ThisReference:       'this';
 MoveKeyword:         'move';
 WeakKeyword:         'weak';
+SharedKeyword:       'shared';
 
 // ============================================================================
 // Keywords — Module System

@@ -227,6 +227,17 @@ private:
     llvm::Function* getOrCreateStructCleanupFn(StructSymbol* structSym);
 
     //==========================================================================
+    // Shared pointer (opt-in ARC for class instances)
+    //==========================================================================
+    llvm::Function* sharedReleaseWrapperFn_ = nullptr;
+    std::unordered_map<ClassSymbol*, llvm::Function*> sharedCleanupCache_;
+
+    llvm::Function* getOrCreateSharedCleanupFn(ClassSymbol* cls);
+    llvm::Function* getOrCreateSharedReleaseWrapper();
+    llvm::Value* emitSharedObjPtr(llvm::Value* rcPtr);
+    bool isSharedPointerKind(TypeSymbol* type);
+
+    //==========================================================================
     // Core helpers
     //==========================================================================
 

@@ -223,6 +223,7 @@ public:
     std::shared_ptr<TypeNode> type;
     std::shared_ptr<ArgumentsNode> arguments;  // constructor args (uses ArgumentsNode)
     bool isArray = false;
+    bool isShared = false;                     // true for "new shared Foo()"
     std::shared_ptr<ExpressionBaseNode> arraySize;  // for new T[size]
 };
 

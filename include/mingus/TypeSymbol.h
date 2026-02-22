@@ -76,14 +76,15 @@ public:
 };
 
 // ============================================================================
-// PointerTypeSymbol — T*
+// PointerTypeSymbol — T* or shared T*
 // ============================================================================
 
 class PointerTypeSymbol : public TypeSymbol {
 public:
-    explicit PointerTypeSymbol(TypeSymbolPtr baseType);
+    explicit PointerTypeSymbol(TypeSymbolPtr baseType, bool isShared = false);
 
     TypeSymbolPtr baseType;
+    bool isShared = false;  // true for shared T* (RC-managed)
 
     std::string getTypeDescription() const override;
     std::string getInterningKey() const override;

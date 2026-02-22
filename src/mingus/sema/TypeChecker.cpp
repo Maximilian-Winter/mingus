@@ -1209,7 +1209,22 @@ void TypeChecker::visit(NewExpression& node) {
     if (node.arraySize) node.arraySize->accept(*this);
 
     if (node.type && node.type->resolvedType) {
-        if (node.isArray) {
+        auto* allocType = node.type->resolvedType.get();
+
+        // Validate 'new shared' — classes only, no arrays
+        if (node.isShared) {
+            if (node.isArray) {
+                errors_.error("shared arrays are not supported", node.debugInfo);
+                node.resolvedType = symbolTable_.getErrorType();
+                return;
+            }
+            if (!allocType->is<ClassSymbol>()) {
+                errors_.error("'new shared' can only be used with class types", node.debugInfo);
+                node.resolvedType = symbolTable_.getErrorType();
+                return;
+            }
+            node.resolvedType = symbolTable_.getSharedPointerType(node.type->resolvedType);
+        } else if (node.isArray) {
             node.resolvedType = symbolTable_.getPointerType(node.type->resolvedType);
         } else {
             node.resolvedType = symbolTable_.getPointerType(node.type->resolvedType);

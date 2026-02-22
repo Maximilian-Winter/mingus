@@ -63,13 +63,15 @@ TypeSymbolPtr TypeResolver::resolveTypeNode(TypeNode* typeNode) {
         return named->resolvedType;
     }
 
-    // PointerTypeNode → PointerTypeSymbol or ReferenceTypeSymbol
+    // PointerTypeNode → PointerTypeSymbol, shared PointerTypeSymbol, or ReferenceTypeSymbol
     if (auto* ptr = typeNode->as<PointerTypeNode>()) {
         auto baseType = resolveTypeNode(ptr->baseType);
         if (!baseType) {
             ptr->resolvedType = symbolTable_.getErrorType();
         } else if (ptr->isReference) {
             ptr->resolvedType = symbolTable_.getReferenceType(baseType);
+        } else if (ptr->isShared) {
+            ptr->resolvedType = symbolTable_.getSharedPointerType(baseType);
         } else {
             ptr->resolvedType = symbolTable_.getPointerType(baseType);
         }

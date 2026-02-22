@@ -1,0 +1,167 @@
+module Test50
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // ================================================================
+    // Base class with tracking
+    // ================================================================
+    class Animal {
+        int id;
+        string name;
+
+        constructor(int id, string name) {
+            this.id = id;
+            this.name = name;
+            printf("  Animal(%d) created\n", id);
+        }
+
+        destructor {
+            printf("  Animal(%d) destroyed\n", this.id);
+        }
+
+        func speak() => void {
+            printf("  Animal(%d) speaks: %s\n", this.id, this.name);
+        }
+
+        func getId() => int {
+            return this.id;
+        }
+    }
+
+    // ================================================================
+    // Derived class for polymorphism test
+    // ================================================================
+    class Dog : Animal {
+        string breed;
+
+        constructor(int id, string name, string breed) : super(id, name) {
+            this.breed = breed;
+            printf("  Dog(%d) created\n", id);
+        }
+
+        destructor {
+            printf("  Dog(%d) destroyed\n", this.id);
+        }
+
+        func speak() => void {
+            printf("  Dog(%d) barks: %s the %s\n", this.id, this.name, this.breed);
+        }
+    }
+
+    // ================================================================
+    // Test 1: Basic lifecycle — auto cleanup at scope exit
+    // ================================================================
+    func test_basic() => void {
+        puts("test_basic:");
+        shared Animal* a = new shared Animal(1, "Rex");
+        a->speak();
+        puts("  leaving scope...");
+        // a is automatically released here via RAII
+    }
+
+    // ================================================================
+    // Test 2: Scope cleanup — inner scope destruction
+    // ================================================================
+    func test_scope() => void {
+        puts("test_scope:");
+        {
+            shared Animal* a = new shared Animal(2, "Luna");
+            a->speak();
+            puts("  leaving inner scope...");
+        }
+        puts("  back in outer scope");
+    }
+
+    // ================================================================
+    // Test 3: Reassignment — old released, new retained
+    // ================================================================
+    func test_reassign() => void {
+        puts("test_reassign:");
+        shared Animal* a = new shared Animal(3, "Max");
+        a->speak();
+        puts("  reassigning...");
+        a = new shared Animal(4, "Bella");
+        a->speak();
+        puts("  leaving scope...");
+    }
+
+    // ================================================================
+    // Test 4: Null shared pointer — no crash
+    // ================================================================
+    func test_null() => void {
+        puts("test_null:");
+        shared Animal* a = null;
+        puts("  null shared pointer OK");
+    }
+
+    // ================================================================
+    // Test 5: Inheritance + polymorphism
+    // ================================================================
+    func test_inheritance() => void {
+        puts("test_inheritance:");
+        shared Animal* a = new shared Dog(5, "Buddy", "Labrador");
+        a->speak();
+        printf("  id = %d\n", a->getId());
+        puts("  leaving scope...");
+    }
+
+    // ================================================================
+    // Test 6: Delete as release
+    // ================================================================
+    func test_delete() => void {
+        puts("test_delete:");
+        shared Animal* a = new shared Animal(6, "Charlie");
+        a->speak();
+        delete a;
+        puts("  after delete");
+    }
+
+    // ================================================================
+    // Simple counter class for quiet stress test
+    // ================================================================
+    class Counter {
+        int val;
+
+        constructor(int v) {
+            this.val = v;
+        }
+
+        destructor { }
+
+        func getVal() => int {
+            return this.val;
+        }
+    }
+
+    // ================================================================
+    // Test 7: Stress — many shared objects in a loop
+    // ================================================================
+    func test_stress() => void {
+        puts("test_stress:");
+        int count = 0;
+        for (int i = 0; i < 1000; i = i + 1) {
+            shared Counter* c = new shared Counter(i);
+            count = count + c->getVal();
+        }
+        printf("  stress sum: %d\n", count);
+    }
+
+    // ================================================================
+    // Entry point
+    // ================================================================
+    func main() => int {
+        puts("=== Test 50: Shared Pointers ===");
+
+        test_basic();
+        test_scope();
+        test_reassign();
+        test_null();
+        test_inheritance();
+        test_delete();
+        test_stress();
+
+        puts("=== Test 50 complete ===");
+        return 0;
+    }
+}

@@ -670,7 +670,8 @@ postfixOperation
 // ============================================================================
 
 newExpression
-    : NewKeyword typeIdentifier callArguments?
+    : NewKeyword SharedKeyword typeIdentifier callArguments?
+    | NewKeyword typeIdentifier callArguments?
     | NewKeyword typeIdentifier SquareBracketLeft expression SquareBracketRight
     ;
 
@@ -709,7 +710,8 @@ tupleExpression
 // ============================================================================
 
 typeIdentifier
-    : primitiveType typeModifier*
+    : SharedKeyword qualifiedName typeModifier*
+    | primitiveType typeModifier*
     | qualifiedName typeModifier*
     | tupleType typeModifier*
     | functionType typeModifier*

@@ -765,6 +765,10 @@ llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
             mem->object->resolvedType->as<TypeSymbol>() : nullptr;
         // Auto-dereference pointer types
         if (auto* ptrTS = objType ? objType->as<PointerTypeSymbol>() : nullptr) {
+            // Shared pointer: adjust from rcPtr to objPtr (skip RC header)
+            if (ptrTS->isShared) {
+                objPtr = emitSharedObjPtr(objPtr);
+            }
             objType = ptrTS->baseType ? ptrTS->baseType->as<TypeSymbol>() : nullptr;
         }
         if (!objType) return nullptr;
@@ -1234,6 +1238,98 @@ llvm::Function* IRGenerator::getOrCreateStructCleanupFn(StructSymbol* structSym)
     b.CreateRetVoid();
     structCleanupCache_[structSym->getName()] = fn;
     return fn;
+}
+
+//================================================================================
+// Shared pointer helpers (opt-in ARC for class instances)
+//================================================================================
+
+bool IRGenerator::isSharedPointerKind(TypeSymbol* type) {
+    if (auto* ptr = type ? type->as<PointerTypeSymbol>() : nullptr)
+        return ptr->isShared;
+    return false;
+}
+
+llvm::Value* IRGenerator::emitSharedObjPtr(llvm::Value* rcPtr) {
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* headerTy = llvm::StructType::get(context_, {i64Ty, i64Ty, ptrTy});
+    auto& dl = module_->getDataLayout();
+    uint64_t headerSize = dl.getTypeAllocSize(headerTy);
+    return builder_.CreateGEP(llvm::Type::getInt8Ty(context_), rcPtr,
+        llvm::ConstantInt::get(i64Ty, headerSize), "shared.obj");
+}
+
+llvm::Function* IRGenerator::getOrCreateSharedCleanupFn(ClassSymbol* cls) {
+    auto it = sharedCleanupCache_.find(cls);
+    if (it != sharedCleanupCache_.end()) return it->second;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    std::string name = "__shared_cleanup_" + cls->getName();
+    auto* fn = llvm::Function::Create(fnTy, llvm::Function::InternalLinkage,
+                                       name, module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", fn);
+    llvm::IRBuilder<> b(entry);
+    auto* rcPtr = fn->getArg(0);
+
+    // Compute objPtr = rcPtr + headerSize
+    auto* headerTy = llvm::StructType::get(context_, {i64Ty, i64Ty, ptrTy});
+    auto& dl = module_->getDataLayout();
+    uint64_t headerSize = dl.getTypeAllocSize(headerTy);
+    auto* objPtr = b.CreateGEP(llvm::Type::getInt8Ty(context_), rcPtr,
+        llvm::ConstantInt::get(i64Ty, headerSize), "shared.obj");
+
+    // Call destructor on objPtr
+    if (cls->destructor) {
+        if (cls->hasVtable() && cls->destructor->vtableIndex >= 0) {
+            // Virtual destructor dispatch through vtable
+            auto* structTy = getStructType(cls);
+            auto* vtablePtrPtr = b.CreateStructGEP(structTy, objPtr, 0, "vtable.ptr");
+            auto* vtable = b.CreateLoad(ptrTy, vtablePtrPtr, "vtable");
+            auto* dtorSlot = b.CreateGEP(ptrTy, vtable,
+                b.getInt32(0), "dtor.slot");
+            auto* dtorFn = b.CreateLoad(ptrTy, dtorSlot, "dtor.fn");
+            auto* dtorFnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+            b.CreateCall(dtorFnTy, dtorFn, {objPtr});
+        } else {
+            auto dtorIt = functionCache_.find(cls->destructor.get());
+            if (dtorIt != functionCache_.end()) {
+                b.CreateCall(dtorIt->second, {objPtr});
+            }
+        }
+    }
+
+    b.CreateRetVoid();
+    sharedCleanupCache_[cls] = fn;
+    return fn;
+}
+
+llvm::Function* IRGenerator::getOrCreateSharedReleaseWrapper() {
+    if (sharedReleaseWrapperFn_) return sharedReleaseWrapperFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    sharedReleaseWrapperFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_shared_release_wrapper", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", sharedReleaseWrapperFn_);
+    llvm::IRBuilder<> b(entry);
+    auto* allocaPtr = sharedReleaseWrapperFn_->getArg(0);
+
+    // Load the rcPtr from the alloca and call release
+    auto* rcPtr = b.CreateLoad(ptrTy, allocaPtr, "rc.ptr");
+    b.CreateCall(getOrCreateClosureReleaseFn(), {rcPtr});
+
+    b.CreateRetVoid();
+    return sharedReleaseWrapperFn_;
 }
 
 //================================================================================
@@ -2025,6 +2121,12 @@ void IRGenerator::visit(DeleteStatement& node) {
     TypeSymbol* targetType = node.target->resolvedType ?
         node.target->resolvedType->as<TypeSymbol>() : nullptr;
 
+    // Shared pointer: delete = release (RC handles cleanup+free)
+    if (isSharedPointerKind(targetType)) {
+        builder_.CreateCall(getOrCreateClosureReleaseFn(), {ptrVal});
+        return;
+    }
+
     if (auto* ptrTS = targetType ? targetType->as<PointerTypeSymbol>() : nullptr) {
         TypeSymbol* pointee = ptrTS->baseType ? ptrTS->baseType->as<TypeSymbol>() : nullptr;
 
@@ -2083,6 +2185,12 @@ void IRGenerator::visit(VariableDeclaration& node) {
     if (varSym->getType() && (varSym->getType()->is<StructSymbol>() ||
                                varSym->getType()->is<ClassSymbol>())) {
         builder_.CreateStore(llvm::Constant::getNullValue(varTy), alloca);
+    }
+
+    // Zero-init shared pointer allocas (null ptr — release wrapper is null-safe)
+    if (isSharedPointerKind(varSym->getType().get())) {
+        builder_.CreateStore(llvm::ConstantPointerNull::get(
+            llvm::PointerType::getUnqual(context_)), alloca);
     }
 
     // Emit initializer
@@ -2170,6 +2278,11 @@ void IRGenerator::visit(VariableDeclaration& node) {
     // Register RAII for closure-typed variables
     if (varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
         registerRAII(alloca, getOrCreateClosureReleaseWrapper());
+    }
+
+    // Register RAII for shared pointer variables
+    if (isSharedPointerKind(varSym->getType().get())) {
+        registerRAII(alloca, getOrCreateSharedReleaseWrapper());
     }
 }
 
@@ -2769,6 +2882,13 @@ void IRGenerator::visit(AssignmentExpression& node) {
             builder_.CreateCall(getOrCreateClosureReleaseFn(), {oldEnv});
         }
 
+        // Release old shared pointer before overwriting
+        if (isSharedPointerKind(targetType)) {
+            auto* ptrTy = llvm::PointerType::getUnqual(context_);
+            auto* oldRcPtr = builder_.CreateLoad(ptrTy, targetPtr, "old.shared");
+            builder_.CreateCall(getOrCreateClosureReleaseFn(), {oldRcPtr});
+        }
+
         node.value->accept(*this);
         if (lastValue_) {
             // Convert null -> zero fat pointer
@@ -2792,6 +2912,22 @@ void IRGenerator::visit(AssignmentExpression& node) {
                 if (isFieldStore) {
                     auto* newEnv = builder_.CreateExtractValue(lastValue_, {1}, "new.env");
                     builder_.CreateCall(getOrCreateClosureRetainFn(), {newEnv});
+                }
+            }
+
+            // Retain new shared pointer when storing into a field
+            if (isSharedPointerKind(targetType)) {
+                bool isFieldStore = (node.target->as<MemberAccessExpression>() != nullptr);
+                if (!isFieldStore) {
+                    if (auto* ident = node.target->as<IdentifierExpression>()) {
+                        if (auto* vs = ident->resolvedSymbol ?
+                                ident->resolvedSymbol->as<VariableSymbol>() : nullptr) {
+                            isFieldStore = (vs->role == VariableRole::Field);
+                        }
+                    }
+                }
+                if (isFieldStore) {
+                    builder_.CreateCall(getOrCreateClosureRetainFn(), {lastValue_});
                 }
             }
         }
@@ -3062,6 +3198,10 @@ void IRGenerator::visit(CallExpression& node) {
             TypeSymbol* objType = memAccess->object->resolvedType ?
                 memAccess->object->resolvedType->as<TypeSymbol>() : nullptr;
             if (auto* ptrTy = objType ? objType->as<PointerTypeSymbol>() : nullptr) {
+                // Shared pointer: adjust thisPtr from rcPtr to objPtr
+                if (ptrTy->isShared && thisPtr) {
+                    thisPtr = emitSharedObjPtr(thisPtr);
+                }
                 objType = ptrTy->baseType ? ptrTy->baseType->as<TypeSymbol>() : nullptr;
             }
 
@@ -3365,7 +3505,108 @@ void IRGenerator::visit(NewExpression& node) {
             llvm::FunctionType::get(llvm::PointerType::getUnqual(context_),
                 {llvm::Type::getInt32Ty(context_)}, false));
         lastValue_ = builder_.CreateCall(mallocCallee, {totalBytes}, "arr.ptr");
+    } else if (node.isShared) {
+        // ================================================================
+        // Shared allocation: [RC header | object]
+        // ================================================================
+        auto* classSym = allocType->as<ClassSymbol>();
+        if (!classSym) {
+            lastValue_ = llvm::ConstantPointerNull::get(llvm::PointerType::getUnqual(context_));
+            return;
+        }
+
+        auto* i64Ty = llvm::Type::getInt64Ty(context_);
+        auto* ptrTy = llvm::PointerType::getUnqual(context_);
+        auto* headerTy = llvm::StructType::get(context_, {i64Ty, i64Ty, ptrTy});
+
+        llvm::Type* objTy = mapType(allocType);
+        auto& dl = module_->getDataLayout();
+        uint64_t headerSize = dl.getTypeAllocSize(headerTy);
+        uint64_t objSize = dl.getTypeAllocSize(objTy);
+        uint64_t totalSize = headerSize + objSize;
+
+        auto mallocCallee = module_->getOrInsertFunction("malloc",
+            llvm::FunctionType::get(ptrTy, {llvm::Type::getInt32Ty(context_)}, false));
+        auto* rcPtr = builder_.CreateCall(mallocCallee,
+            {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), totalSize)}, "shared.rc");
+
+        // Init RC header: strong=1, weak=0, cleanup=sharedCleanupFn
+        builder_.CreateStore(llvm::ConstantInt::get(i64Ty, 1),
+            builder_.CreateStructGEP(headerTy, rcPtr, 0, "strong.ptr"));
+        builder_.CreateStore(llvm::ConstantInt::get(i64Ty, 0),
+            builder_.CreateStructGEP(headerTy, rcPtr, 1, "weak.ptr"));
+        builder_.CreateStore(getOrCreateSharedCleanupFn(classSym),
+            builder_.CreateStructGEP(headerTy, rcPtr, 2, "cleanup.ptr"));
+
+        // Compute objPtr = rcPtr + headerSize
+        auto* objPtr = builder_.CreateGEP(llvm::Type::getInt8Ty(context_), rcPtr,
+            llvm::ConstantInt::get(i64Ty, headerSize), "shared.obj");
+
+        // Construct object at objPtr (same logic as raw new)
+        ConstructorSymbol* targetCtor = nullptr;
+        bool useCopyCtor = false;
+        bool useMoveCtor = false;
+
+        if (classSym->moveConstructor && node.arguments &&
+            node.arguments->expressions.size() == 1) {
+            if (node.arguments->expressions[0]->is<MoveExpression>()) {
+                useMoveCtor = true;
+                targetCtor = classSym->moveConstructor.get();
+            }
+        }
+        if (!targetCtor && classSym->copyConstructor && node.arguments &&
+            node.arguments->expressions.size() == 1) {
+            auto& arg = node.arguments->expressions[0];
+            if (arg->resolvedType) {
+                auto* argType = arg->resolvedType->as<TypeSymbol>();
+                if (auto* argPtr = argType ? argType->as<PointerTypeSymbol>() : nullptr) {
+                    if (argPtr->baseType.get() == classSym) {
+                        useCopyCtor = true;
+                        targetCtor = classSym->copyConstructor.get();
+                    }
+                }
+            }
+        }
+        if (!targetCtor && classSym->constructor) {
+            targetCtor = classSym->constructor.get();
+        }
+
+        if (targetCtor) {
+            auto ctorIt = functionCache_.find(targetCtor);
+            if (ctorIt != functionCache_.end()) {
+                std::vector<llvm::Value*> ctorArgs;
+                ctorArgs.push_back(objPtr);  // 'this' is objPtr, not rcPtr
+                if (node.arguments) {
+                    for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
+                        auto& arg = node.arguments->expressions[i];
+                        bool isRef = useCopyCtor || useMoveCtor ||
+                                     (i < node.arguments->isReference.size() &&
+                                      node.arguments->isReference[i]);
+                        if (isRef) {
+                            arg->accept(*this);
+                            if (lastValue_) { ctorArgs.push_back(lastValue_); continue; }
+                        }
+                        arg->accept(*this);
+                        if (lastValue_) {
+                            if (arg->resolvedType && isUserStructKind(arg->resolvedType.get())) {
+                                llvm::Value* argPtr = emitLValue(*arg);
+                                if (argPtr) { ctorArgs.push_back(argPtr); continue; }
+                            }
+                            ctorArgs.push_back(lastValue_);
+                        }
+                    }
+                }
+                builder_.CreateCall(ctorIt->second, ctorArgs);
+            }
+        } else {
+            storeVtablePtr(objPtr, classSym);
+        }
+
+        lastValue_ = rcPtr;  // Variable stores rcPtr, not objPtr
     } else {
+        // ================================================================
+        // Raw allocation (existing path)
+        // ================================================================
         llvm::Type* objTy = mapType(allocType);
         auto& dl = module_->getDataLayout();
         uint64_t objSize = dl.getTypeAllocSize(objTy);

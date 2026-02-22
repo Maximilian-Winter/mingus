@@ -1,0 +1,39 @@
+=== Test 50: Shared Pointers ===
+test_basic:
+  Animal(1) created
+  Animal(1) speaks: Rex
+  leaving scope...
+  Animal(1) destroyed
+test_scope:
+  Animal(2) created
+  Animal(2) speaks: Luna
+  leaving inner scope...
+  Animal(2) destroyed
+  back in outer scope
+test_reassign:
+  Animal(3) created
+  Animal(3) speaks: Max
+  reassigning...
+  Animal(3) destroyed
+  Animal(4) created
+  Animal(4) speaks: Bella
+  leaving scope...
+  Animal(4) destroyed
+test_null:
+  null shared pointer OK
+test_inheritance:
+  Animal(5) created
+  Dog(5) created
+  Dog(5) barks: Buddy the Labrador
+  id = 5
+  leaving scope...
+  Dog(5) destroyed
+  Animal(5) destroyed
+test_delete:
+  Animal(6) created
+  Animal(6) speaks: Charlie
+  Animal(6) destroyed
+  after delete
+test_stress:
+  stress sum: 499500
+=== Test 50 complete ===

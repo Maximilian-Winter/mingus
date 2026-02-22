@@ -348,6 +348,7 @@ std::any ASTGenerator::visitTypeIdentifier(
     MingusParser::TypeIdentifierContext* ctx)
 {
     std::shared_ptr<TypeNode> baseType;
+    bool isSharedType = (ctx->SharedKeyword() != nullptr);
 
     if (ctx->primitiveType()) {
         baseType = anyToNode<TypeNode>(visitPrimitiveType(ctx->primitiveType()));
@@ -368,6 +369,7 @@ std::any ASTGenerator::visitTypeIdentifier(
     if (!baseType) return std::any(std::shared_ptr<TypeNode>(nullptr));
 
     // Apply type modifiers: arrays, pointers, references
+    bool sharedApplied = false;
     for (auto* modifier : ctx->typeModifier()) {
         if (modifier->arrayDimension()) {
             auto* arrCtx = modifier->arrayDimension();
@@ -388,6 +390,11 @@ std::any ASTGenerator::visitTypeIdentifier(
             ptrType->debugInfo = makeDebugInfo(modifier);
             ptrType->baseType = baseType;
             ptrType->isReference = false;
+            // Apply 'shared' to the first pointer modifier: shared Foo*
+            if (isSharedType && !sharedApplied) {
+                ptrType->isShared = true;
+                sharedApplied = true;
+            }
             baseType = ptrType;
 
         } else if (modifier->rvalueReferenceLevel()) {
@@ -2034,6 +2041,7 @@ std::any ASTGenerator::visitNewExpression(
 {
     auto newExpr = std::make_shared<NewExpression>();
     newExpr->debugInfo = makeDebugInfo(ctx);
+    newExpr->isShared = (ctx->SharedKeyword() != nullptr);
     newExpr->type = anyToNode<TypeNode>(
         visitTypeIdentifier(ctx->typeIdentifier()));
 

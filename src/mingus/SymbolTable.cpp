@@ -128,6 +128,17 @@ std::shared_ptr<PointerTypeSymbol> SymbolTable::getPointerType(TypeSymbolPtr bas
     return ptrType;
 }
 
+std::shared_ptr<PointerTypeSymbol> SymbolTable::getSharedPointerType(TypeSymbolPtr baseType) {
+    auto key = "shared " + baseType->getInterningKey() + "*";
+    auto it = types_.find(key);
+    if (it != types_.end()) {
+        return std::dynamic_pointer_cast<PointerTypeSymbol>(it->second);
+    }
+    auto ptrType = std::make_shared<PointerTypeSymbol>(std::move(baseType), /*isShared=*/true);
+    types_[key] = ptrType;
+    return ptrType;
+}
+
 std::shared_ptr<ArrayTypeSymbol> SymbolTable::getArrayType(
     TypeSymbolPtr elementType, int size)
 {
@@ -265,40 +276,47 @@ bool SymbolTable::isCompatible(TypeSymbol* from, TypeSymbol* to) const {
     }
 
     // 6. Interface upcast: Dog* → Drawable* if Dog implements Drawable
+    //    shared-ness must match (no cross-sharing)
     if (auto* toPtr = to->as<PointerTypeSymbol>()) {
         if (auto* toIface = toPtr->baseType->as<InterfaceSymbol>()) {
             if (auto* fromPtr = from->as<PointerTypeSymbol>()) {
-                if (auto* fromClass = fromPtr->baseType->as<ClassSymbol>()) {
-                    for (const auto& iface : fromClass->implementedInterfaces) {
-                        if (iface.get() == toIface) return true;
+                if (fromPtr->isShared == toPtr->isShared) {
+                    if (auto* fromClass = fromPtr->baseType->as<ClassSymbol>()) {
+                        for (const auto& iface : fromClass->implementedInterfaces) {
+                            if (iface.get() == toIface) return true;
+                        }
                     }
                 }
             }
         }
     }
 
-    // 7. byte* = universal pointer (both directions)
+    // 7. byte* = universal pointer (both directions) — raw pointers only
     if (auto* fromPtr = from->as<PointerTypeSymbol>()) {
         if (auto* toPtr = to->as<PointerTypeSymbol>()) {
-            auto* fromBase = fromPtr->baseType->as<PrimitiveTypeSymbol>();
-            auto* toBase = toPtr->baseType->as<PrimitiveTypeSymbol>();
-            if ((fromBase && fromBase->primitiveKind == PrimitiveKind::Byte) ||
-                (toBase && toBase->primitiveKind == PrimitiveKind::Byte)) {
-                return true;
+            if (fromPtr->isShared == toPtr->isShared) {
+                auto* fromBase = fromPtr->baseType->as<PrimitiveTypeSymbol>();
+                auto* toBase = toPtr->baseType->as<PrimitiveTypeSymbol>();
+                if ((fromBase && fromBase->primitiveKind == PrimitiveKind::Byte) ||
+                    (toBase && toBase->primitiveKind == PrimitiveKind::Byte)) {
+                    return true;
+                }
             }
         }
     }
 
-    // 8. Inheritance: Derived* → Base*
+    // 8. Inheritance: Derived* → Base* (shared-ness must match)
     if (auto* fromPtr = from->as<PointerTypeSymbol>()) {
         if (auto* toPtr = to->as<PointerTypeSymbol>()) {
-            auto* fromClass = fromPtr->baseType->as<ClassSymbol>();
-            auto* toClass = toPtr->baseType->as<ClassSymbol>();
-            if (fromClass && toClass) {
-                auto* current = fromClass->resolvedBaseClass;
-                while (current) {
-                    if (current == toClass) return true;
-                    current = current->resolvedBaseClass;
+            if (fromPtr->isShared == toPtr->isShared) {
+                auto* fromClass = fromPtr->baseType->as<ClassSymbol>();
+                auto* toClass = toPtr->baseType->as<ClassSymbol>();
+                if (fromClass && toClass) {
+                    auto* current = fromClass->resolvedBaseClass;
+                    while (current) {
+                        if (current == toClass) return true;
+                        current = current->resolvedBaseClass;
+                    }
                 }
             }
         }

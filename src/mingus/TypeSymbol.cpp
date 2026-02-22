@@ -64,19 +64,21 @@ bool PrimitiveTypeSymbol::isFloating() const {
 // PointerTypeSymbol
 // ============================================================================
 
-PointerTypeSymbol::PointerTypeSymbol(TypeSymbolPtr baseType)
-    : TypeSymbol(baseType->getName() + "*", /*isPrimaryType=*/false)
+PointerTypeSymbol::PointerTypeSymbol(TypeSymbolPtr baseType, bool isShared)
+    : TypeSymbol((isShared ? "shared " : "") + baseType->getName() + "*",
+                 /*isPrimaryType=*/false)
     , baseType(std::move(baseType))
+    , isShared(isShared)
 {
     sizeInBytes = 8;  // ptr-sized (64-bit)
 }
 
 std::string PointerTypeSymbol::getTypeDescription() const {
-    return baseType->getTypeDescription() + "*";
+    return (isShared ? "shared " : "") + baseType->getTypeDescription() + "*";
 }
 
 std::string PointerTypeSymbol::getInterningKey() const {
-    return baseType->getInterningKey() + "*";
+    return (isShared ? "shared " : "") + baseType->getInterningKey() + "*";
 }
 
 // ============================================================================

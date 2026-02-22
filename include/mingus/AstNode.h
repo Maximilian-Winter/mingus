@@ -132,6 +132,7 @@ public:
     std::shared_ptr<TypeNode> baseType;
     bool isReference = false;         // true for T&
     bool isRvalueReference = false;   // true for T&&
+    bool isShared = false;            // true for shared T*
 };
 
 class ArrayTypeNode : public TypeNode {
