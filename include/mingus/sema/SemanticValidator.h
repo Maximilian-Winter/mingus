@@ -151,6 +151,9 @@ private:
     };
     std::vector<LambdaContext> lambdaStack_;
 
+    // ---- By-reference capture escape tracking ----
+    std::set<Symbol*> refCaptureVars_;  // variables holding closures with by-ref captures
+
     // ---- Helpers ----
     void visitStatements(std::vector<std::shared_ptr<StatementBaseNode>>& stmts);
 

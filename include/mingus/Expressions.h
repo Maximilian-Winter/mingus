@@ -290,6 +290,7 @@ public:
     std::vector<CaptureMode> captureModesResolved;
     bool escapes = true;       // false for non-escaping (stack-allocated)
     bool selfCapture = false;  // letrec pattern
+    bool hasRefCaptures = false; // true if any capture is ByReference
 
     // Convenience
     bool hasExpressionBody() const { return body && body->is<ExpressionBaseNode>(); }

@@ -1,0 +1,45 @@
+// Test 47: Self-Capturing Closure Safety
+// Verifies that self-capturing closures are kept alive during recursion
+// via automatic retain-at-entry / release-at-exit.
+
+module Test47
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func main() => int
+    {
+        puts("=== Test 47: Self-Capture Safety ===");
+
+        // Case 1: Classic recursive fibonacci via self-capture
+        (int) => int fib = [=](int n) => {
+            if (n <= 1) return n;
+            return fib(n - 1) + fib(n - 2);
+        };
+        printf("fib(10) = %d\n", fib(10));
+
+        // Case 2: Self-capturing countdown
+        (int) => int countdown = [=](int n) => {
+            if (n <= 0) return 0;
+            return n + countdown(n - 1);
+        };
+        printf("countdown(100) = %d\n", countdown(100));
+
+        // Case 3: Self-capturing factorial
+        (int) => int factorial = [=](int n) => {
+            if (n <= 1) return 1;
+            return n * factorial(n - 1);
+        };
+        printf("factorial(12) = %d\n", factorial(12));
+
+        // Case 4: Deep recursion stress (verify RC balance)
+        (int) => int deep = [=](int n) => {
+            if (n <= 0) return 0;
+            return 1 + deep(n - 1);
+        };
+        printf("deep(5000) = %d\n", deep(5000));
+
+        puts("=== Test 47 complete ===");
+        return 0;
+    }
+}

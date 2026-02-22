@@ -1,0 +1,7 @@
+=== Test 49: Weak Captures ===
+alive weak capture: 42
+cycle-safe result: 101
+null weak result: -999
+mixed captures: 100
+stress sum: 499500
+=== Test 49 complete ===

@@ -1,0 +1,68 @@
+// Test 46: Temporary Closure Argument Fix
+// Verifies that closures returned by functions and passed directly
+// as arguments are properly released (no leak).
+
+module Test46
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // Factory: returns a closure that captures k
+    func make_adder(int k) => (int) => int
+    {
+        return [=](int x) => { return x + k; };
+    }
+
+    // Applies a closure to a value
+    func apply((int) => int f, int val) => int
+    {
+        return f(val);
+    }
+
+    // Takes two closures
+    func combine((int) => int f, (int) => int g, int x) => int
+    {
+        return f(x) + g(x);
+    }
+
+    func main() => int
+    {
+        puts("=== Test 46: Temp Closure Fix ===");
+
+        // Case 1: Function-returned closure passed directly as arg
+        var r1 = apply(make_adder(10), 5);
+        printf("apply(make_adder(10), 5) = %d\n", r1);
+
+        // Case 2: Lambda literal passed directly as arg
+        var r2 = apply([=](int x) => { return x * 2; }, 7);
+        printf("apply(lambda*2, 7) = %d\n", r2);
+
+        // Case 3: Two function-returned closures as args
+        var r3 = combine(make_adder(100), make_adder(200), 1);
+        printf("combine(+100, +200, 1) = %d\n", r3);
+
+        // Case 4: Mixed lambda literal and function-returned closure
+        var r4 = combine(make_adder(50), [=](int x) => { return x * 3; }, 10);
+        printf("combine(+50, *3, 10) = %d\n", r4);
+
+        // Case 5: Loop with temp closures (stress the allocator)
+        var sum = 0;
+        for (int i = 0; i < 1000; i++)
+        {
+            sum = sum + apply(make_adder(i), 1);
+        }
+        printf("loop sum = %d\n", sum);
+
+        // Case 6: Named variable (should NOT be released by temp logic)
+        var myAdder = make_adder(42);
+        var r6 = apply(myAdder, 8);
+        printf("apply(myAdder, 8) = %d\n", r6);
+
+        // Use myAdder again to prove it wasn't released
+        var r7 = apply(myAdder, 100);
+        printf("apply(myAdder, 100) = %d\n", r7);
+
+        puts("=== Test 46 complete ===");
+        return 0;
+    }
+}

@@ -27,8 +27,9 @@ through RAII (stack objects), reference counting (closure environments), and man
 9. [Heap Objects](#9-heap-objects)
 10. [Lambda RAII Isolation](#10-lambda-raii-isolation)
 11. [Escape Analysis](#11-escape-analysis)
-12. [Universal Zero-Init](#12-universal-zero-init)
-13. [Known Memory Limitations](#13-known-memory-limitations)
+12. [Weak Captures](#12-weak-captures)
+13. [Universal Zero-Init](#13-universal-zero-init)
+14. [Known Memory Limitations](#14-known-memory-limitations)
 
 ---
 
@@ -316,24 +317,29 @@ func example() {         // RAII scope 0 (function)
 
 ### Environment Struct Layout
 
-Every capturing closure allocates a heap environment struct with a two-field RC header
+Every capturing closure allocates a heap environment struct with a three-field RC header
 followed by the captured values:
 
 ```
 closure_env = {
-    i64  refcount,      // field 0 -- starts at 1
-    ptr  cleanup_fn,    // field 1 -- per-closure cleanup function, or null
-    T0   capture_0,     // field 2 -- first captured variable
-    T1   capture_1,     // field 3 -- second captured variable
+    i64  strong_count,  // field 0 -- starts at 1
+    i64  weak_count,    // field 1 -- starts at 0
+    ptr  cleanup_fn,    // field 2 -- per-closure cleanup function, or null
+    T0   capture_0,     // field 3 -- first captured variable
+    T1   capture_1,     // field 4 -- second captured variable
     ...
 }
 ```
 
+The `headerOffset` is 3 (captures start at field index 3).
+
 Capture storage depends on capture mode:
 - **By-value** captures (`[x]` or `[=]`): The actual value is copied into the env struct.
 - **By-reference** captures (`[&x]` or `[&]`): A `ptr` to the original stack `alloca` is stored.
+- **Weak** captures (`[weak x]`): The `{ ptr, ptr }` fat pointer is stored, and the
+  inner closure's envPtr is weak-retained (weak_count incremented, not strong_count).
 - **Captured closures** (by value): The `{ ptr, ptr }` fat pointer is stored, and the
-  inner closure's envPtr is retained (refcount incremented).
+  inner closure's envPtr is retained (strong_count incremented).
 
 ### Fat Pointer Representation
 
@@ -348,36 +354,71 @@ All closures (capturing or not) are represented as fat pointers `{ ptr, ptr }`:
 
 ### RC Runtime Functions
 
-Three internal LLVM functions are lazily created (once per module):
+Five internal LLVM functions are lazily created (once per module):
 
-**`__mingus_closure_retain(ptr %env)`** -- Increment refcount:
+**`__mingus_closure_retain(ptr %env)`** -- Increment strong_count:
 
 ```
 entry:
     if %env == null -> return          ; null check (nullable closures)
 do_retain:
-    %rc = load i64 from %env[0]
-    %rc_inc = add i64 %rc, 1
-    store i64 %rc_inc to %env[0]
+    %sc = load i64 from %env[0]        ; strong_count
+    %sc_inc = add i64 %sc, 1
+    store i64 %sc_inc to %env[0]
 done:
     ret void
 ```
 
-**`__mingus_closure_release(ptr %env)`** -- Decrement refcount, free at zero:
+**`__mingus_closure_release(ptr %env)`** -- Decrement strong_count, cleanup at zero:
 
 ```
 entry:
     if %env == null -> return          ; null check
 do_release:
-    %rc = load i64 from %env[0]
-    %rc_dec = sub i64 %rc, 1
-    store i64 %rc_dec to %env[0]
-    if %rc_dec != 0 -> return          ; still alive
+    %sc = load i64 from %env[0]        ; strong_count
+    %sc_dec = sub i64 %sc, 1
+    store i64 %sc_dec to %env[0]
+    if %sc_dec != 0 -> return          ; still alive
 cleanup:
-    %cleanup_fn = load ptr from %env[1]
+    %cleanup_fn = load ptr from %env[2] ; cleanup_fn at field 2
     if %cleanup_fn != null -> call %cleanup_fn(%env)
 do_free:
+    %wc = load i64 from %env[1]        ; weak_count
+    if %wc != 0 -> return              ; weak refs still exist, keep memory alive
+actual_free:
     call free(%env)
+done:
+    ret void
+```
+
+**`__mingus_closure_weak_retain(ptr %env)`** -- Increment weak_count:
+
+```
+entry:
+    if %env == null -> return
+do_retain:
+    %wc = load i64 from %env[1]        ; weak_count
+    %wc_inc = add i64 %wc, 1
+    store i64 %wc_inc to %env[1]
+done:
+    ret void
+```
+
+**`__mingus_closure_weak_release(ptr %env)`** -- Decrement weak_count, free if both zero:
+
+```
+entry:
+    if %env == null -> return
+do_release:
+    %wc = load i64 from %env[1]        ; weak_count
+    %wc_dec = sub i64 %wc, 1
+    store i64 %wc_dec to %env[1]
+    if %wc_dec != 0 -> return          ; other weak refs exist
+check_free:
+    %sc = load i64 from %env[0]        ; strong_count
+    if %sc != 0 -> return              ; still strongly referenced
+do_free:
+    call free(%env)                    ; both counts zero, safe to free
 done:
     ret void
 ```
@@ -411,15 +452,19 @@ llvm::Function* IRGenerator::generateClosureCleanupFn(
 {
     // For each captured variable:
     //   - Skip if captured by reference
-    //   - If it's a FunctionTypeSymbol (closure), release its envPtr
+    //   - If it's a FunctionTypeSymbol (closure):
+    //     - Weak captures: call weak_release
+    //     - Strong captures: call release
     for (size_t i = 0; i < capturedVars.size(); i++) {
         if (isByReference) continue;
         if (varSym->getType()->is<FunctionTypeSymbol>()) {
-            // GEP to field, load fat pointer, extract envPtr, call release
             auto* fieldPtr = b.CreateStructGEP(closureTy, env, headerOffset + i);
             auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr);
             auto* envPtr = b.CreateExtractValue(fatVal, {1});
-            b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+            if (isWeak)
+                b.CreateCall(getOrCreateClosureWeakReleaseFn(), {envPtr});
+            else
+                b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
         }
     }
 }
@@ -923,7 +968,83 @@ is in place for future use.
 
 ---
 
-## 12. Universal Zero-Init
+## 12. Weak Captures
+
+### Purpose
+
+Weak captures (`[weak x]`) provide non-owning references to closure environments, enabling
+cycle breaking in mutual closure references. Without weak captures, if closure A captures B
+and B captures A, neither is ever freed (classic ARC cycle problem).
+
+### Syntax
+
+```mingus
+var callback = [=]() => { return 42; };
+
+// Strong capture (default) — increments strong_count
+var strong = [=]() => { callback(); };
+
+// Weak capture — increments weak_count, not strong_count
+var weak_ref = [weak callback]() => {
+    if (callback != null) {
+        return callback();
+    }
+    return -1;
+};
+
+// Mixed captures — strong default with one weak override
+var mixed = [=, weak callback]() => {
+    // x is captured strongly (by-value default)
+    // callback is captured weakly
+};
+```
+
+### Semantics
+
+**At capture time** (closure creation):
+- The fat pointer `{ fnPtr, envPtr }` is stored in the env struct (same as by-value).
+- `weak_retain(envPtr)` is called — increments `weak_count`, NOT `strong_count`.
+
+**At access time** (lambda body entry):
+Three-way check determines if the weak capture is alive:
+1. If `fnPtr == null` → genuinely null closure → dead (store null fat pointer)
+2. If `fnPtr != null` and `envPtr == null` → capture-less closure → always alive (use directly)
+3. If `envPtr != null` → check `strong_count > 0`:
+   - Alive: retain (promote to temporary strong ref), use, release via RAII at scope exit
+   - Dead: store null fat pointer `{ null, null }`
+
+**At cleanup time** (outer closure freed):
+- `weak_release(envPtr)` is called instead of `release(envPtr)`.
+- `weak_release` decrements `weak_count`. If both `weak_count` and `strong_count` are 0,
+  `free()` is called. Otherwise, memory stays alive for remaining weak/strong refs.
+
+### Cycle Breaking Example
+
+```mingus
+var a = [=]() => { b(); };          // a captures b strongly
+var b = [weak a]() => { a(); };     // b captures a weakly
+
+// a: strong=1 (var), weak=1 (b's weak capture)
+// b: strong=2 (var + a's capture), weak=0
+
+// At scope exit:
+// 1. b released: strong 2→1 (still alive — a holds it)
+// 2. a released: strong 1→0 → cleanup:
+//    - a's cleanup releases b: strong 1→0 → b freed
+//    - After a's cleanup: check weak_count=1 > 0 → don't free a yet
+// 3. b's cleanup: weak_release(a): weak 1→0, strong=0 → free(a)
+// Both freed. No leak.
+```
+
+### Restrictions
+
+- `[weak x]` is only valid when `x` has a closure type (`FunctionTypeSymbol`). Weak captures
+  of non-closure types (integers, structs, etc.) are rejected by the semantic validator.
+- Dead weak captures resolve to null. The programmer must null-check before calling.
+
+---
+
+## 13. Universal Zero-Init
 
 Four distinct zero-initialization sites prevent use of uninitialized memory:
 
@@ -999,7 +1120,7 @@ null pointer, maintaining the fat pointer invariant.
 
 ---
 
-## 13. Known Memory Limitations
+## 14. Known Memory Limitations
 
 ### By-Reference Captures That Escape
 

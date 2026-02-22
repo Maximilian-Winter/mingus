@@ -552,6 +552,7 @@ captureDefault
 
 captureItem
     : SingleAndOperator Identifier
+    | WeakKeyword Identifier
     | Identifier
     ;
 

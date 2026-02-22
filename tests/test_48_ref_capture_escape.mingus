@@ -1,0 +1,80 @@
+// Test 48: By-Reference Capture Escape Analysis
+// Verifies that legal by-ref captures still work, while dangerous
+// escaping patterns are detected at compile time.
+
+module Test48
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // Legal: by-ref capture within scope lifetime
+    func test_legal_ref_capture() => int
+    {
+        var counter = 0;
+        var inc = [&counter]() => { counter = counter + 1; };
+        inc();
+        inc();
+        inc();
+        return counter;
+    }
+
+    // Legal: by-ref capture in a loop (scope doesn't escape)
+    func test_loop_ref() => int
+    {
+        var total = 0;
+        for (int i = 0; i < 10; i++)
+        {
+            var adder = [&total](int x) => { total = total + x; };
+            adder(i);
+        }
+        return total;
+    }
+
+    // Legal: by-ref with multiple captures
+    func test_multi_ref() => int
+    {
+        var a = 10;
+        var b = 20;
+        var swap = [&a, &b]() => {
+            var tmp = a;
+            a = b;
+            b = tmp;
+        };
+        swap();
+        return a * 100 + b;
+    }
+
+    // Legal: pass by-ref closure as arg (doesn't escape — callee borrows)
+    func apply_void(() => void f) => void
+    {
+        f();
+    }
+
+    func test_pass_as_arg() => int
+    {
+        var x = 0;
+        var setter = [&x]() => { x = 42; };
+        apply_void(setter);
+        return x;
+    }
+
+    func main() => int
+    {
+        puts("=== Test 48: Ref Capture Escape Analysis ===");
+
+        var r1 = test_legal_ref_capture();
+        printf("legal ref capture: %d\n", r1);
+
+        var r2 = test_loop_ref();
+        printf("loop ref: %d\n", r2);
+
+        var r3 = test_multi_ref();
+        printf("multi ref (swap): %d\n", r3);
+
+        var r4 = test_pass_as_arg();
+        printf("pass as arg: %d\n", r4);
+
+        puts("=== Test 48 complete ===");
+        return 0;
+    }
+}

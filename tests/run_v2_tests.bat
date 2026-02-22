@@ -79,6 +79,10 @@ call :run_test test_42_labeled_loops   Test42_main  "Labeled Break/Continue"
 call :run_test test_43_copy_constructors Test43_main "Copy Constructors"
 call :run_test test_44_overloading       Test44_main  "Function Overloading"
 call :run_test test_45_move_semantics    Test45_main  "Move Semantics"
+call :run_test test_46_temp_closure_fix  Test46_main  "Temp Closure Fix"
+call :run_test test_47_self_capture_safety Test47_main "Self-Capture Safety"
+call :run_test test_48_ref_capture_escape Test48_main "Ref Capture Escape Analysis"
+call :run_test test_49_weak_captures Test49_main "Weak Captures"
 
 echo.
 echo ============================================================

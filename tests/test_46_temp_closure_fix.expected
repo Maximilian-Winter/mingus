@@ -1,0 +1,9 @@
+=== Test 46: Temp Closure Fix ===
+apply(make_adder(10), 5) = 15
+apply(lambda*2, 7) = 14
+combine(+100, +200, 1) = 302
+combine(+50, *3, 10) = 90
+loop sum = 500500
+apply(myAdder, 8) = 50
+apply(myAdder, 100) = 142
+=== Test 46 complete ===

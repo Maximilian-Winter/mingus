@@ -187,7 +187,8 @@ enum class CaptureDefault {
 
 enum class CaptureMode {
     ByValue,
-    ByReference
+    ByReference,
+    Weak
 };
 
 // ---- Expression operator enums ----

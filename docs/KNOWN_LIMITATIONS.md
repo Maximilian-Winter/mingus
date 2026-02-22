@@ -1,6 +1,6 @@
 # Mingus Known Limitations
 
-Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 66 passing tests (45 feature + 21 stress).
+Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 70 passing tests (49 feature + 21 stress).
 
 ---
 
@@ -45,10 +45,6 @@ Known edge cases and limitations in the closure (lambda) system, which uses fat 
 
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
-| **Temporary closure argument leak** | Closures passed directly as function arguments without first storing them in a variable may leak one refcount. A temporary alloca with RAII is created at the call site, but the interaction with the callee's potential retain is imperfect. **Workaround**: Store the closure in a local variable first, then pass the variable. | Medium |
-| **By-reference captures that escape** | `[&x]` stores a pointer to the original variable's stack alloca in the capture environment. If the closure escapes the scope where `x` lives (e.g., returned from a function or stored in a heap object), the pointer dangles. This is programmer responsibility, same as C++. The compiler does not detect this. | Medium |
-| **Self-capturing closures use unretained references** | When a closure captures itself (e.g., `var f = [=](...) => { f(...); };`), the self-reference in the environment is stored without a retain to avoid a trivial reference cycle. If the closure is freed while a self-call is in progress, the self-reference dangles. | Medium |
-| **No cycle detection** | If closures form a reference cycle (A captures B, B captures A), neither environment is ever freed. There is no weak-reference mechanism or cycle collector. | Medium |
 | **By-value captures are copy-on-entry** | By-value captures (`[=]` or `[x]`) are loaded from the environment into local allocas at lambda entry. Writes inside the lambda modify the local copy only and are never written back to the environment or the outer variable. This is by design (same as C++), but can surprise users expecting mutation to propagate. | Low |
 | **Capture propagation boundary** | In nested lambdas, if an intermediate lambda's capture list does not allow capturing a particular variable (e.g., `[]` empty capture), propagation to outer lambdas stops. The innermost lambda cannot capture variables that intermediate lambdas refuse to carry. | Low |
 
@@ -63,7 +59,6 @@ Limitations related to memory allocation, RAII, reference counting, and string h
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
 | **RC is closure-only** | Reference counting applies only to closure capture environments. Class instances, structs, arrays, and other heap allocations are not reference-counted. | Medium |
-| **No weak references** | No mechanism to create non-owning references to RC-managed environments. Cycles must be manually broken. | Medium |
 
 ### String Memory
 
@@ -114,7 +109,7 @@ Limitations in the four semantic analysis passes (SymbolTableBuilder, TypeResolv
 | **Vtable ordering is alphabetical** | New virtual methods introduced in derived classes are ordered alphabetically (from `std::map` iteration), not in source order. This affects vtable layout but not correctness for single-inheritance. | Low |
 | **Enum exhaustiveness is name-based** | Match exhaustiveness checking for enums uses case names only. Numeric patterns, complex expressions, or range patterns covering enum values are not recognized as exhaustive. | Low |
 | **Loop return analysis is conservative** | `for`/`while` bodies are always classified as `NeverReturns` for return completeness checking, even for provably infinite loops. Functions that return only inside a loop may get false "missing return" warnings. | Low |
-| **No dangling reference detection** | `[&x]` captures that escape the captured variable's scope are not detected by the compiler. Dangling references are the programmer's responsibility (same as C++). | Medium |
+| **Limited dangling reference detection** | `[&x]` captures that escape via return or field store are detected and rejected. However, escaping via function arguments that store the closure (requires interprocedural analysis) is not detected. | Low |
 | **Char literal escape processing** | ASTGenerator reads `text[1]` for char literals without fully processing escape sequences. `'\n'`, `'\t'`, etc. may not produce the expected control characters. | Low |
 
 ---
@@ -151,51 +146,6 @@ module MyModule {
     import sin, cos from MathLib;
     // ...
 }
-```
-
-### Temporary Closure Argument Leak
-
-**Problem**: Passing a lambda literal directly as an argument may leak one refcount.
-
-**Workaround**: Store the closure in a local variable first:
-```
-// May leak:
-applyToVec(v, [](Vec2 p) => { return p.x + p.y; });
-
-// Safe:
-var sumFn = [](Vec2 p) => { return p.x + p.y; };
-applyToVec(v, sumFn);
-```
-
-### By-Reference Capture Escaping
-
-**Problem**: `[&x]` captures a pointer to `x`'s stack slot. If the closure outlives `x`, the pointer dangles.
-
-**Workaround**: Use by-value capture (`[x]` or `[=]`) for closures that escape. Only use `[&x]` for closures that are guaranteed to execute within the captured variable's scope:
-```
-// SAFE: lambda does not escape
-var x = 10;
-var inc = [&x]() => { x = x + 1; };
-inc();  // x is now 11
-
-// DANGEROUS: lambda escapes — do NOT do this
-func makeCounter() => () => int {
-    var count = 0;
-    return [&count]() => { count = count + 1; return count; };
-    // count is on makeCounter's stack — dangling after return!
-}
-```
-
-### Closure Reference Cycles
-
-**Problem**: Two closures capturing each other are never freed.
-
-**Workaround**: Break the cycle manually by assigning `null` to one of the closure variables before it goes out of scope:
-```
-var a = [=]() => { b(); };
-var b = [=]() => { a(); };
-// Before scope exit, break the cycle:
-a = null;
 ```
 
 ### No Generics
@@ -280,6 +230,10 @@ These were documented as limitations in earlier versions but have been fixed and
 | **No function overloading** | Multiple functions with the same name but different parameter counts or types. Scoring-based overload resolution in TypeChecker. `$_type` mangled name suffix for LLVM disambiguation. | test_44 |
 | **No move semantics** | `constructor(ClassName&& other)` for move constructors, `move(x)` expression for rvalue marking. Enables ownership transfer with source zeroing. Mangled as `ClassName_move_constructor`. | test_45 |
 | **No auto-generated ctor/dtor** | SymbolTableBuilder injects synthetic ConstructorDeclaration and DestructorDeclaration with empty bodies when a class lacks explicit ones. | Multiple tests |
+| **Temporary closure argument leak** | Closures returned from functions and passed directly as arguments are now immediately released after the call returns. No more one-count leaks. | test_46, stress_07 |
+| **Self-capturing closures dangle** | Self-capturing lambdas now retain their env pointer at entry and release at exit via RAII. Self-references are safe during recursion. | test_47 |
+| **By-reference captures escape undetected** | Compiler now rejects returning closures with `[&x]` captures or storing them in fields. Escape analysis catches the three most common dangling-reference patterns. | test_48 |
+| **No cycle detection / weak references** | `[weak x]` capture mode added. Weak captures hold non-owning references that don't prevent cleanup. Dead weak captures resolve to null. Breaks reference cycles between closures. | test_49 |
 | **Nullable closures** | `NullType` is compatible with `FunctionType` in sema. Null converts to zero fat pointer `{ null, null }` in codegen. | test_21, stress tests |
 | **Lambda literal assignment** | `f = [=](int x) => { ... };` works as assignment RHS. Grammar and ASTGenerator handle lambda expressions in assignment context. | Multiple tests |
 | **Printf special-cased** | Now handled through general varargs support (`...` in extern declarations), not name-based special casing. Any extern can be declared variadic. | test_34 |

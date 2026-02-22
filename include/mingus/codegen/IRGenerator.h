@@ -209,12 +209,16 @@ private:
     llvm::Function* closureRetainFn_ = nullptr;
     llvm::Function* closureReleaseFn_ = nullptr;
     llvm::Function* closureReleaseWrapperFn_ = nullptr;
+    llvm::Function* closureWeakRetainFn_ = nullptr;
+    llvm::Function* closureWeakReleaseFn_ = nullptr;
     int closureCleanupCounter_ = 0;
     int lambdaCounter_ = 0;
 
     llvm::Function* getOrCreateClosureRetainFn();
     llvm::Function* getOrCreateClosureReleaseFn();
     llvm::Function* getOrCreateClosureReleaseWrapper();
+    llvm::Function* getOrCreateClosureWeakRetainFn();
+    llvm::Function* getOrCreateClosureWeakReleaseFn();
     llvm::Function* generateClosureCleanupFn(
         llvm::StructType* closureTy,
         const std::vector<SymbolPtr>& capturedVars,

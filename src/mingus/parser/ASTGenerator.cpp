@@ -1475,9 +1475,13 @@ std::any ASTGenerator::visitLambdaExpression(
         for (auto* itemCtx : capCtx->captureItem()) {
             CaptureItem item;
             item.name = itemCtx->Identifier()->getText();
-            item.mode = itemCtx->SingleAndOperator()
-                ? CaptureMode::ByReference
-                : CaptureMode::ByValue;
+            if (itemCtx->SingleAndOperator()) {
+                item.mode = CaptureMode::ByReference;
+            } else if (itemCtx->WeakKeyword()) {
+                item.mode = CaptureMode::Weak;
+            } else {
+                item.mode = CaptureMode::ByValue;
+            }
             lambda->captureItems.push_back(item);
         }
     }

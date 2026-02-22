@@ -1,0 +1,6 @@
+=== Test 47: Self-Capture Safety ===
+fib(10) = 55
+countdown(100) = 5050
+factorial(12) = 479001600
+deep(5000) = 5000
+=== Test 47 complete ===

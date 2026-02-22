@@ -65,6 +65,7 @@ DeleteKeyword:       'delete';
 NullReference:       'null';
 ThisReference:       'this';
 MoveKeyword:         'move';
+WeakKeyword:         'weak';
 
 // ============================================================================
 // Keywords — Module System

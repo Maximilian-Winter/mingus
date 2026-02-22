@@ -1,0 +1,6 @@
+=== Test 48: Ref Capture Escape Analysis ===
+legal ref capture: 3
+loop ref: 45
+multi ref (swap): 2010
+pass as arg: 42
+=== Test 48 complete ===

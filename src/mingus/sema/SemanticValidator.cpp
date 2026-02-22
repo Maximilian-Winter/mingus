@@ -140,9 +140,22 @@ void SemanticValidator::checkLambdaCapture(IdentifierExpression& node) {
             }
         }
 
+        // Validate weak captures: only closure-typed variables can be weak-captured
+        if (mode == CaptureMode::Weak) {
+            if (!varSym->getType() || !varSym->getType()->is<FunctionTypeSymbol>()) {
+                errors_.error("'weak' capture can only be used with closure-typed variables, "
+                    "but '" + varSym->getName() + "' is not a closure",
+                    node.debugInfo);
+                break;
+            }
+        }
+
         if (!alreadyCaptured) {
             lambda->capturedVariables.push_back(node.resolvedSymbol);
             lambda->captureModesResolved.push_back(mode);
+            if (mode == CaptureMode::ByReference) {
+                lambda->hasRefCaptures = true;
+            }
         }
     }
 }
@@ -497,6 +510,15 @@ void SemanticValidator::visit(VariableDeclaration& node) {
 
     // Self-capture detection
     checkSelfCapture(node);
+
+    // Track variables that hold closures with by-reference captures
+    if (node.resolvedVariable && node.initializer) {
+        if (auto* lambda = node.initializer->as<LambdaExpression>()) {
+            if (lambda->hasRefCaptures) {
+                refCaptureVars_.insert(node.resolvedVariable.get());
+            }
+        }
+    }
 }
 
 void SemanticValidator::visit(VariableDeclarationExpression& node) {
@@ -693,6 +715,27 @@ void SemanticValidator::visit(ExpressionStatement& node) {
 
 void SemanticValidator::visit(ReturnStatement& node) {
     if (node.value) node.value->accept(*this);
+
+    // Escape analysis: reject returning closures with by-reference captures
+    if (node.value) {
+        // Direct lambda return: return [&x](...) => { ... };
+        if (auto* lambda = node.value->as<LambdaExpression>()) {
+            if (lambda->hasRefCaptures) {
+                errors_.error("cannot return closure with by-reference captures "
+                    "— captured references would dangle after the function returns",
+                    node.debugInfo);
+            }
+        }
+        // Named variable return: var f = [&x](...) => {...}; return f;
+        else if (auto* ident = node.value->as<IdentifierExpression>()) {
+            if (ident->resolvedSymbol &&
+                refCaptureVars_.count(ident->resolvedSymbol.get())) {
+                errors_.error("cannot return closure with by-reference captures "
+                    "— captured references would dangle after the function returns",
+                    node.debugInfo);
+            }
+        }
+    }
 }
 
 void SemanticValidator::visit(IfStatement& node) {
@@ -865,6 +908,35 @@ void SemanticValidator::visit(MoveExpression& node) {
 void SemanticValidator::visit(AssignmentExpression& node) {
     if (node.target) node.target->accept(*this);
     if (node.value) node.value->accept(*this);
+
+    // Escape analysis: reject storing ref-capture closures in fields
+    bool isFieldStore = false;
+    if (node.target) {
+        if (node.target->as<MemberAccessExpression>()) {
+            isFieldStore = true;
+        } else if (auto* ident = node.target->as<IdentifierExpression>()) {
+            if (auto* vs = ident->resolvedSymbol ?
+                    ident->resolvedSymbol->as<VariableSymbol>() : nullptr) {
+                if (vs->role == VariableRole::Field) isFieldStore = true;
+            }
+        }
+    }
+    if (isFieldStore && node.value) {
+        if (auto* lambda = node.value->as<LambdaExpression>()) {
+            if (lambda->hasRefCaptures) {
+                errors_.error("cannot store closure with by-reference captures in a field "
+                    "— captured references may outlive their scope",
+                    node.debugInfo);
+            }
+        } else if (auto* ident = node.value->as<IdentifierExpression>()) {
+            if (ident->resolvedSymbol &&
+                refCaptureVars_.count(ident->resolvedSymbol.get())) {
+                errors_.error("cannot store closure with by-reference captures in a field "
+                    "— captured references may outlive their scope",
+                    node.debugInfo);
+            }
+        }
+    }
 }
 
 void SemanticValidator::visit(TernaryExpression& node) {

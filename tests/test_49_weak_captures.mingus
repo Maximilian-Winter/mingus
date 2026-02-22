@@ -1,0 +1,133 @@
+// Test 49: Weak Captures for Cycle Breaking
+// Tests [weak x] capture mode: alive/dead detection, cycle breaking, null safety
+
+module Test49
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // ========================================================================
+    // Test 1: Basic weak capture — alive reference
+    // ========================================================================
+    func test_alive() => int
+    {
+        var callback = [=]() => { return 42; };
+
+        // Capture callback weakly
+        var checker = [weak callback]() => {
+            if (callback != null) {
+                return callback();
+            }
+            return -1;
+        };
+
+        // callback is still alive, so weak capture should work
+        return checker();
+    }
+
+    // ========================================================================
+    // Test 2: Weak capture breaks simple cycle
+    // ========================================================================
+    func test_cycle_break() => int
+    {
+        var value = 100;
+
+        // Create a closure that will be captured weakly
+        var producer = [=]() => { return value; };
+
+        // Capture producer weakly — breaks potential cycle
+        var consumer = [weak producer]() => {
+            if (producer != null) {
+                return producer() + 1;
+            }
+            return 0;
+        };
+
+        return consumer();
+    }
+
+    // ========================================================================
+    // Test 3: Weak capture with null closure
+    // ========================================================================
+    func test_null_weak() => int
+    {
+        () => int callback = null;
+
+        var checker = [weak callback]() => {
+            if (callback != null) {
+                return callback();
+            }
+            return -999;
+        };
+
+        return checker();
+    }
+
+    // ========================================================================
+    // Test 4: Weak and strong captures mixed
+    // ========================================================================
+    func test_mixed_captures() => int
+    {
+        var x = 10;
+        var multiplier = [=](int n) => { return n * x; };
+
+        // Capture x by value (strong), multiplier weakly
+        var combined = [=, weak multiplier]() => {
+            if (multiplier != null) {
+                return multiplier(x);
+            }
+            return x;
+        };
+
+        return combined();
+    }
+
+    // ========================================================================
+    // Test 5: Stress — many weak captures in a loop
+    // ========================================================================
+    func test_stress() => int
+    {
+        var sum = 0;
+        for (int i = 0; i < 1000; i++)
+        {
+            var inner = [=]() => { return i; };
+
+            var outer = [weak inner]() => {
+                if (inner != null) {
+                    return inner();
+                }
+                return 0;
+            };
+
+            sum = sum + outer();
+        }
+
+        return sum;
+    }
+
+    // ========================================================================
+    // Main
+    // ========================================================================
+    func main() => int
+    {
+        puts("=== Test 49: Weak Captures ===");
+
+        var r1 = test_alive();
+        printf("alive weak capture: %d\n", r1);
+
+        var r2 = test_cycle_break();
+        printf("cycle-safe result: %d\n", r2);
+
+        var r3 = test_null_weak();
+        printf("null weak result: %d\n", r3);
+
+        var r4 = test_mixed_captures();
+        printf("mixed captures: %d\n", r4);
+
+        var r5 = test_stress();
+        printf("stress sum: %d\n", r5);
+
+        puts("=== Test 49 complete ===");
+        return 0;
+    }
+}

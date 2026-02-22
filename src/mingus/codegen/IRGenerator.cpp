@@ -963,7 +963,7 @@ llvm::Function* IRGenerator::getOrCreateClosureRetainFn() {
     b.CreateCondBr(isNull, done, doRetain);
 
     b.SetInsertPoint(doRetain);
-    auto* headerTy = llvm::StructType::get(context_, {i64Ty, ptrTy});
+    auto* headerTy = llvm::StructType::get(context_, {i64Ty, i64Ty, ptrTy});
     auto* rcPtr = b.CreateStructGEP(headerTy, env, 0, "rc_ptr");
     auto* rc = b.CreateLoad(i64Ty, rcPtr, "rc");
     auto* rcInc = b.CreateAdd(rc, llvm::ConstantInt::get(i64Ty, 1), "rc_inc");
@@ -1001,7 +1001,7 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseFn() {
     b.CreateCondBr(isNull, done, doRelease);
 
     b.SetInsertPoint(doRelease);
-    auto* headerTy = llvm::StructType::get(context_, {i64Ty, ptrTy});
+    auto* headerTy = llvm::StructType::get(context_, {i64Ty, i64Ty, ptrTy});
     auto* rcPtr = b.CreateStructGEP(headerTy, env, 0, "rc_ptr");
     auto* rc = b.CreateLoad(i64Ty, rcPtr, "rc");
     auto* rcDec = b.CreateSub(rc, llvm::ConstantInt::get(i64Ty, 1), "rc_dec");
@@ -1010,7 +1010,7 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseFn() {
     b.CreateCondBr(isZero, cleanup, done);
 
     b.SetInsertPoint(cleanup);
-    auto* cleanupFnPtr = b.CreateStructGEP(headerTy, env, 1, "cleanup_fn_ptr");
+    auto* cleanupFnPtr = b.CreateStructGEP(headerTy, env, 2, "cleanup_fn_ptr");
     auto* cleanupFn = b.CreateLoad(ptrTy, cleanupFnPtr, "cleanup_fn");
     auto* hasCleanup = b.CreateICmpNE(cleanupFn,
         llvm::ConstantPointerNull::get(ptrTy), "has_cleanup");
@@ -1021,7 +1021,15 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseFn() {
     b.CreateCall(cleanupCallTy, cleanupFn, {env});
     b.CreateBr(doFree);
 
+    // Only free if weak_count is also zero
     b.SetInsertPoint(doFree);
+    auto* weakPtr = b.CreateStructGEP(headerTy, env, 1, "weak_ptr");
+    auto* weakCount = b.CreateLoad(i64Ty, weakPtr, "weak_count");
+    auto* weakZero = b.CreateICmpEQ(weakCount, llvm::ConstantInt::get(i64Ty, 0), "weak_zero");
+    auto* actualFree = llvm::BasicBlock::Create(context_, "actual_free", closureReleaseFn_);
+    b.CreateCondBr(weakZero, actualFree, done);
+
+    b.SetInsertPoint(actualFree);
     auto freeCallee = module_->getOrInsertFunction("free",
         llvm::FunctionType::get(voidTy, {ptrTy}, false));
     b.CreateCall(freeCallee, {env});
@@ -1067,7 +1075,15 @@ llvm::Function* IRGenerator::generateClosureCleanupFn(
                                                 varSym->getName() + ".cleanup.slot");
             auto* fatVal = b.CreateLoad(fatPtrTy, fieldPtr, varSym->getName() + ".fat");
             auto* envPtr = b.CreateExtractValue(fatVal, {1}, varSym->getName() + ".env");
-            b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+
+            // Weak captures use weak_release, strong captures use release
+            bool isWeak = captureModes && i < captureModes->size() &&
+                          (*captureModes)[i] == CaptureMode::Weak;
+            if (isWeak) {
+                b.CreateCall(getOrCreateClosureWeakReleaseFn(), {envPtr});
+            } else {
+                b.CreateCall(getOrCreateClosureReleaseFn(), {envPtr});
+            }
         }
     }
 
@@ -1097,6 +1113,92 @@ llvm::Function* IRGenerator::getOrCreateClosureReleaseWrapper() {
 
     b.CreateRetVoid();
     return closureReleaseWrapperFn_;
+}
+
+llvm::Function* IRGenerator::getOrCreateClosureWeakRetainFn() {
+    if (closureWeakRetainFn_) return closureWeakRetainFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    closureWeakRetainFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_closure_weak_retain", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", closureWeakRetainFn_);
+    auto* doRetain = llvm::BasicBlock::Create(context_, "do_retain", closureWeakRetainFn_);
+    auto* done = llvm::BasicBlock::Create(context_, "done", closureWeakRetainFn_);
+
+    llvm::IRBuilder<> b(entry);
+    auto* env = closureWeakRetainFn_->getArg(0);
+    auto* isNull = b.CreateICmpEQ(env, llvm::ConstantPointerNull::get(ptrTy), "is_null");
+    b.CreateCondBr(isNull, done, doRetain);
+
+    b.SetInsertPoint(doRetain);
+    auto* headerTy = llvm::StructType::get(context_, {i64Ty, i64Ty, ptrTy});
+    auto* weakPtr = b.CreateStructGEP(headerTy, env, 1, "weak_ptr");
+    auto* wc = b.CreateLoad(i64Ty, weakPtr, "weak_count");
+    auto* wcInc = b.CreateAdd(wc, llvm::ConstantInt::get(i64Ty, 1), "weak_inc");
+    b.CreateStore(wcInc, weakPtr);
+    b.CreateBr(done);
+
+    b.SetInsertPoint(done);
+    b.CreateRetVoid();
+
+    return closureWeakRetainFn_;
+}
+
+llvm::Function* IRGenerator::getOrCreateClosureWeakReleaseFn() {
+    if (closureWeakReleaseFn_) return closureWeakReleaseFn_;
+
+    auto* ptrTy = llvm::PointerType::getUnqual(context_);
+    auto* voidTy = llvm::Type::getVoidTy(context_);
+    auto* i64Ty = llvm::Type::getInt64Ty(context_);
+
+    auto* fnTy = llvm::FunctionType::get(voidTy, {ptrTy}, false);
+    closureWeakReleaseFn_ = llvm::Function::Create(
+        fnTy, llvm::Function::InternalLinkage,
+        "__mingus_closure_weak_release", module_.get());
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", closureWeakReleaseFn_);
+    auto* doRelease = llvm::BasicBlock::Create(context_, "do_release", closureWeakReleaseFn_);
+    auto* checkFree = llvm::BasicBlock::Create(context_, "check_free", closureWeakReleaseFn_);
+    auto* doFree = llvm::BasicBlock::Create(context_, "do_free", closureWeakReleaseFn_);
+    auto* done = llvm::BasicBlock::Create(context_, "done", closureWeakReleaseFn_);
+
+    llvm::IRBuilder<> b(entry);
+    auto* env = closureWeakReleaseFn_->getArg(0);
+    auto* isNull = b.CreateICmpEQ(env, llvm::ConstantPointerNull::get(ptrTy), "is_null");
+    b.CreateCondBr(isNull, done, doRelease);
+
+    b.SetInsertPoint(doRelease);
+    auto* headerTy = llvm::StructType::get(context_, {i64Ty, i64Ty, ptrTy});
+    auto* weakPtr = b.CreateStructGEP(headerTy, env, 1, "weak_ptr");
+    auto* wc = b.CreateLoad(i64Ty, weakPtr, "weak_count");
+    auto* wcDec = b.CreateSub(wc, llvm::ConstantInt::get(i64Ty, 1), "weak_dec");
+    b.CreateStore(wcDec, weakPtr);
+    // If weak hits 0, check if strong is also 0 — then free the memory
+    auto* weakZero = b.CreateICmpEQ(wcDec, llvm::ConstantInt::get(i64Ty, 0), "weak_zero");
+    b.CreateCondBr(weakZero, checkFree, done);
+
+    b.SetInsertPoint(checkFree);
+    auto* strongPtr = b.CreateStructGEP(headerTy, env, 0, "strong_ptr");
+    auto* sc = b.CreateLoad(i64Ty, strongPtr, "strong_count");
+    auto* strongZero = b.CreateICmpEQ(sc, llvm::ConstantInt::get(i64Ty, 0), "strong_zero");
+    b.CreateCondBr(strongZero, doFree, done);
+
+    b.SetInsertPoint(doFree);
+    auto freeCallee = module_->getOrInsertFunction("free",
+        llvm::FunctionType::get(voidTy, {ptrTy}, false));
+    b.CreateCall(freeCallee, {env});
+    b.CreateBr(done);
+
+    b.SetInsertPoint(done);
+    b.CreateRetVoid();
+
+    return closureWeakReleaseFn_;
 }
 
 llvm::Function* IRGenerator::getOrCreateStructCleanupFn(StructSymbol* structSym) {
@@ -2027,15 +2129,16 @@ void IRGenerator::visit(VariableDeclaration& node) {
                         auto* i64Ty = llvm::Type::getInt64Ty(context_);
                         auto* ptrTy = llvm::PointerType::getUnqual(context_);
                         std::vector<llvm::Type*> closureFields;
-                        closureFields.push_back(i64Ty);
-                        closureFields.push_back(ptrTy);
+                        closureFields.push_back(i64Ty);   // strong_count
+                        closureFields.push_back(i64Ty);   // weak_count
+                        closureFields.push_back(ptrTy);   // cleanup_fn
                         for (auto& capSym : lambda->capturedVariables) {
                             auto* capVar = capSym->as<VariableSymbol>();
                             closureFields.push_back(capVar ? mapType(capVar->getType())
                                                            : llvm::Type::getInt32Ty(context_));
                         }
                         auto* closureTy = llvm::StructType::get(context_, closureFields);
-                        const int headerOffset = 2;
+                        const int headerOffset = 3;
                         auto* selfSlot = builder_.CreateStructGEP(closureTy, envPtr,
                             headerOffset + selfCaptureIdx, "self.capture.slot");
                         builder_.CreateStore(lastValue_, selfSlot);
@@ -3058,6 +3161,9 @@ void IRGenerator::visit(CallExpression& node) {
         }
     }
 
+    // Track temporary closure envPtrs for post-call release
+    std::vector<llvm::Value*> tempClosureEnvs;
+
     // Emit arguments — V2 uses ArgumentsNode::isReference
     if (node.arguments) {
         for (size_t argI = 0; argI < node.arguments->expressions.size(); argI++) {
@@ -3137,14 +3243,12 @@ void IRGenerator::visit(CallExpression& node) {
                     }
                 }
 
-                // RAII-wrap temporary closure arguments
+                // Track temporary closures for post-call release
+                // Lambda literals and function-call returns are +1 owned temps
                 if (arg->resolvedType && arg->resolvedType->is<FunctionTypeSymbol>() &&
-                    arg->is<LambdaExpression>()) {
-                    auto* fatPtrTy = getFatPtrType();
-                    auto* tmpAlloca = createEntryBlockAlloca(currentFunction_,
-                        fatPtrTy, "tmp.closure.arg");
-                    builder_.CreateStore(lastValue_, tmpAlloca);
-                    registerRAII(tmpAlloca, getOrCreateClosureReleaseWrapper());
+                    (arg->is<LambdaExpression>() || arg->is<CallExpression>())) {
+                    auto* tmpEnv = builder_.CreateExtractValue(lastValue_, {1}, "tmp.closure.env");
+                    tempClosureEnvs.push_back(tmpEnv);
                 }
                 args.push_back(lastValue_);
             }
@@ -3228,6 +3332,13 @@ void IRGenerator::visit(CallExpression& node) {
         }
     } else {
         lastValue_ = nullptr;
+    }
+
+    // Release temporary closures immediately after the call returns.
+    // This fixes the leak for closures returned by functions and passed
+    // directly as arguments (e.g., apply(make(i), 10)).
+    for (auto* tmpEnv : tempClosureEnvs) {
+        builder_.CreateCall(getOrCreateClosureReleaseFn(), {tmpEnv});
     }
 }
 
@@ -3753,6 +3864,7 @@ void IRGenerator::visit(LambdaExpression& node) {
     }
 
     // Extract captures from env pointer
+    std::vector<llvm::Value*> weakPromotedAllocas;  // weak captures promoted to temp strong refs
     if (hasCaptures) {
         llvm::Value* envPtr = lambdaFn->getArg(lambdaFn->arg_size() - 1);
         envPtr->setName("env");
@@ -3761,8 +3873,9 @@ void IRGenerator::visit(LambdaExpression& node) {
         auto* ptrTyCap = llvm::PointerType::getUnqual(context_);
 
         std::vector<llvm::Type*> closureFields;
-        closureFields.push_back(i64TyCap);
-        closureFields.push_back(ptrTyCap);
+        closureFields.push_back(i64TyCap);   // strong_count
+        closureFields.push_back(i64TyCap);   // weak_count
+        closureFields.push_back(ptrTyCap);   // cleanup_fn
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             bool isByRef = (i < node.captureModesResolved.size() &&
                            node.captureModesResolved[i] == CaptureMode::ByReference);
@@ -3776,12 +3889,14 @@ void IRGenerator::visit(LambdaExpression& node) {
         }
         auto* closureTy = llvm::StructType::get(context_, closureFields);
 
-        const int headerOffset = 2;
+        const int headerOffset = 3;
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             auto* capSym = node.capturedVariables[i].get();
             auto* varSym = capSym->as<VariableSymbol>();
             bool isByRef = (i < node.captureModesResolved.size() &&
                            node.captureModesResolved[i] == CaptureMode::ByReference);
+            bool isWeak = (i < node.captureModesResolved.size() &&
+                          node.captureModesResolved[i] == CaptureMode::Weak);
 
             auto* capPtr = builder_.CreateStructGEP(closureTy, envPtr,
                                                      headerOffset + (unsigned)i,
@@ -3790,6 +3905,80 @@ void IRGenerator::visit(LambdaExpression& node) {
             if (isByRef) {
                 auto* origPtr = builder_.CreateLoad(ptrTyCap, capPtr, capSym->getName() + ".ref");
                 namedValues_[capSym] = origPtr;
+            } else if (isWeak && varSym && varSym->getType() &&
+                       varSym->getType()->is<FunctionTypeSymbol>()) {
+                // Weak capture: check if the referenced closure is still alive.
+                // Three cases:
+                //   1. fnPtr null → genuinely null closure → dead
+                //   2. fnPtr non-null, envPtr null → no-capture closure → always alive
+                //   3. envPtr non-null → check strong_count > 0
+                auto* fatPtrTy = getFatPtrType();
+                auto* i64Check = llvm::Type::getInt64Ty(context_);
+                auto* ptrCheck = llvm::PointerType::getUnqual(context_);
+                auto* headerChk = llvm::StructType::get(context_, {i64Check, i64Check, ptrCheck});
+
+                auto* fatVal = builder_.CreateLoad(fatPtrTy, capPtr, capSym->getName() + ".weak.fat");
+                auto* weakFn = builder_.CreateExtractValue(fatVal, {0}, capSym->getName() + ".weak.fn");
+                auto* weakEnv = builder_.CreateExtractValue(fatVal, {1}, capSym->getName() + ".weak.env");
+                auto* capAlloca = createEntryBlockAlloca(lambdaFn, fatPtrTy, capSym->getName());
+
+                // First check: is fnPtr null? If so, it's a genuinely null closure.
+                auto* fnNull = builder_.CreateICmpEQ(weakFn,
+                    llvm::ConstantPointerNull::get(ptrCheck), "weak.fn.null");
+
+                auto* checkEnv = llvm::BasicBlock::Create(context_,
+                    capSym->getName() + ".check_env", lambdaFn);
+                auto* checkStrong = llvm::BasicBlock::Create(context_,
+                    capSym->getName() + ".check_strong", lambdaFn);
+                auto* aliveBlock = llvm::BasicBlock::Create(context_,
+                    capSym->getName() + ".alive", lambdaFn);
+                auto* promoteBlock = llvm::BasicBlock::Create(context_,
+                    capSym->getName() + ".promote", lambdaFn);
+                auto* deadBlock = llvm::BasicBlock::Create(context_,
+                    capSym->getName() + ".dead", lambdaFn);
+                auto* contBlock = llvm::BasicBlock::Create(context_,
+                    capSym->getName() + ".cont", lambdaFn);
+
+                builder_.CreateCondBr(fnNull, deadBlock, checkEnv);
+
+                // Second check: is envPtr null? If so, no captures → always alive.
+                builder_.SetInsertPoint(checkEnv);
+                auto* envNull = builder_.CreateICmpEQ(weakEnv,
+                    llvm::ConstantPointerNull::get(ptrCheck), "weak.env.null");
+                builder_.CreateCondBr(envNull, aliveBlock, checkStrong);
+
+                // Third check: strong_count > 0?
+                builder_.SetInsertPoint(checkStrong);
+                auto* strongPtr = builder_.CreateStructGEP(headerChk, weakEnv, 0, "weak.strong.ptr");
+                auto* strongVal = builder_.CreateLoad(i64Check, strongPtr, "weak.strong.val");
+                auto* isAlive = builder_.CreateICmpSGT(strongVal,
+                    llvm::ConstantInt::get(i64Check, 0), "weak.is.alive");
+                builder_.CreateCondBr(isAlive, promoteBlock, deadBlock);
+
+                // Alive (no captures): store fat pointer directly, no retain needed
+                builder_.SetInsertPoint(aliveBlock);
+                builder_.CreateStore(fatVal, capAlloca);
+                builder_.CreateBr(contBlock);
+
+                // Promote (has captures, alive): retain for temporary strong reference
+                builder_.SetInsertPoint(promoteBlock);
+                builder_.CreateCall(getOrCreateClosureRetainFn(), {weakEnv});
+                builder_.CreateStore(fatVal, capAlloca);
+                builder_.CreateBr(contBlock);
+
+                // Dead: store null fat pointer
+                builder_.SetInsertPoint(deadBlock);
+                builder_.CreateStore(llvm::Constant::getNullValue(fatPtrTy), capAlloca);
+                builder_.CreateBr(contBlock);
+
+                // Continue — alloca holds live or null fat pointer
+                builder_.SetInsertPoint(contBlock);
+                namedValues_[capSym] = capAlloca;
+
+                // Track for RAII registration after pushRAIIScope().
+                // The wrapper loads fat ptr from alloca, extracts envPtr, calls release.
+                // If alloca holds null (dead/no-capture path), release(null) is a no-op.
+                weakPromotedAllocas.push_back(capAlloca);
             } else {
                 llvm::Type* capType = varSym ? mapType(varSym->getType())
                                              : llvm::Type::getInt32Ty(context_);
@@ -3803,6 +3992,22 @@ void IRGenerator::visit(LambdaExpression& node) {
 
     // Push RAII scope for lambda body
     pushRAIIScope();
+
+    // Register RAII cleanup for weak captures promoted to temporary strong refs.
+    // Each alloca holds a fat pointer whose envPtr was retained in the promote path.
+    // The closure release wrapper loads the fat ptr, extracts envPtr, calls release.
+    for (auto* weakAlloca : weakPromotedAllocas) {
+        registerRAII(weakAlloca, getOrCreateClosureReleaseWrapper());
+    }
+
+    // Self-capturing closure safety: retain the env at entry so that
+    // even if the outer variable is freed during recursion, the env
+    // stays alive until the recursive call chain unwinds.
+    if (node.selfCapture && hasCaptures) {
+        llvm::Value* envPtr = lambdaFn->getArg(lambdaFn->arg_size() - 1);
+        builder_.CreateCall(getOrCreateClosureRetainFn(), {envPtr});
+        registerRAII(envPtr, getOrCreateClosureReleaseFn());
+    }
 
     // Emit body
     if (node.hasExpressionBody()) {
@@ -3837,8 +4042,9 @@ void IRGenerator::visit(LambdaExpression& node) {
         auto* ptrTyA = llvm::PointerType::getUnqual(context_);
 
         std::vector<llvm::Type*> closureFields;
-        closureFields.push_back(i64TyA);
-        closureFields.push_back(ptrTyA);
+        closureFields.push_back(i64TyA);   // strong_count
+        closureFields.push_back(i64TyA);   // weak_count
+        closureFields.push_back(ptrTyA);   // cleanup_fn
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             bool isByRef = (i < node.captureModesResolved.size() &&
                            node.captureModesResolved[i] == CaptureMode::ByReference);
@@ -3860,9 +4066,13 @@ void IRGenerator::visit(LambdaExpression& node) {
             llvm::FunctionType::get(ptrTyA, {i64TyA}, false));
         llvm::Value* closurePtr = builder_.CreateCall(mallocCallee, {sizeVal}, "closure.ptr");
 
-        // Initialize refcount = 1
+        // Initialize strong_count = 1
         auto* rcSlot = builder_.CreateStructGEP(closureTy, closurePtr, 0, "rc.slot");
         builder_.CreateStore(llvm::ConstantInt::get(i64TyA, 1), rcSlot);
+
+        // Initialize weak_count = 0
+        auto* weakSlot = builder_.CreateStructGEP(closureTy, closurePtr, 1, "weak.slot");
+        builder_.CreateStore(llvm::ConstantInt::get(i64TyA, 0), weakSlot);
 
         // Check if any by-value captured variable is a closure
         bool capturesClosures = false;
@@ -3877,18 +4087,18 @@ void IRGenerator::visit(LambdaExpression& node) {
             }
         }
 
-        // Store cleanup function pointer
-        auto* cleanupSlot = builder_.CreateStructGEP(closureTy, closurePtr, 1, "cleanup.slot");
+        // Store cleanup function pointer (index 2 in new header)
+        auto* cleanupSlot = builder_.CreateStructGEP(closureTy, closurePtr, 2, "cleanup.slot");
         if (capturesClosures) {
             auto* cleanupFn = generateClosureCleanupFn(closureTy, node.capturedVariables,
-                                                        2, &node.captureModesResolved);
+                                                        3, &node.captureModesResolved);
             builder_.CreateStore(cleanupFn, cleanupSlot);
         } else {
             builder_.CreateStore(llvm::ConstantPointerNull::get(ptrTyA), cleanupSlot);
         }
 
-        // Store captured values
-        const int headerOffset = 2;
+        // Store captured values (after 3-field header)
+        const int headerOffset = 3;
         for (size_t i = 0; i < node.capturedVariables.size(); i++) {
             auto* capSym = node.capturedVariables[i].get();
             auto* varSym = capSym->as<VariableSymbol>();
@@ -3904,6 +4114,8 @@ void IRGenerator::visit(LambdaExpression& node) {
                 if (isByRef) {
                     builder_.CreateStore(it->second, capSlot);
                 } else {
+                    bool isWeak = (i < node.captureModesResolved.size() &&
+                                   node.captureModesResolved[i] == CaptureMode::Weak);
                     llvm::Type* capTy = varSym ? mapType(varSym->getType())
                                                : llvm::Type::getInt32Ty(context_);
                     llvm::Value* capVal = builder_.CreateLoad(capTy, it->second, capSym->getName() + ".val");
@@ -3912,7 +4124,11 @@ void IRGenerator::visit(LambdaExpression& node) {
                     if (varSym && varSym->getType() && varSym->getType()->is<FunctionTypeSymbol>()) {
                         auto* capturedEnv = builder_.CreateExtractValue(capVal, {1},
                                                                         capSym->getName() + ".cap.env");
-                        builder_.CreateCall(getOrCreateClosureRetainFn(), {capturedEnv});
+                        if (isWeak) {
+                            builder_.CreateCall(getOrCreateClosureWeakRetainFn(), {capturedEnv});
+                        } else {
+                            builder_.CreateCall(getOrCreateClosureRetainFn(), {capturedEnv});
+                        }
                     }
                 }
             }
