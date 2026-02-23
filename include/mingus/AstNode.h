@@ -312,6 +312,7 @@ public:
 
     std::vector<std::shared_ptr<ModuleNode>> modules;
     std::string entryPoint;
+    std::vector<std::string> linkLibraries;
 };
 
 // ============================================================================
@@ -408,6 +409,9 @@ public:
     virtual void visit(InterfaceDeclaration& node) {}
     virtual void visit(ImportDeclaration& node) {}
     virtual void visit(TypedefDeclaration& node) {}
+    virtual void visit(LinkDirective& node) {}
+    virtual void visit(OpaqueTypeDeclaration& node) {}
+    virtual void visit(ExternStructDeclaration& node) {}
 };
 
 } // namespace mingus

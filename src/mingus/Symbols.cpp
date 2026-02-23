@@ -165,6 +165,7 @@ StructSymbol::StructSymbol(const std::string& name)
     : TypeSymbol(name, /*isPrimaryType=*/false) {}
 
 bool StructSymbol::needsCleanup() const {
+    if (isExtern) return false;  // C structs have no RAII cleanup
     for (const auto& field : fields) {
         if (field && field->getType() && field->getType()->is<FunctionTypeSymbol>()) {
             return true;  // closure-typed field needs RC release

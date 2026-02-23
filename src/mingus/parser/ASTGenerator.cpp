@@ -281,11 +281,99 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
             } else if (declCtx->externDeclaration()) {
                 auto* externCtx = declCtx->externDeclaration();
                 if (externCtx->externBody()) {
-                    for (auto* funcCtx :
-                         externCtx->externBody()->externFunctionDeclaration()) {
+                    auto* body = externCtx->externBody();
+
+                    // Single-line forms (not in block)
+                    if (body->externFunctionDeclaration()) {
                         auto ext = anyToNode<ExternFunctionDeclaration>(
-                            visitExternFunctionDeclaration(funcCtx));
+                            visitExternFunctionDeclaration(body->externFunctionDeclaration()));
                         if (ext) mod->declarations.push_back(ext);
+                    }
+                    if (body->externLinkDirective()) {
+                        auto link = std::make_shared<LinkDirective>();
+                        link->debugInfo = makeDebugInfo(body->externLinkDirective());
+                        auto* strCtx = body->externLinkDirective()->string();
+                        if (strCtx) {
+                            std::string raw;
+                            for (auto* part : strCtx->stringPart()) {
+                                if (part->TEXT()) raw += part->TEXT()->getText();
+                                if (part->ESCAPE_SEQUENCE()) raw += part->ESCAPE_SEQUENCE()->getText();
+                            }
+                            link->libraryName = raw;
+                        }
+                        mod->declarations.push_back(link);
+                    }
+                    if (body->externOpaqueTypeDeclaration()) {
+                        auto opaque = std::make_shared<OpaqueTypeDeclaration>();
+                        opaque->debugInfo = makeDebugInfo(body->externOpaqueTypeDeclaration());
+                        opaque->name = body->externOpaqueTypeDeclaration()->Identifier()->getText();
+                        mod->declarations.push_back(opaque);
+                    }
+
+                    // Block form: extern { ... }
+                    for (auto* memberCtx : body->externMember()) {
+                        if (memberCtx->externFunctionDeclaration()) {
+                            auto ext = anyToNode<ExternFunctionDeclaration>(
+                                visitExternFunctionDeclaration(memberCtx->externFunctionDeclaration()));
+                            if (ext) mod->declarations.push_back(ext);
+                        }
+                        if (memberCtx->externLinkDirective()) {
+                            auto link = std::make_shared<LinkDirective>();
+                            link->debugInfo = makeDebugInfo(memberCtx->externLinkDirective());
+                            auto* strCtx = memberCtx->externLinkDirective()->string();
+                            if (strCtx) {
+                                std::string raw;
+                                for (auto* part : strCtx->stringPart()) {
+                                    if (part->TEXT()) raw += part->TEXT()->getText();
+                                    if (part->ESCAPE_SEQUENCE()) raw += part->ESCAPE_SEQUENCE()->getText();
+                                }
+                                link->libraryName = raw;
+                            }
+                            mod->declarations.push_back(link);
+                        }
+                        if (memberCtx->externOpaqueTypeDeclaration()) {
+                            auto opaque = std::make_shared<OpaqueTypeDeclaration>();
+                            opaque->debugInfo = makeDebugInfo(memberCtx->externOpaqueTypeDeclaration());
+                            opaque->name = memberCtx->externOpaqueTypeDeclaration()->Identifier()->getText();
+                            mod->declarations.push_back(opaque);
+                        }
+                        if (memberCtx->externStructDeclaration()) {
+                            auto extStruct = std::make_shared<ExternStructDeclaration>();
+                            auto* esCtx = memberCtx->externStructDeclaration();
+                            extStruct->debugInfo = makeDebugInfo(esCtx);
+                            extStruct->name = esCtx->Identifier()->getText();
+                            for (auto* fieldCtx : esCtx->externFieldDeclaration()) {
+                                auto param = std::make_shared<ParameterNode>();
+                                param->debugInfo = makeDebugInfo(fieldCtx);
+                                param->name = fieldCtx->Identifier()->getText();
+                                param->type = anyToNode<TypeNode>(
+                                    visitTypeIdentifier(fieldCtx->typeIdentifier()));
+                                extStruct->fields.push_back(param);
+                            }
+                            mod->declarations.push_back(extStruct);
+                        }
+                        if (memberCtx->externEnumDeclaration()) {
+                            auto* eeCtx = memberCtx->externEnumDeclaration();
+                            auto ed = std::make_shared<EnumDeclaration>();
+                            ed->debugInfo = makeDebugInfo(eeCtx);
+                            ed->name = eeCtx->Identifier()->getText();
+                            ed->isExtern = true;
+                            if (eeCtx->typeIdentifier()) {
+                                ed->underlyingType = anyToNode<TypeNode>(
+                                    visitTypeIdentifier(eeCtx->typeIdentifier()));
+                            }
+                            for (auto* memCtx : eeCtx->enumMember()) {
+                                auto mem = std::make_shared<EnumMemberNode>();
+                                mem->debugInfo = makeDebugInfo(memCtx);
+                                mem->name = memCtx->Identifier()->getText();
+                                if (memCtx->expression()) {
+                                    mem->value = anyToNode<ExpressionBaseNode>(
+                                        memCtx->expression()->accept(this));
+                                }
+                                ed->members.push_back(mem);
+                            }
+                            mod->declarations.push_back(ed);
+                        }
                     }
                 }
 

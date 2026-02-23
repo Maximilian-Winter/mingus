@@ -93,6 +93,7 @@ call :run_test test_56_definite_assign Test56_main "Definite Assignment"
 call :run_test test_57_string_type Test57_main "String Type"
 call :run_error_test test_58_error_recovery "Error Recovery"
 call :run_debug_test test_59_debug_info Test59_main "Debug Info"
+call :run_test test_60_ffi Test60_main "C FFI"
 
 echo.
 echo ============================================================

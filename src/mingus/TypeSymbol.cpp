@@ -262,4 +262,22 @@ std::string StringObjectSymbol::getInterningKey() const {
     return "String";
 }
 
+// ============================================================================
+// OpaqueTypeSymbol
+// ============================================================================
+
+OpaqueTypeSymbol::OpaqueTypeSymbol(const std::string& name)
+    : TypeSymbol(name, /*isPrimaryType=*/false)
+{
+    sizeInBytes = 0;  // opaque — no known layout
+}
+
+std::string OpaqueTypeSymbol::getTypeDescription() const {
+    return getName();
+}
+
+std::string OpaqueTypeSymbol::getInterningKey() const {
+    return "opaque:" + getName();
+}
+
 } // namespace mingus

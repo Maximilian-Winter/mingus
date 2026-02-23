@@ -52,6 +52,8 @@ public:
     void visit(InterfaceDeclaration& node) override;
     void visit(ImportDeclaration& node) override;
     void visit(TypedefDeclaration& node) override;
+    void visit(OpaqueTypeDeclaration& node) override;
+    void visit(ExternStructDeclaration& node) override;
 
     // Statements (set scope, recurse)
     void visit(ExpressionStatement& node) override;
@@ -124,6 +126,8 @@ private:
     void preRegisterType(StructDeclaration& node);
     void preRegisterType(InterfaceDeclaration& node);
     void preRegisterType(EnumDeclaration& node);
+    void preRegisterType(OpaqueTypeDeclaration& node);
+    void preRegisterType(ExternStructDeclaration& node);
 
     // State tracking
     bool inTypeScope_ = false;   // true when inside struct/class members

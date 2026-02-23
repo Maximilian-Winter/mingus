@@ -1,0 +1,95 @@
+// Example 10: Checkerboard PNG — Demonstrates C FFI with stb_image_write
+//
+// This example uses Mingus's extern system to bind the stb_image_write C library
+// and generate an 8x8 checkerboard pattern as a PNG image.
+//
+// Build:  see build_checkerboard.bat
+// Output: checkerboard.png (256x256 pixels, 8x8 grid, black and white)
+
+module Checkerboard
+{
+    // === C standard library ===
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // Memory management
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memset(byte* dest, int val, int count) => byte*;
+
+    // === stb_image_write — C image library ===
+    // Linked via stb_impl.obj (compiled from stb_impl.c)
+    extern func stbi_write_png(string filename, int w, int h, int comp, byte* data, int stride) => int;
+
+    func main() => int
+    {
+        puts("=== Checkerboard PNG Generator ===");
+
+        // Image dimensions
+        var width  = 256;
+        var height = 256;
+        var channels = 3;  // RGB
+        var tileSize = 32; // 256 / 8 = 32 pixels per tile
+
+        // Allocate pixel buffer: width * height * 3 bytes (RGB)
+        var dataSize = width * height * channels;
+        var pixels = malloc(dataSize);
+        if (pixels == null)
+        {
+            puts("error: failed to allocate pixel buffer");
+            return 1;
+        }
+
+        // Fill the checkerboard pattern
+        var y = 0;
+        while (y < height)
+        {
+            var x = 0;
+            while (x < width)
+            {
+                // Determine tile coordinates
+                var tileX = x / tileSize;
+                var tileY = y / tileSize;
+
+                // Checkerboard: white if (tileX + tileY) is even, black if odd
+                var isWhite = ((tileX + tileY) % 2) == 0;
+
+                // Calculate byte offset: (y * width + x) * channels
+                var offset = (y * width + x) * channels;
+
+                if (isWhite)
+                {
+                    // White: RGB(255, 255, 255)
+                    memset(pixels + offset, 255, 3);
+                }
+                else
+                {
+                    // Black: RGB(0, 0, 0)
+                    memset(pixels + offset, 0, 3);
+                }
+
+                x = x + 1;
+            }
+            y = y + 1;
+        }
+
+        // Write PNG
+        var stride = width * channels;
+        var result = stbi_write_png("checkerboard.png", width, height, channels, pixels, stride);
+
+        if (result != 0)
+        {
+            printf("wrote checkerboard.png (%dx%d, 8x8 grid)\n", width, height);
+        }
+        else
+        {
+            puts("error: failed to write PNG");
+        }
+
+        // Free the pixel buffer
+        free(pixels);
+
+        puts("done");
+        return 0;
+    }
+}

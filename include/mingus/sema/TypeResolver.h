@@ -54,6 +54,7 @@ public:
     void visit(ClassDeclaration& node) override;
     void visit(InterfaceDeclaration& node) override;
     void visit(ImportDeclaration& node) override;
+    void visit(ExternStructDeclaration& node) override;
 
     // Statements (recurse)
     void visit(ExpressionStatement& node) override;

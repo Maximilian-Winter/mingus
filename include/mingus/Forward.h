@@ -124,6 +124,10 @@ class InterfaceDeclaration;
 class ImportDeclaration;
 class TypedefDeclaration;
 class EnumMemberNode;
+class LinkDirective;
+class OpaqueTypeDeclaration;
+class ExternStructDeclaration;
+class OpaqueTypeSymbol;
 
 // ---- AST pattern nodes (for match expressions) ----
 class PatternNode;

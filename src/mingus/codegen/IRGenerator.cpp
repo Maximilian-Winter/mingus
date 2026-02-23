@@ -309,6 +309,15 @@ llvm::Type* IRGenerator::mapType(TypeSymbol* type) {
         return llvm::Type::getInt32Ty(context_);
     }
 
+    // Opaque types -> opaque LLVM StructType (no body, used only as pointer target)
+    if (type->is<OpaqueTypeSymbol>()) {
+        auto sit = structTypeCache_.find(type);
+        if (sit != structTypeCache_.end()) return sit->second;
+        auto* structTy = llvm::StructType::create(context_, type->getName());
+        structTypeCache_[type] = structTy;
+        return structTy;
+    }
+
     // Struct/Class types -> cached LLVM StructType
     if (type->is<StructSymbol>() || type->is<ClassSymbol>()) {
         auto sit = structTypeCache_.find(type);
@@ -521,9 +530,10 @@ void IRGenerator::declareStructTypes(ProgramNode& program) {
         }
     }
 
-    // Second pass: set bodies
+    // Second pass: set bodies (skip OpaqueTypeSymbol — intentionally stays opaque)
     for (auto& [typeSym, structTy] : structTypeCache_) {
         if (!structTy->isOpaque()) continue;
+        if (typeSym->is<OpaqueTypeSymbol>()) continue;
 
         std::vector<llvm::Type*> fieldTypes;
 
@@ -693,17 +703,19 @@ void IRGenerator::declareExternFunctions(ProgramNode& program) {
             if (!funcSym || !funcSym->isExtern) continue;
             if (functionCache_.count(funcSym)) continue;
 
-            auto* fnTy = buildFunctionType(funcSym);
-            // Handle vararg functions (declared with ... in extern)
+            // For extern functions, FunctionTypeSymbol params map to raw ptr
+            // (C callbacks are raw function pointers, not Mingus fat pointers)
             bool isVarArg = funcSym->isVariadic;
-            if (isVarArg) {
-                std::vector<llvm::Type*> paramTypes;
-                for (auto& param : funcSym->parameters) {
+            std::vector<llvm::Type*> paramTypes;
+            for (auto& param : funcSym->parameters) {
+                if (param->getType() && param->getType()->is<FunctionTypeSymbol>()) {
+                    paramTypes.push_back(llvm::PointerType::getUnqual(context_));
+                } else {
                     paramTypes.push_back(mapParamType(param->getType().get(), param->isReference));
                 }
-                fnTy = llvm::FunctionType::get(mapType(funcSym->returnType),
-                                                paramTypes, true);
             }
+            auto* fnTy = llvm::FunctionType::get(mapType(funcSym->returnType),
+                                                  paramTypes, isVarArg);
 
             // Check if extern with same name already exists in LLVM module
             // (prevents @sin.1 duplicates when multiple modules declare same extern)
@@ -4308,6 +4320,14 @@ void IRGenerator::visit(CallExpression& node) {
                     (arg->is<LambdaExpression>() || arg->is<CallExpression>())) {
                     auto* tmpEnv = builder_.CreateExtractValue(lastValue_, {1}, "tmp.closure.env");
                     tempClosureEnvs.push_back(tmpEnv);
+                }
+
+                // Extern callback interop: extract raw fnPtr from fat pointer
+                // C callbacks expect a raw function pointer, not { fnPtr, envPtr }
+                if (calleeFuncSym && calleeFuncSym->isExtern &&
+                    arg->resolvedType && arg->resolvedType->is<FunctionTypeSymbol>() &&
+                    lastValue_ && lastValue_->getType()->isStructTy()) {
+                    lastValue_ = builder_.CreateExtractValue(lastValue_, {0}, "callback.fnptr");
                 }
                 args.push_back(lastValue_);
             }

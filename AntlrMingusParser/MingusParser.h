@@ -1,5 +1,5 @@
 
-// Generated from antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
+// Generated from MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -18,75 +18,77 @@ public:
     SuperKeyword = 8, DeclareOperator = 9, DeclareForLoop = 10, DeclareWhileLoop = 11, 
     DeclareDoLoop = 12, DeclareStatic = 13, DeclareAbstract = 14, DeclareInterface = 15, 
     DeclareTypedef = 16, DeclarePublic = 17, DeclarePrivate = 18, DeclareProtected = 19, 
-    ExternKeyword = 20, RawKeyword = 21, ControlFlowIf = 22, ControlFlowElse = 23, 
-    ControlFlowSwitch = 24, ControlFlowCase = 25, ControlFlowDefault = 26, 
-    ControlFlowMatch = 27, FunctionReturn = 28, Break = 29, Continue = 30, 
-    DeclareVariable = 31, DeclareConst = 32, NewKeyword = 33, DeleteKeyword = 34, 
-    NullReference = 35, ThisReference = 36, MoveKeyword = 37, WeakKeyword = 38, 
-    SharedKeyword = 39, ImportDirective = 40, FromDirective = 41, AsKeyword = 42, 
-    SizeOfKeyword = 43, AlignOfKeyword = 44, IntegerType = 45, DoubleType = 46, 
-    FloatType = 47, ByteType = 48, StringType = 49, CharType = 50, BoolType = 51, 
-    VoidType = 52, BooleanLiteral = 53, AssignOperator = 54, PlusAssignOperator = 55, 
-    MinusAssignOperator = 56, MultiplyAssignOperator = 57, DivideAssignOperator = 58, 
-    ModuloAssignOperator = 59, BitwiseAndAssignOperator = 60, BitwiseOrAssignOperator = 61, 
-    BitwiseXorAssignOperator = 62, BitwiseLeftShiftAssignOperator = 63, 
-    BitwiseRightShiftAssignOperator = 64, LogicalOrOperator = 65, LogicalAndOperator = 66, 
-    UnequalOperator = 67, EqualOperator = 68, GreaterEqualOperator = 69, 
-    SmallerEqualOperator = 70, GreaterOperator = 71, SmallerOperator = 72, 
-    ShiftLeftOperator = 73, ShiftRightOperator = 74, PlusPlusOperator = 75, 
-    MinusMinusOperator = 76, PlusOperator = 77, MinusOperator = 78, StarOperator = 79, 
-    DivideOperator = 80, ModuloOperator = 81, LogicalNegationOperator = 82, 
-    ComplimentOperator = 83, SingleAndOperator = 84, BitwiseXorOperator = 85, 
-    BitwiseOrOperator = 86, PipeOperator = 87, ArrowOperator = 88, ReferenceAccessOperator = 89, 
-    DotOperator = 90, Ellipsis = 91, DotDotOperator = 92, QuestionMarkOperator = 93, 
-    ColonOperator = 94, SemicolonSeparator = 95, CommaSeparator = 96, UnderscoreWildcard = 97, 
-    OpeningRoundBracket = 98, ClosingRoundBracket = 99, SquareBracketLeft = 100, 
-    SquareBracketRight = 101, FloatingLiteral = 102, IntegerLiteral = 103, 
-    CharLiteral = 104, Identifier = 105, BLOCK_COMMENT = 106, LINE_COMMENT = 107, 
-    WS = 108, DQUOTE = 109, CURLY_L = 110, CURLY_R = 111, TEXT = 112, BACKSLASH_PAREN = 113, 
-    ESCAPE_SEQUENCE = 114
+    ExternKeyword = 20, RawKeyword = 21, LinkKeyword = 22, OpaqueKeyword = 23, 
+    ControlFlowIf = 24, ControlFlowElse = 25, ControlFlowSwitch = 26, ControlFlowCase = 27, 
+    ControlFlowDefault = 28, ControlFlowMatch = 29, FunctionReturn = 30, 
+    Break = 31, Continue = 32, DeclareVariable = 33, DeclareConst = 34, 
+    NewKeyword = 35, DeleteKeyword = 36, NullReference = 37, ThisReference = 38, 
+    MoveKeyword = 39, WeakKeyword = 40, SharedKeyword = 41, ImportDirective = 42, 
+    FromDirective = 43, AsKeyword = 44, SizeOfKeyword = 45, AlignOfKeyword = 46, 
+    IntegerType = 47, DoubleType = 48, FloatType = 49, ByteType = 50, StringType = 51, 
+    CharType = 52, BoolType = 53, VoidType = 54, BooleanLiteral = 55, AssignOperator = 56, 
+    PlusAssignOperator = 57, MinusAssignOperator = 58, MultiplyAssignOperator = 59, 
+    DivideAssignOperator = 60, ModuloAssignOperator = 61, BitwiseAndAssignOperator = 62, 
+    BitwiseOrAssignOperator = 63, BitwiseXorAssignOperator = 64, BitwiseLeftShiftAssignOperator = 65, 
+    BitwiseRightShiftAssignOperator = 66, LogicalOrOperator = 67, LogicalAndOperator = 68, 
+    UnequalOperator = 69, EqualOperator = 70, GreaterEqualOperator = 71, 
+    SmallerEqualOperator = 72, GreaterOperator = 73, SmallerOperator = 74, 
+    ShiftLeftOperator = 75, ShiftRightOperator = 76, PlusPlusOperator = 77, 
+    MinusMinusOperator = 78, PlusOperator = 79, MinusOperator = 80, StarOperator = 81, 
+    DivideOperator = 82, ModuloOperator = 83, LogicalNegationOperator = 84, 
+    ComplimentOperator = 85, SingleAndOperator = 86, BitwiseXorOperator = 87, 
+    BitwiseOrOperator = 88, PipeOperator = 89, ArrowOperator = 90, ReferenceAccessOperator = 91, 
+    DotOperator = 92, Ellipsis = 93, DotDotOperator = 94, QuestionMarkOperator = 95, 
+    ColonOperator = 96, SemicolonSeparator = 97, CommaSeparator = 98, UnderscoreWildcard = 99, 
+    OpeningRoundBracket = 100, ClosingRoundBracket = 101, SquareBracketLeft = 102, 
+    SquareBracketRight = 103, FloatingLiteral = 104, IntegerLiteral = 105, 
+    CharLiteral = 106, Identifier = 107, BLOCK_COMMENT = 108, LINE_COMMENT = 109, 
+    WS = 110, DQUOTE = 111, CURLY_L = 112, CURLY_R = 113, TEXT = 114, BACKSLASH_PAREN = 115, 
+    ESCAPE_SEQUENCE = 116
   };
 
   enum {
     RuleProgram = 0, RuleModule = 1, RuleModuleBlock = 2, RuleModuleDeclaration = 3, 
     RuleTypedefDeclaration = 4, RuleImportDefinition = 5, RuleImportTarget = 6, 
-    RuleExternDeclaration = 7, RuleExternBody = 8, RuleExternFunctionDeclaration = 9, 
-    RuleClassDeclaration = 10, RuleClassBlock = 11, RuleClassMember = 12, 
-    RuleConstructorDeclaration = 13, RuleDestructorDeclaration = 14, RuleOperatorDeclaration = 15, 
-    RuleOverloadableOperator = 16, RuleInheritance = 17, RuleInterfaceDeclaration = 18, 
-    RuleInterfaceBlock = 19, RuleInterfaceMember = 20, RuleStructDeclaration = 21, 
-    RuleStructBlock = 22, RuleStructMember = 23, RuleEnumDeclaration = 24, 
-    RuleEnumMember = 25, RuleFunctionDeclaration = 26, RuleReturnType = 27, 
-    RuleDefinitionParameters = 28, RuleParameterList = 29, RuleParameter = 30, 
-    RuleVariableDeclaration = 31, RuleConstVariableDeclaration = 32, RuleTypedVariableDeclaration = 33, 
-    RuleInferredVariableDeclaration = 34, RuleTupleDestructuring = 35, RuleTupleDestructureElement = 36, 
-    RuleStatement = 37, RuleBlock = 38, RuleExprStatement = 39, RuleRawBlock = 40, 
-    RuleIfStatement = 41, RuleElseIfClause = 42, RuleElseClause = 43, RuleSwitchStatement = 44, 
-    RuleSwitchCase = 45, RuleSwitchDefault = 46, RuleMatchStatement = 47, 
-    RuleMatchExpression = 48, RuleMatchArm = 49, RuleMatchBody = 50, RulePattern = 51, 
-    RuleGuardedPattern = 52, RuleBasePattern = 53, RuleLiteralPattern = 54, 
-    RuleRangePattern = 55, RuleWildcardPattern = 56, RuleBindingPattern = 57, 
-    RuleTuplePattern = 58, RuleForStatement = 59, RuleForInitializer = 60, 
-    RuleLocalVarInitializer = 61, RuleLocalVarDeclaration = 62, RuleForIterator = 63, 
-    RuleWhileStatement = 64, RuleDoWhileStatement = 65, RuleReturnStatement = 66, 
-    RuleLabeledStatement = 67, RuleBreakStatement = 68, RuleContinueStatement = 69, 
-    RuleDeleteStatement = 70, RuleExpression = 71, RuleAssignment = 72, 
-    RuleAssignmentOperator = 73, RuleLambdaExpression = 74, RuleCaptureList = 75, 
-    RuleCaptureDefault = 76, RuleCaptureItem = 77, RuleLambdaParameterList = 78, 
-    RuleLambdaParameter = 79, RulePipe = 80, RulePipeTarget = 81, RuleTernary = 82, 
-    RuleLogicOr = 83, RuleLogicAnd = 84, RuleBitwiseOr = 85, RuleBitwiseXor = 86, 
-    RuleBitwiseAnd = 87, RuleEquality = 88, RuleRelational = 89, RuleShift = 90, 
-    RuleAdditive = 91, RuleMultiplicative = 92, RuleCastExpression = 93, 
-    RuleUnaryExpression = 94, RulePostfixExpression = 95, RulePrimaryExpression = 96, 
-    RuleArrayLiteral = 97, RulePostfixOperation = 98, RuleNewExpression = 99, 
-    RuleCallArguments = 100, RuleArgumentList = 101, RuleElementAccess = 102, 
-    RuleMemberAccess = 103, RuleTupleExpression = 104, RuleTypeIdentifier = 105, 
-    RulePrimitiveType = 106, RuleFunctionType = 107, RuleTypeList = 108, 
-    RuleTupleType = 109, RuleTypeModifier = 110, RuleRvalueReferenceLevel = 111, 
-    RuleReferenceLevel = 112, RuleArrayDimension = 113, RulePointerLevel = 114, 
-    RuleAccessModifier = 115, RuleStaticModifier = 116, RuleAbstractModifier = 117, 
-    RuleQualifiedName = 118, RulePrefixOperator = 119, RuleIncrementDecrementOperator = 120, 
-    RuleTypeSizeOrAlign = 121, RuleString = 122, RuleStringPart = 123
+    RuleExternDeclaration = 7, RuleExternBody = 8, RuleExternMember = 9, 
+    RuleExternFunctionDeclaration = 10, RuleExternLinkDirective = 11, RuleExternOpaqueTypeDeclaration = 12, 
+    RuleExternStructDeclaration = 13, RuleExternFieldDeclaration = 14, RuleExternEnumDeclaration = 15, 
+    RuleClassDeclaration = 16, RuleClassBlock = 17, RuleClassMember = 18, 
+    RuleConstructorDeclaration = 19, RuleDestructorDeclaration = 20, RuleOperatorDeclaration = 21, 
+    RuleOverloadableOperator = 22, RuleInheritance = 23, RuleInterfaceDeclaration = 24, 
+    RuleInterfaceBlock = 25, RuleInterfaceMember = 26, RuleStructDeclaration = 27, 
+    RuleStructBlock = 28, RuleStructMember = 29, RuleEnumDeclaration = 30, 
+    RuleEnumMember = 31, RuleFunctionDeclaration = 32, RuleReturnType = 33, 
+    RuleDefinitionParameters = 34, RuleParameterList = 35, RuleParameter = 36, 
+    RuleVariableDeclaration = 37, RuleConstVariableDeclaration = 38, RuleTypedVariableDeclaration = 39, 
+    RuleInferredVariableDeclaration = 40, RuleTupleDestructuring = 41, RuleTupleDestructureElement = 42, 
+    RuleStatement = 43, RuleBlock = 44, RuleExprStatement = 45, RuleRawBlock = 46, 
+    RuleIfStatement = 47, RuleElseIfClause = 48, RuleElseClause = 49, RuleSwitchStatement = 50, 
+    RuleSwitchCase = 51, RuleSwitchDefault = 52, RuleMatchStatement = 53, 
+    RuleMatchExpression = 54, RuleMatchArm = 55, RuleMatchBody = 56, RulePattern = 57, 
+    RuleGuardedPattern = 58, RuleBasePattern = 59, RuleLiteralPattern = 60, 
+    RuleRangePattern = 61, RuleWildcardPattern = 62, RuleBindingPattern = 63, 
+    RuleTuplePattern = 64, RuleForStatement = 65, RuleForInitializer = 66, 
+    RuleLocalVarInitializer = 67, RuleLocalVarDeclaration = 68, RuleForIterator = 69, 
+    RuleWhileStatement = 70, RuleDoWhileStatement = 71, RuleReturnStatement = 72, 
+    RuleLabeledStatement = 73, RuleBreakStatement = 74, RuleContinueStatement = 75, 
+    RuleDeleteStatement = 76, RuleExpression = 77, RuleAssignment = 78, 
+    RuleAssignmentOperator = 79, RuleLambdaExpression = 80, RuleCaptureList = 81, 
+    RuleCaptureDefault = 82, RuleCaptureItem = 83, RuleLambdaParameterList = 84, 
+    RuleLambdaParameter = 85, RulePipe = 86, RulePipeTarget = 87, RuleTernary = 88, 
+    RuleLogicOr = 89, RuleLogicAnd = 90, RuleBitwiseOr = 91, RuleBitwiseXor = 92, 
+    RuleBitwiseAnd = 93, RuleEquality = 94, RuleRelational = 95, RuleShift = 96, 
+    RuleAdditive = 97, RuleMultiplicative = 98, RuleCastExpression = 99, 
+    RuleUnaryExpression = 100, RulePostfixExpression = 101, RulePrimaryExpression = 102, 
+    RuleArrayLiteral = 103, RulePostfixOperation = 104, RuleNewExpression = 105, 
+    RuleCallArguments = 106, RuleArgumentList = 107, RuleElementAccess = 108, 
+    RuleMemberAccess = 109, RuleTupleExpression = 110, RuleTypeIdentifier = 111, 
+    RulePrimitiveType = 112, RuleFunctionType = 113, RuleTypeList = 114, 
+    RuleTupleType = 115, RuleTypeModifier = 116, RuleRvalueReferenceLevel = 117, 
+    RuleReferenceLevel = 118, RuleArrayDimension = 119, RulePointerLevel = 120, 
+    RuleAccessModifier = 121, RuleStaticModifier = 122, RuleAbstractModifier = 123, 
+    RuleQualifiedName = 124, RulePrefixOperator = 125, RuleIncrementDecrementOperator = 126, 
+    RuleTypeSizeOrAlign = 127, RuleString = 128, RuleStringPart = 129
   };
 
   explicit MingusParser(antlr4::TokenStream *input);
@@ -115,7 +117,13 @@ public:
   class ImportTargetContext;
   class ExternDeclarationContext;
   class ExternBodyContext;
+  class ExternMemberContext;
   class ExternFunctionDeclarationContext;
+  class ExternLinkDirectiveContext;
+  class ExternOpaqueTypeDeclarationContext;
+  class ExternStructDeclarationContext;
+  class ExternFieldDeclarationContext;
+  class ExternEnumDeclarationContext;
   class ClassDeclarationContext;
   class ClassBlockContext;
   class ClassMemberContext;
@@ -367,10 +375,13 @@ public:
   public:
     ExternBodyContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    std::vector<ExternFunctionDeclarationContext *> externFunctionDeclaration();
-    ExternFunctionDeclarationContext* externFunctionDeclaration(size_t i);
+    ExternFunctionDeclarationContext *externFunctionDeclaration();
+    ExternLinkDirectiveContext *externLinkDirective();
+    ExternOpaqueTypeDeclarationContext *externOpaqueTypeDeclaration();
     antlr4::tree::TerminalNode *CURLY_L();
     antlr4::tree::TerminalNode *CURLY_R();
+    std::vector<ExternMemberContext *> externMember();
+    ExternMemberContext* externMember(size_t i);
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -378,6 +389,23 @@ public:
   };
 
   ExternBodyContext* externBody();
+
+  class  ExternMemberContext : public antlr4::ParserRuleContext {
+  public:
+    ExternMemberContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    ExternFunctionDeclarationContext *externFunctionDeclaration();
+    ExternLinkDirectiveContext *externLinkDirective();
+    ExternOpaqueTypeDeclarationContext *externOpaqueTypeDeclaration();
+    ExternStructDeclarationContext *externStructDeclaration();
+    ExternEnumDeclarationContext *externEnumDeclaration();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternMemberContext* externMember();
 
   class  ExternFunctionDeclarationContext : public antlr4::ParserRuleContext {
   public:
@@ -400,6 +428,91 @@ public:
   };
 
   ExternFunctionDeclarationContext* externFunctionDeclaration();
+
+  class  ExternLinkDirectiveContext : public antlr4::ParserRuleContext {
+  public:
+    ExternLinkDirectiveContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *LinkKeyword();
+    StringContext *string();
+    antlr4::tree::TerminalNode *SemicolonSeparator();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternLinkDirectiveContext* externLinkDirective();
+
+  class  ExternOpaqueTypeDeclarationContext : public antlr4::ParserRuleContext {
+  public:
+    ExternOpaqueTypeDeclarationContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *OpaqueKeyword();
+    antlr4::tree::TerminalNode *Identifier();
+    antlr4::tree::TerminalNode *SemicolonSeparator();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternOpaqueTypeDeclarationContext* externOpaqueTypeDeclaration();
+
+  class  ExternStructDeclarationContext : public antlr4::ParserRuleContext {
+  public:
+    ExternStructDeclarationContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *DeclareStruct();
+    antlr4::tree::TerminalNode *Identifier();
+    antlr4::tree::TerminalNode *CURLY_L();
+    antlr4::tree::TerminalNode *CURLY_R();
+    std::vector<ExternFieldDeclarationContext *> externFieldDeclaration();
+    ExternFieldDeclarationContext* externFieldDeclaration(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternStructDeclarationContext* externStructDeclaration();
+
+  class  ExternFieldDeclarationContext : public antlr4::ParserRuleContext {
+  public:
+    ExternFieldDeclarationContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    TypeIdentifierContext *typeIdentifier();
+    antlr4::tree::TerminalNode *Identifier();
+    antlr4::tree::TerminalNode *SemicolonSeparator();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternFieldDeclarationContext* externFieldDeclaration();
+
+  class  ExternEnumDeclarationContext : public antlr4::ParserRuleContext {
+  public:
+    ExternEnumDeclarationContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *DeclareEnum();
+    antlr4::tree::TerminalNode *Identifier();
+    antlr4::tree::TerminalNode *CURLY_L();
+    std::vector<EnumMemberContext *> enumMember();
+    EnumMemberContext* enumMember(size_t i);
+    antlr4::tree::TerminalNode *CURLY_R();
+    antlr4::tree::TerminalNode *ColonOperator();
+    TypeIdentifierContext *typeIdentifier();
+    std::vector<antlr4::tree::TerminalNode *> CommaSeparator();
+    antlr4::tree::TerminalNode* CommaSeparator(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  ExternEnumDeclarationContext* externEnumDeclaration();
 
   class  ClassDeclarationContext : public antlr4::ParserRuleContext {
   public:

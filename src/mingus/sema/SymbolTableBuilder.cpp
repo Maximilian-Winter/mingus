@@ -81,10 +81,12 @@ void SymbolTableBuilder::visit(ModuleNode& node) {
     // Sub-pass A: pre-register all type names (enables forward references)
     for (auto& decl : node.declarations) {
         if (!decl) continue;
-        if (auto* cls = decl->as<ClassDeclaration>())        preRegisterType(*cls);
-        else if (auto* s = decl->as<StructDeclaration>())    preRegisterType(*s);
-        else if (auto* i = decl->as<InterfaceDeclaration>()) preRegisterType(*i);
-        else if (auto* e = decl->as<EnumDeclaration>())      preRegisterType(*e);
+        if (auto* cls = decl->as<ClassDeclaration>())             preRegisterType(*cls);
+        else if (auto* s = decl->as<StructDeclaration>())       preRegisterType(*s);
+        else if (auto* i = decl->as<InterfaceDeclaration>())    preRegisterType(*i);
+        else if (auto* e = decl->as<EnumDeclaration>())         preRegisterType(*e);
+        else if (auto* o = decl->as<OpaqueTypeDeclaration>())   preRegisterType(*o);
+        else if (auto* es = decl->as<ExternStructDeclaration>()) preRegisterType(*es);
     }
 
     // Sub-pass B: full processing (existing traversal)
@@ -151,6 +153,21 @@ void SymbolTableBuilder::preRegisterType(EnumDeclaration& node) {
     symbolTable_.defineSymbol(enumSym);
     symbolTable_.registerType(node.name, enumSym);
     node.resolvedEnum = enumSym;
+}
+
+void SymbolTableBuilder::preRegisterType(OpaqueTypeDeclaration& node) {
+    auto opaqueSym = std::make_shared<OpaqueTypeSymbol>(node.name);
+    symbolTable_.defineSymbol(opaqueSym);
+    symbolTable_.registerType(node.name, opaqueSym);
+    node.resolvedType = opaqueSym;
+}
+
+void SymbolTableBuilder::preRegisterType(ExternStructDeclaration& node) {
+    auto structSym = std::make_shared<StructSymbol>(node.name);
+    structSym->isExtern = true;
+    symbolTable_.defineSymbol(structSym);
+    symbolTable_.registerType(node.name, structSym);
+    node.resolvedStruct = structSym;
 }
 
 // ============================================================================
@@ -375,6 +392,7 @@ void SymbolTableBuilder::visit(EnumDeclaration& node) {
         symbolTable_.registerType(node.name, enumSym);
         node.resolvedEnum = enumSym;
     }
+    enumSym->isExtern = node.isExtern;
 
     // Populate members: explicit integer values or auto-increment
     int64_t nextValue = 0;
@@ -1044,6 +1062,33 @@ void SymbolTableBuilder::visit(TypedefDeclaration& node) {
     auto aliasSym = std::make_shared<TypeAliasSymbol>(node.aliasName);
     symbolTable_.defineSymbol(aliasSym);
     node.resolvedTypeAlias = aliasSym;
+}
+
+void SymbolTableBuilder::visit(OpaqueTypeDeclaration& node) {
+    setScope(node);
+    // Already pre-registered in Sub-pass A — nothing else to do
+}
+
+void SymbolTableBuilder::visit(ExternStructDeclaration& node) {
+    setScope(node);
+
+    auto structSym = node.resolvedStruct;
+    if (!structSym) return;  // pre-registration failed
+
+    // Create VariableSymbol for each field (type resolved later by Pass 2)
+    symbolTable_.pushScope(structSym);
+    for (size_t i = 0; i < node.fields.size(); i++) {
+        auto& param = node.fields[i];
+        if (!param) continue;
+
+        auto fieldSym = std::make_shared<VariableSymbol>(
+            param->name, nullptr);
+        fieldSym->role = VariableRole::Field;
+        fieldSym->fieldIndex = static_cast<int>(i);
+        symbolTable_.defineSymbol(fieldSym);
+        structSym->fields.push_back(fieldSym);
+    }
+    symbolTable_.popScope();
 }
 
 } // namespace mingus

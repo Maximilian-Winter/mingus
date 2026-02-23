@@ -483,6 +483,22 @@ void TypeResolver::visit(ImportDeclaration& node) {
     // Nothing to resolve — imports handled in Pass 1
 }
 
+void TypeResolver::visit(ExternStructDeclaration& node) {
+    if (!node.resolvedStruct) return;
+
+    // Resolve field types from ParameterNode type annotations
+    for (size_t i = 0; i < node.fields.size(); i++) {
+        auto& param = node.fields[i];
+        if (!param || !param->type) continue;
+
+        auto resolvedType = resolveTypeNode(param->type);
+        if (i < node.resolvedStruct->fields.size()) {
+            node.resolvedStruct->fields[i]->setType(
+                resolvedType ? resolvedType : symbolTable_.getErrorType());
+        }
+    }
+}
+
 void TypeResolver::visit(TypedefDeclaration& node) {
     if (!node.resolvedTypeAlias) return;
 

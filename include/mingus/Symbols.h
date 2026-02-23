@@ -227,6 +227,7 @@ public:
     explicit StructSymbol(const std::string& name);
 
     std::vector<std::shared_ptr<VariableSymbol>> fields;
+    bool isExtern = false;  // true for extern struct (C interop, no cleanup)
 
     // Does any field require cleanup (closure-typed)?
     bool needsCleanup() const;
@@ -248,6 +249,7 @@ public:
     };
 
     std::vector<MemberInfo> members;
+    bool isExtern = false;  // true for extern enum (C interop)
 
     // Underlying storage type (int, byte, or string)
     TypeSymbolPtr underlyingType;

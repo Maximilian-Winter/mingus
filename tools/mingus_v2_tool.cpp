@@ -175,6 +175,7 @@ static std::shared_ptr<mingus::ProgramNode> parseFile(
 static bool resolveImports(
     std::shared_ptr<mingus::ProgramNode>& program,
     const std::string& sourceDir,
+    const std::vector<std::string>& extraSearchPaths,
     std::set<std::string>& loadedFiles)
 {
     bool changed = true;
@@ -197,11 +198,28 @@ static bool resolveImports(
         }
 
         for (const auto& moduleName : needed) {
-            // Look for ModuleName.mingus in source directory
-            std::string filePath = sourceDir + "/" + moduleName + ".mingus";
-            if (!fs::exists(filePath)) {
+            // Search source directory first, then extra include paths
+            std::string filePath;
+            std::string candidate = sourceDir + "/" + moduleName + ".mingus";
+            if (fs::exists(candidate)) {
+                filePath = candidate;
+            } else {
+                for (const auto& dir : extraSearchPaths) {
+                    candidate = dir + "/" + moduleName + ".mingus";
+                    if (fs::exists(candidate)) {
+                        filePath = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (filePath.empty()) {
                 std::cerr << "error: cannot find imported module '"
-                          << moduleName << "' (expected at " << filePath << ")\n";
+                          << moduleName << "' (searched " << sourceDir;
+                for (const auto& dir : extraSearchPaths) {
+                    std::cerr << ", " << dir;
+                }
+                std::cerr << ")\n";
                 return false;
             }
 
@@ -330,7 +348,10 @@ int main(int argc, char* argv[]) {
                   << "  --entry <func>    Inject C main() wrapper calling <func>\n"
                   << "  --run <func>      Compile and run (implies --entry)\n"
                   << "  --opt <0|1|2>     Optimization level (default: 0)\n"
-                  << "  --debug / -g      Emit DWARF debug info (use with --opt 0)\n";
+                  << "  --debug / -g      Emit DWARF debug info (use with --opt 0)\n"
+                  << "  --link <lib>      Link a C library (e.g. --link SDL2)\n"
+                  << "  --lib-path <dir>  Add library search path (e.g. --lib-path /usr/lib)\n"
+                  << "  --include-path <dir>  Add import search path for .mingus files\n";
         return 1;
     }
 
@@ -340,6 +361,9 @@ int main(int argc, char* argv[]) {
     std::string runFunc;
     int optLevel = 0;
     bool debugMode = false;
+    std::vector<std::string> cliLinkLibs;
+    std::vector<std::string> libPaths;
+    std::vector<std::string> importPaths;
 
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -354,6 +378,12 @@ int main(int argc, char* argv[]) {
             optLevel = std::stoi(argv[++i]);
         } else if (arg == "--debug" || arg == "-g") {
             debugMode = true;
+        } else if (arg == "--link" && i + 1 < argc) {
+            cliLinkLibs.push_back(argv[++i]);
+        } else if (arg == "--lib-path" && i + 1 < argc) {
+            libPaths.push_back(argv[++i]);
+        } else if (arg == "--include-path" && i + 1 < argc) {
+            importPaths.push_back(argv[++i]);
         }
     }
 
@@ -380,8 +410,21 @@ int main(int argc, char* argv[]) {
         loadedFiles.insert(mod->name);
     }
 
-    if (!resolveImports(program, sourceDir, loadedFiles)) {
+    if (!resolveImports(program, sourceDir, importPaths, loadedFiles)) {
         return 1;
+    }
+
+    // ---- Collect link directives from AST ----
+    for (auto& mod : program->modules) {
+        for (auto& decl : mod->declarations) {
+            if (auto link = std::dynamic_pointer_cast<mingus::LinkDirective>(decl)) {
+                program->linkLibraries.push_back(link->libraryName);
+            }
+        }
+    }
+    // Also add CLI --link libraries
+    for (const auto& lib : cliLinkLibs) {
+        program->linkLibraries.push_back(lib);
     }
 
     // ---- Semantic Analysis (4 passes, multi-error recovery) ----
@@ -507,6 +550,16 @@ int main(int argc, char* argv[]) {
         std::string clang = findClang();
         std::string exeFile = fs::path(sourceFile).stem().string() + ".exe";
         std::string cmd = clang + " -O2 -o " + exeFile + " " + tempLL;
+
+        // Append library search paths (-L)
+        for (const auto& dir : libPaths) {
+            cmd += " -L\"" + dir + "\"";
+        }
+
+        // Append link libraries (-l) from both source directives and CLI
+        for (const auto& lib : program->linkLibraries) {
+            cmd += " -l" + lib;
+        }
 
         int compileResult = std::system(cmd.c_str());
         if (compileResult != 0) {

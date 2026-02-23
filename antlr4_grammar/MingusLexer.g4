@@ -39,6 +39,8 @@ DeclarePrivate:      'private';
 DeclareProtected:    'protected';
 ExternKeyword:       'extern';
 RawKeyword:          'raw';
+LinkKeyword:         'link';
+OpaqueKeyword:       'opaque';
 
 // ============================================================================
 // Keywords — Control Flow

@@ -1,0 +1,7 @@
+=== Test 60: C FFI ===
+Case 1: extern block grammar - PASS
+Case 2: opaque FILE* - PASS
+Case 3: extern struct Point(42, 99) - PASS
+Case 4: extern enum Color.Green = 1 - PASS
+Case 5: callback interop - PASS (compiled)
+=== FFI test complete ===

@@ -1,5 +1,5 @@
 
-// Generated from antlr4_grammar/MingusLexer.g4 by ANTLR 4.13.2
+// Generated from MingusLexer.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -18,33 +18,33 @@ public:
     SuperKeyword = 8, DeclareOperator = 9, DeclareForLoop = 10, DeclareWhileLoop = 11, 
     DeclareDoLoop = 12, DeclareStatic = 13, DeclareAbstract = 14, DeclareInterface = 15, 
     DeclareTypedef = 16, DeclarePublic = 17, DeclarePrivate = 18, DeclareProtected = 19, 
-    ExternKeyword = 20, RawKeyword = 21, ControlFlowIf = 22, ControlFlowElse = 23, 
-    ControlFlowSwitch = 24, ControlFlowCase = 25, ControlFlowDefault = 26, 
-    ControlFlowMatch = 27, FunctionReturn = 28, Break = 29, Continue = 30, 
-    DeclareVariable = 31, DeclareConst = 32, NewKeyword = 33, DeleteKeyword = 34, 
-    NullReference = 35, ThisReference = 36, MoveKeyword = 37, WeakKeyword = 38, 
-    SharedKeyword = 39, ImportDirective = 40, FromDirective = 41, AsKeyword = 42, 
-    SizeOfKeyword = 43, AlignOfKeyword = 44, IntegerType = 45, DoubleType = 46, 
-    FloatType = 47, ByteType = 48, StringType = 49, CharType = 50, BoolType = 51, 
-    VoidType = 52, BooleanLiteral = 53, AssignOperator = 54, PlusAssignOperator = 55, 
-    MinusAssignOperator = 56, MultiplyAssignOperator = 57, DivideAssignOperator = 58, 
-    ModuloAssignOperator = 59, BitwiseAndAssignOperator = 60, BitwiseOrAssignOperator = 61, 
-    BitwiseXorAssignOperator = 62, BitwiseLeftShiftAssignOperator = 63, 
-    BitwiseRightShiftAssignOperator = 64, LogicalOrOperator = 65, LogicalAndOperator = 66, 
-    UnequalOperator = 67, EqualOperator = 68, GreaterEqualOperator = 69, 
-    SmallerEqualOperator = 70, GreaterOperator = 71, SmallerOperator = 72, 
-    ShiftLeftOperator = 73, ShiftRightOperator = 74, PlusPlusOperator = 75, 
-    MinusMinusOperator = 76, PlusOperator = 77, MinusOperator = 78, StarOperator = 79, 
-    DivideOperator = 80, ModuloOperator = 81, LogicalNegationOperator = 82, 
-    ComplimentOperator = 83, SingleAndOperator = 84, BitwiseXorOperator = 85, 
-    BitwiseOrOperator = 86, PipeOperator = 87, ArrowOperator = 88, ReferenceAccessOperator = 89, 
-    DotOperator = 90, Ellipsis = 91, DotDotOperator = 92, QuestionMarkOperator = 93, 
-    ColonOperator = 94, SemicolonSeparator = 95, CommaSeparator = 96, UnderscoreWildcard = 97, 
-    OpeningRoundBracket = 98, ClosingRoundBracket = 99, SquareBracketLeft = 100, 
-    SquareBracketRight = 101, FloatingLiteral = 102, IntegerLiteral = 103, 
-    CharLiteral = 104, Identifier = 105, BLOCK_COMMENT = 106, LINE_COMMENT = 107, 
-    WS = 108, DQUOTE = 109, CURLY_L = 110, CURLY_R = 111, TEXT = 112, BACKSLASH_PAREN = 113, 
-    ESCAPE_SEQUENCE = 114
+    ExternKeyword = 20, RawKeyword = 21, LinkKeyword = 22, OpaqueKeyword = 23, 
+    ControlFlowIf = 24, ControlFlowElse = 25, ControlFlowSwitch = 26, ControlFlowCase = 27, 
+    ControlFlowDefault = 28, ControlFlowMatch = 29, FunctionReturn = 30, 
+    Break = 31, Continue = 32, DeclareVariable = 33, DeclareConst = 34, 
+    NewKeyword = 35, DeleteKeyword = 36, NullReference = 37, ThisReference = 38, 
+    MoveKeyword = 39, WeakKeyword = 40, SharedKeyword = 41, ImportDirective = 42, 
+    FromDirective = 43, AsKeyword = 44, SizeOfKeyword = 45, AlignOfKeyword = 46, 
+    IntegerType = 47, DoubleType = 48, FloatType = 49, ByteType = 50, StringType = 51, 
+    CharType = 52, BoolType = 53, VoidType = 54, BooleanLiteral = 55, AssignOperator = 56, 
+    PlusAssignOperator = 57, MinusAssignOperator = 58, MultiplyAssignOperator = 59, 
+    DivideAssignOperator = 60, ModuloAssignOperator = 61, BitwiseAndAssignOperator = 62, 
+    BitwiseOrAssignOperator = 63, BitwiseXorAssignOperator = 64, BitwiseLeftShiftAssignOperator = 65, 
+    BitwiseRightShiftAssignOperator = 66, LogicalOrOperator = 67, LogicalAndOperator = 68, 
+    UnequalOperator = 69, EqualOperator = 70, GreaterEqualOperator = 71, 
+    SmallerEqualOperator = 72, GreaterOperator = 73, SmallerOperator = 74, 
+    ShiftLeftOperator = 75, ShiftRightOperator = 76, PlusPlusOperator = 77, 
+    MinusMinusOperator = 78, PlusOperator = 79, MinusOperator = 80, StarOperator = 81, 
+    DivideOperator = 82, ModuloOperator = 83, LogicalNegationOperator = 84, 
+    ComplimentOperator = 85, SingleAndOperator = 86, BitwiseXorOperator = 87, 
+    BitwiseOrOperator = 88, PipeOperator = 89, ArrowOperator = 90, ReferenceAccessOperator = 91, 
+    DotOperator = 92, Ellipsis = 93, DotDotOperator = 94, QuestionMarkOperator = 95, 
+    ColonOperator = 96, SemicolonSeparator = 97, CommaSeparator = 98, UnderscoreWildcard = 99, 
+    OpeningRoundBracket = 100, ClosingRoundBracket = 101, SquareBracketLeft = 102, 
+    SquareBracketRight = 103, FloatingLiteral = 104, IntegerLiteral = 105, 
+    CharLiteral = 106, Identifier = 107, BLOCK_COMMENT = 108, LINE_COMMENT = 109, 
+    WS = 110, DQUOTE = 111, CURLY_L = 112, CURLY_R = 113, TEXT = 114, BACKSLASH_PAREN = 115, 
+    ESCAPE_SEQUENCE = 116
   };
 
   enum {

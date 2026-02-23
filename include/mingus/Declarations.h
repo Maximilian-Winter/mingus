@@ -168,6 +168,7 @@ public:
     AccessModifier accessModifier = AccessModifier::Public;
     std::shared_ptr<TypeNode> underlyingType;  // nullptr defaults to int
     std::vector<std::shared_ptr<EnumMemberNode>> members;
+    bool isExtern = false;
 
     // Resolved in Pass 1
     std::shared_ptr<EnumSymbol> resolvedEnum;
@@ -261,6 +262,46 @@ public:
 
     // Resolved in Pass 1
     std::shared_ptr<TypeAliasSymbol> resolvedTypeAlias;
+};
+
+// ============================================================================
+// LinkDirective — extern link "library";
+// ============================================================================
+
+class LinkDirective : public DeclarationBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string libraryName;
+};
+
+// ============================================================================
+// OpaqueTypeDeclaration — extern opaque TypeName;
+// ============================================================================
+
+class OpaqueTypeDeclaration : public DeclarationBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string name;
+
+    // Resolved in Pass 1
+    std::shared_ptr<OpaqueTypeSymbol> resolvedType;
+};
+
+// ============================================================================
+// ExternStructDeclaration — extern struct Name { type field; ... }
+// ============================================================================
+
+class ExternStructDeclaration : public DeclarationBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string name;
+    std::vector<std::shared_ptr<ParameterNode>> fields;
+
+    // Resolved in Pass 1
+    std::shared_ptr<StructSymbol> resolvedStruct;
 };
 
 } // namespace mingus

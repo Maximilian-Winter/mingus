@@ -1,5 +1,5 @@
 
-// Generated from antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
+// Generated from MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -38,7 +38,19 @@ public:
 
     virtual std::any visitExternBody(MingusParser::ExternBodyContext *context) = 0;
 
+    virtual std::any visitExternMember(MingusParser::ExternMemberContext *context) = 0;
+
     virtual std::any visitExternFunctionDeclaration(MingusParser::ExternFunctionDeclarationContext *context) = 0;
+
+    virtual std::any visitExternLinkDirective(MingusParser::ExternLinkDirectiveContext *context) = 0;
+
+    virtual std::any visitExternOpaqueTypeDeclaration(MingusParser::ExternOpaqueTypeDeclarationContext *context) = 0;
+
+    virtual std::any visitExternStructDeclaration(MingusParser::ExternStructDeclarationContext *context) = 0;
+
+    virtual std::any visitExternFieldDeclaration(MingusParser::ExternFieldDeclarationContext *context) = 0;
+
+    virtual std::any visitExternEnumDeclaration(MingusParser::ExternEnumDeclarationContext *context) = 0;
 
     virtual std::any visitClassDeclaration(MingusParser::ClassDeclarationContext *context) = 0;
 

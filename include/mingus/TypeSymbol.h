@@ -221,4 +221,19 @@ public:
     std::string getInterningKey() const override;
 };
 
+// ============================================================================
+// OpaqueTypeSymbol — Extern opaque type (FILE, HANDLE, SDL_Window, etc.)
+//
+// Used only through pointers. Has no fields, no size, no layout.
+// mapType() produces an opaque LLVM StructType (no body set).
+// ============================================================================
+
+class OpaqueTypeSymbol : public TypeSymbol {
+public:
+    explicit OpaqueTypeSymbol(const std::string& name);
+
+    std::string getTypeDescription() const override;
+    std::string getInterningKey() const override;
+};
+
 } // namespace mingus

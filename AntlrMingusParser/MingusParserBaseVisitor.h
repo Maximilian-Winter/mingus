@@ -1,5 +1,5 @@
 
-// Generated from antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
+// Generated from MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -53,7 +53,31 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitExternMember(MingusParser::ExternMemberContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitExternFunctionDeclaration(MingusParser::ExternFunctionDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternLinkDirective(MingusParser::ExternLinkDirectiveContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternOpaqueTypeDeclaration(MingusParser::ExternOpaqueTypeDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternStructDeclaration(MingusParser::ExternStructDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternFieldDeclaration(MingusParser::ExternFieldDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternEnumDeclaration(MingusParser::ExternEnumDeclarationContext *ctx) override {
     return visitChildren(ctx);
   }
 

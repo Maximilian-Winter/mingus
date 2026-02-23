@@ -115,13 +115,44 @@ externDeclaration
 
 externBody
     : externFunctionDeclaration
-    | CURLY_L externFunctionDeclaration* CURLY_R
+    | externLinkDirective
+    | externOpaqueTypeDeclaration
+    | CURLY_L externMember* CURLY_R
+    ;
+
+externMember
+    : externFunctionDeclaration
+    | externLinkDirective
+    | externOpaqueTypeDeclaration
+    | externStructDeclaration
+    | externEnumDeclaration
     ;
 
 externFunctionDeclaration
     : DeclareFunction Identifier
       OpeningRoundBracket parameterList? ( CommaSeparator Ellipsis )? ClosingRoundBracket
       ArrowOperator returnType SemicolonSeparator
+    ;
+
+externLinkDirective
+    : LinkKeyword string SemicolonSeparator
+    ;
+
+externOpaqueTypeDeclaration
+    : OpaqueKeyword Identifier SemicolonSeparator
+    ;
+
+externStructDeclaration
+    : DeclareStruct Identifier CURLY_L externFieldDeclaration* CURLY_R
+    ;
+
+externFieldDeclaration
+    : typeIdentifier Identifier SemicolonSeparator
+    ;
+
+externEnumDeclaration
+    : DeclareEnum Identifier ( ColonOperator typeIdentifier )?
+      CURLY_L enumMember ( CommaSeparator enumMember )* CommaSeparator? CURLY_R
     ;
 
 // ============================================================================
