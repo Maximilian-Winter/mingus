@@ -1,0 +1,2 @@
+Execute with:
+powershell -ExecutionPolicy Bypass -File bench_mandelbrot.ps1

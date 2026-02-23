@@ -54,9 +54,11 @@
 #pragma warning(pop)
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -351,7 +353,8 @@ int main(int argc, char* argv[]) {
                   << "  --debug / -g      Emit DWARF debug info (use with --opt 0)\n"
                   << "  --link <lib>      Link a C library (e.g. --link SDL2)\n"
                   << "  --lib-path <dir>  Add library search path (e.g. --lib-path /usr/lib)\n"
-                  << "  --include-path <dir>  Add import search path for .mingus files\n";
+                  << "  --include-path <dir>  Add import search path for .mingus files\n"
+                  << "  --bench [N]           Benchmark: run N times (default 10) and report timing\n";
         return 1;
     }
 
@@ -364,6 +367,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> cliLinkLibs;
     std::vector<std::string> libPaths;
     std::vector<std::string> importPaths;
+    int benchIterations = 0;
 
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -384,6 +388,12 @@ int main(int argc, char* argv[]) {
             libPaths.push_back(argv[++i]);
         } else if (arg == "--include-path" && i + 1 < argc) {
             importPaths.push_back(argv[++i]);
+        } else if (arg == "--bench") {
+            benchIterations = 10;  // default
+            if (i + 1 < argc) {
+                try { benchIterations = std::stoi(argv[i + 1]); ++i; }
+                catch (...) {}  // next arg isn't a number, keep default
+            }
         }
     }
 
@@ -571,7 +581,47 @@ int main(int argc, char* argv[]) {
 
         // Run (use .\ prefix on Windows so cmd.exe finds it in CWD)
         std::string runCmd = ".\\" + exeFile;
-        int runResult = std::system(runCmd.c_str());
+        int runResult = 0;
+
+        if (benchIterations > 0) {
+            std::vector<double> timings;
+            timings.reserve(benchIterations);
+
+            for (int iter = 0; iter < benchIterations; iter++) {
+                std::string iterCmd = runCmd;
+                if (iter > 0) iterCmd += " > NUL 2>&1";
+
+                auto start = std::chrono::high_resolution_clock::now();
+                int rc = std::system(iterCmd.c_str());
+                auto end = std::chrono::high_resolution_clock::now();
+
+                double ms = std::chrono::duration<double, std::milli>(end - start).count();
+                timings.push_back(ms);
+
+                if (rc != 0 && iter == 0) {
+                    runResult = rc;
+                    break;
+                }
+            }
+
+            if (!timings.empty()) {
+                double minT = timings[0], maxT = timings[0], sum = 0;
+                for (double t : timings) {
+                    if (t < minT) minT = t;
+                    if (t > maxT) maxT = t;
+                    sum += t;
+                }
+                double avg = sum / timings.size();
+
+                std::cerr << "\n--- benchmark (" << timings.size() << " runs) ---\n";
+                std::cerr << "  min:   " << std::fixed << std::setprecision(3) << minT << " ms\n";
+                std::cerr << "  avg:   " << avg << " ms\n";
+                std::cerr << "  max:   " << maxT << " ms\n";
+                std::cerr << "  total: " << sum << " ms\n";
+            }
+        } else {
+            runResult = std::system(runCmd.c_str());
+        }
 
         // Cleanup
         if (emitFile.empty()) fs::remove(tempLL);

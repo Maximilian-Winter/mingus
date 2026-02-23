@@ -1,0 +1,118 @@
+// Example 11: Mandelbrot PNG — Floating-point computation + C FFI
+//
+// Generates a Mandelbrot set image using stb_image_write.
+// Build:  see build_mandelbrot.bat
+// Output: mandelbrot.png (1024x1024 pixels, 1000 max iterations, grayscale)
+
+module Mandelbrot
+{
+    // C standard library
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memset(byte* dest, int val, int count) => byte*;
+
+    // Math
+    extern func sqrt(double x) => double;
+
+    // stb_image_write (linked via stb_impl.obj)
+    extern func stbi_write_png(string filename, int w, int h, int comp, byte* data, int stride) => int;
+
+    func main() => int
+    {
+        puts("=== Mandelbrot PNG Generator ===");
+
+        // Image dimensions
+        var xres = 1024;
+        var yres = 1024;
+        var channels = 3;  // RGB
+
+        // Mandelbrot parameters
+        var maxiter = 1000;
+        var xmin = -2.0;
+        var xmax =  2.0;
+        var ymin = -2.0;
+        var ymax =  2.0;
+
+        var dx = (xmax - xmin) / xres;
+        var dy = (ymax - ymin) / yres;
+
+        // Allocate pixel buffer: xres * yres * 3 bytes (RGB)
+        var dataSize = xres * yres * channels;
+        var pixels = malloc(dataSize);
+        if (pixels == null)
+        {
+            puts("error: failed to allocate pixel buffer");
+            return 1;
+        }
+
+        // Iterate over every pixel
+        var j = 0;
+        while (j < yres)
+        {
+            var y = ymax - j * dy;
+
+            var i = 0;
+            while (i < xres)
+            {
+                var x = xmin + i * dx;
+
+                // Mandelbrot iteration: z = z^2 + c
+                var u = 0.0;
+                var v = 0.0;
+                var u2 = 0.0;
+                var v2 = 0.0;
+
+                var k = 1;
+                while (k < maxiter)
+                {
+                    if (u2 + v2 >= 4.0)
+                    {
+                        break;
+                    }
+                    v = 2.0 * u * v + y;
+                    u = u2 - v2 + x;
+                    u2 = u * u;
+                    v2 = v * v;
+                    k = k + 1;
+                }
+
+                var offset = (j * xres + i) * channels;
+
+                if (k >= maxiter)
+                {
+                    // Point is in the Mandelbrot set — black
+                    memset(pixels + offset, 0, 3);
+                }
+                else
+                {
+                    // Escaped — grayscale intensity based on iteration count
+                    var intensity = sqrt(1.0 * k / maxiter);
+                    var val = (int)(intensity * 255.0);
+                    memset(pixels + offset, val, 3);
+                }
+
+                i = i + 1;
+            }
+            j = j + 1;
+        }
+
+        // Write the PNG
+        var stride = xres * channels;
+        var result = stbi_write_png("mandelbrot.png", xres, yres, channels, pixels, stride);
+
+        if (result != 0)
+        {
+            printf("wrote mandelbrot.png (%dx%d, %d max iterations)\n", xres, yres, maxiter);
+        }
+        else
+        {
+            puts("error: failed to write PNG");
+        }
+
+        free(pixels);
+        puts("done");
+        return 0;
+    }
+}
