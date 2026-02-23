@@ -1,0 +1,81 @@
+// Example 12: Auto-Generated Bindings — Gradient PNG
+//
+// Demonstrates using mingus_bind_gen.py to auto-generate FFI bindings
+// from a C header, then importing them from Mingus code.
+//
+// The stb_image_write bindings are generated at build time by:
+//   python mingus_bind_gen.py stb_image_write.h --module StbImageWrite -o StbImageWrite.mingus
+//
+// Build: see build_autobind_gradient.bat
+
+module Gradient
+{
+    // Import auto-generated stb_image_write bindings
+    import StbImageWrite;
+
+    // C standard library (not part of stb bindings)
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memset(byte* dest, int val, int count) => byte*;
+
+    func main() => int
+    {
+        puts("=== Gradient PNG (Auto-Generated Bindings) ===");
+
+        var width  = 512;
+        var height = 512;
+        var channels = 3;
+
+        var dataSize = width * height * channels;
+        var pixels = malloc(dataSize);
+        if (pixels == null)
+        {
+            puts("error: failed to allocate pixel buffer");
+            return 1;
+        }
+
+        // Paint a diagonal RGB gradient
+        var y = 0;
+        while (y < height)
+        {
+            var x = 0;
+            while (x < width)
+            {
+                var offset = (y * width + x) * channels;
+
+                // Red increases left-to-right
+                var r = 255 * x / width;
+                // Green increases top-to-bottom
+                var g = 255 * y / height;
+                // Blue is the inverse diagonal
+                var b = 255 - (r + g) / 2;
+
+                memset(pixels + offset,     r, 1);
+                memset(pixels + offset + 1, g, 1);
+                memset(pixels + offset + 2, b, 1);
+
+                x = x + 1;
+            }
+            y = y + 1;
+        }
+
+        // Write PNG using the auto-generated binding
+        var stride = width * channels;
+        var result = stbi_write_png("gradient.png", width, height, channels, pixels, stride);
+
+        if (result != 0)
+        {
+            printf("wrote gradient.png (%dx%d)\n", width, height);
+        }
+        else
+        {
+            puts("error: failed to write PNG");
+        }
+
+        free(pixels);
+        puts("done");
+        return 0;
+    }
+}
