@@ -26,6 +26,11 @@ void SymbolTable::registerPrimitives() {
     stringType_ = std::make_shared<PrimitiveTypeSymbol>("string", PrimitiveKind::String, 8);
     boolType_   = std::make_shared<PrimitiveTypeSymbol>("bool",   PrimitiveKind::Bool,   1);
     voidType_   = std::make_shared<PrimitiveTypeSymbol>("void",   PrimitiveKind::Void,   0);
+    shortType_  = std::make_shared<PrimitiveTypeSymbol>("short",  PrimitiveKind::Short,  2);
+    ushortType_ = std::make_shared<PrimitiveTypeSymbol>("ushort", PrimitiveKind::UShort, 2);
+    uintType_   = std::make_shared<PrimitiveTypeSymbol>("uint",   PrimitiveKind::UInt,   4);
+    longType_   = std::make_shared<PrimitiveTypeSymbol>("long",   PrimitiveKind::Long,   8);
+    ulongType_  = std::make_shared<PrimitiveTypeSymbol>("ulong",  PrimitiveKind::ULong,  8);
     errorType_  = std::make_shared<ErrorTypeSymbol>();
     nullType_   = std::make_shared<NullTypeSymbol>();
     stringObjectType_ = std::make_shared<StringObjectSymbol>();
@@ -39,6 +44,11 @@ void SymbolTable::registerPrimitives() {
     types_["string"]  = stringType_;
     types_["bool"]    = boolType_;
     types_["void"]    = voidType_;
+    types_["short"]   = shortType_;
+    types_["ushort"]  = ushortType_;
+    types_["uint"]    = uintType_;
+    types_["long"]    = longType_;
+    types_["ulong"]   = ulongType_;
     types_["<error>"] = errorType_;
     types_["null"]    = nullType_;
     types_["String"]  = stringObjectType_;
@@ -112,6 +122,11 @@ std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getCharType() const   { return
 std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getStringType() const { return stringType_; }
 std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getBoolType() const   { return boolType_; }
 std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getVoidType() const   { return voidType_; }
+std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getShortType() const  { return shortType_; }
+std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getUShortType() const { return ushortType_; }
+std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getUIntType() const   { return uintType_; }
+std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getLongType() const   { return longType_; }
+std::shared_ptr<PrimitiveTypeSymbol> SymbolTable::getULongType() const  { return ulongType_; }
 std::shared_ptr<ErrorTypeSymbol> SymbolTable::getErrorType() const      { return errorType_; }
 std::shared_ptr<NullTypeSymbol> SymbolTable::getNullType() const        { return nullType_; }
 std::shared_ptr<StringObjectSymbol> SymbolTable::getStringObjectType() const { return stringObjectType_; }
@@ -243,21 +258,30 @@ bool SymbolTable::isCompatible(TypeSymbol* from, TypeSymbol* to) const {
         return to->is<PointerTypeSymbol>() || to->is<FunctionTypeSymbol>();
     }
 
-    // 4. Numeric widening: byte → int, char → int, int → float/double, float → double
+    // 4. Numeric widening (rank-based)
     if (auto* fromPrim = from->as<PrimitiveTypeSymbol>()) {
         if (auto* toPrim = to->as<PrimitiveTypeSymbol>()) {
-            // byte → int
-            if (fromPrim->primitiveKind == PrimitiveKind::Byte &&
-                toPrim->primitiveKind == PrimitiveKind::Int) return true;
-            // char → int
-            if (fromPrim->primitiveKind == PrimitiveKind::Char &&
-                toPrim->primitiveKind == PrimitiveKind::Int) return true;
-            // int → float
-            if (fromPrim->primitiveKind == PrimitiveKind::Int &&
-                toPrim->primitiveKind == PrimitiveKind::Float) return true;
-            // int → double
-            if (fromPrim->primitiveKind == PrimitiveKind::Int &&
-                toPrim->primitiveKind == PrimitiveKind::Double) return true;
+            // Integer bit-width rank
+            auto intRank = [](PrimitiveKind k) -> int {
+                switch (k) {
+                    case PrimitiveKind::Byte:   case PrimitiveKind::Char:   return 8;
+                    case PrimitiveKind::Short:  case PrimitiveKind::UShort: return 16;
+                    case PrimitiveKind::Int:    case PrimitiveKind::UInt:   return 32;
+                    case PrimitiveKind::Long:   case PrimitiveKind::ULong:  return 64;
+                    default: return 0;
+                }
+            };
+            int fromRank = intRank(fromPrim->primitiveKind);
+            int toRank = intRank(toPrim->primitiveKind);
+
+            // Any integer ↔ any integer (widening, narrowing, cross-sign all allowed)
+            // Warnings for narrowing/cross-sign can be emitted by TypeChecker
+            if (fromRank > 0 && toRank > 0) return true;
+
+            // Any integer → float or double
+            if (fromRank > 0 && toPrim->isFloating()) return true;
+            // float/double → any integer (explicit-style implicit narrowing)
+            if (fromPrim->isFloating() && toRank > 0) return true;
             // float → double
             if (fromPrim->primitiveKind == PrimitiveKind::Float &&
                 toPrim->primitiveKind == PrimitiveKind::Double) return true;

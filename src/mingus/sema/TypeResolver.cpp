@@ -52,6 +52,11 @@ TypeSymbolPtr TypeResolver::resolveTypeNode(TypeNode* typeNode) {
             case PrimitiveKind::String: prim->resolvedType = symbolTable_.getStringType(); break;
             case PrimitiveKind::Bool:   prim->resolvedType = symbolTable_.getBoolType();   break;
             case PrimitiveKind::Void:   prim->resolvedType = symbolTable_.getVoidType();   break;
+            case PrimitiveKind::Short:  prim->resolvedType = symbolTable_.getShortType();  break;
+            case PrimitiveKind::UShort: prim->resolvedType = symbolTable_.getUShortType(); break;
+            case PrimitiveKind::UInt:   prim->resolvedType = symbolTable_.getUIntType();   break;
+            case PrimitiveKind::Long:   prim->resolvedType = symbolTable_.getLongType();   break;
+            case PrimitiveKind::ULong:  prim->resolvedType = symbolTable_.getULongType();  break;
         }
         return prim->resolvedType;
     }

@@ -363,6 +363,7 @@ private:
     static bool isBoolKind(TypeSymbol* t);
     static bool isStringKind(TypeSymbol* t);
     static bool isPointerKind(TypeSymbol* t);
+    static bool isUnsignedKind(TypeSymbol* t);
     static bool isUserStructKind(TypeSymbol* t);
     static bool isEnumKind(TypeSymbol* t);
     static bool isFunctionKind(TypeSymbol* t);

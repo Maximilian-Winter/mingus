@@ -97,6 +97,11 @@ StringType:           'string';
 CharType:             'char';
 BoolType:             'bool';
 VoidType:             'void';
+ShortType:            'short';
+UShortType:           'ushort';
+UIntType:             'uint';
+LongType:             'long';
+ULongType:            'ulong';
 
 // ============================================================================
 // Boolean Literals

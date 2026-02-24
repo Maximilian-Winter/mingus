@@ -544,6 +544,11 @@ std::any ASTGenerator::visitPrimitiveType(MingusParser::PrimitiveTypeContext* ct
     else if (ctx->CharType())    prim->kind = PrimitiveKind::Char;
     else if (ctx->BoolType())    prim->kind = PrimitiveKind::Bool;
     else if (ctx->VoidType())    prim->kind = PrimitiveKind::Void;
+    else if (ctx->ShortType())   prim->kind = PrimitiveKind::Short;
+    else if (ctx->UShortType())  prim->kind = PrimitiveKind::UShort;
+    else if (ctx->UIntType())    prim->kind = PrimitiveKind::UInt;
+    else if (ctx->LongType())    prim->kind = PrimitiveKind::Long;
+    else if (ctx->ULongType())   prim->kind = PrimitiveKind::ULong;
     else                         prim->kind = PrimitiveKind::Int;
 
     return std::any(std::static_pointer_cast<TypeNode>(prim));

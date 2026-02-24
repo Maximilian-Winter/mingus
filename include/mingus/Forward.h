@@ -165,7 +165,12 @@ enum class PrimitiveKind {
     Char,
     String,
     Bool,
-    Void
+    Void,
+    Short,   // s16
+    UShort,  // u16
+    UInt,    // u32
+    Long,    // s64
+    ULong    // u64
 };
 
 enum class OverloadableOp {

@@ -53,6 +53,11 @@ public:
     std::shared_ptr<PrimitiveTypeSymbol> getStringType() const;
     std::shared_ptr<PrimitiveTypeSymbol> getBoolType() const;
     std::shared_ptr<PrimitiveTypeSymbol> getVoidType() const;
+    std::shared_ptr<PrimitiveTypeSymbol> getShortType() const;
+    std::shared_ptr<PrimitiveTypeSymbol> getUShortType() const;
+    std::shared_ptr<PrimitiveTypeSymbol> getUIntType() const;
+    std::shared_ptr<PrimitiveTypeSymbol> getLongType() const;
+    std::shared_ptr<PrimitiveTypeSymbol> getULongType() const;
 
     // Sentinel types
     std::shared_ptr<ErrorTypeSymbol> getErrorType() const;
@@ -100,6 +105,11 @@ private:
     std::shared_ptr<PrimitiveTypeSymbol> stringType_;
     std::shared_ptr<PrimitiveTypeSymbol> boolType_;
     std::shared_ptr<PrimitiveTypeSymbol> voidType_;
+    std::shared_ptr<PrimitiveTypeSymbol> shortType_;
+    std::shared_ptr<PrimitiveTypeSymbol> ushortType_;
+    std::shared_ptr<PrimitiveTypeSymbol> uintType_;
+    std::shared_ptr<PrimitiveTypeSymbol> longType_;
+    std::shared_ptr<PrimitiveTypeSymbol> ulongType_;
     std::shared_ptr<ErrorTypeSymbol> errorType_;
     std::shared_ptr<NullTypeSymbol> nullType_;
     std::shared_ptr<StringObjectSymbol> stringObjectType_;

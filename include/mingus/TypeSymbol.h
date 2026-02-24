@@ -73,6 +73,7 @@ public:
     bool isNumeric() const;
     bool isIntegral() const;
     bool isFloating() const;
+    bool isUnsigned() const;
 };
 
 // ============================================================================

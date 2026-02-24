@@ -762,6 +762,11 @@ primitiveType
     | CharType
     | BoolType
     | VoidType
+    | ShortType
+    | UShortType
+    | UIntType
+    | LongType
+    | ULongType
     ;
 
 functionType

@@ -1,0 +1,69 @@
+// Test 61: Integer types — short, ushort, uint, long, ulong
+module Test61
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        // === Case 1: Basic declarations and printf ===
+        short s = 1000;
+        ushort us = 50000;
+        uint ui = 3000000000;
+        long l = 9000000000;
+        ulong ul = 18000000000;
+
+        printf("short: %d\n", s);
+        printf("ushort: %u\n", us);
+        printf("uint: %u\n", ui);
+        printf("long: %lld\n", l);
+        printf("ulong: %llu\n", ul);
+
+        // === Case 2: Arithmetic operations ===
+        short s2 = s + 500;
+        printf("short add: %d\n", s2);
+
+        uint ui2 = ui / 2;
+        printf("uint div: %u\n", ui2);
+
+        long l2 = l * 2;
+        printf("long mul: %lld\n", l2);
+
+        uint um = 10;
+        uint ur = um % 3;
+        printf("uint mod: %u\n", ur);
+
+        // === Case 3: Unsigned comparison (critical test) ===
+        // 4000000000 > 2^31, so signed comparison would see it as negative
+        uint big = 4000000000;
+        uint small = 1;
+        if (big > small) {
+            printf("uint cmp: correct\n");
+        } else {
+            printf("uint cmp: WRONG\n");
+        }
+
+        // === Case 4: Implicit widening (short -> int) ===
+        int si = s;
+        printf("short->int: %d\n", si);
+
+        // === Case 5: Explicit cast (int -> uint) ===
+        int fromSigned = 42;
+        uint toUnsigned = (uint)fromSigned;
+        printf("int->uint: %u\n", toUnsigned);
+
+        // === Case 6: Cast ulong -> double ===
+        double uf = (double)ul;
+        printf("ulong->double: %.0f\n", uf);
+
+        // === Case 7: Mixed-width binary op (int + long -> long) ===
+        long mixed = l + (long)si;
+        printf("mixed: %lld\n", mixed);
+
+        // === Case 8: Unsigned division vs signed ===
+        // 4000000000 / 2 should be 2000000000 (unsigned), not negative
+        uint udiv_result = big / 2;
+        printf("udiv: %u\n", udiv_result);
+
+        return 0;
+    }
+}

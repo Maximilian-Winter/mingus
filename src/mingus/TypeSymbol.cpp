@@ -46,18 +46,35 @@ bool PrimitiveTypeSymbol::isNumeric() const {
     return primitiveKind == PrimitiveKind::Int
         || primitiveKind == PrimitiveKind::Double
         || primitiveKind == PrimitiveKind::Float
-        || primitiveKind == PrimitiveKind::Byte;
+        || primitiveKind == PrimitiveKind::Byte
+        || primitiveKind == PrimitiveKind::Short
+        || primitiveKind == PrimitiveKind::UShort
+        || primitiveKind == PrimitiveKind::UInt
+        || primitiveKind == PrimitiveKind::Long
+        || primitiveKind == PrimitiveKind::ULong;
 }
 
 bool PrimitiveTypeSymbol::isIntegral() const {
     return primitiveKind == PrimitiveKind::Int
         || primitiveKind == PrimitiveKind::Byte
-        || primitiveKind == PrimitiveKind::Char;
+        || primitiveKind == PrimitiveKind::Char
+        || primitiveKind == PrimitiveKind::Short
+        || primitiveKind == PrimitiveKind::UShort
+        || primitiveKind == PrimitiveKind::UInt
+        || primitiveKind == PrimitiveKind::Long
+        || primitiveKind == PrimitiveKind::ULong;
 }
 
 bool PrimitiveTypeSymbol::isFloating() const {
     return primitiveKind == PrimitiveKind::Double
         || primitiveKind == PrimitiveKind::Float;
+}
+
+bool PrimitiveTypeSymbol::isUnsigned() const {
+    return primitiveKind == PrimitiveKind::Byte
+        || primitiveKind == PrimitiveKind::UShort
+        || primitiveKind == PrimitiveKind::UInt
+        || primitiveKind == PrimitiveKind::ULong;
 }
 
 // ============================================================================

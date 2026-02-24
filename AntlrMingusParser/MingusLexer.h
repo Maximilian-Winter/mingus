@@ -1,5 +1,5 @@
 
-// Generated from MingusLexer.g4 by ANTLR 4.13.2
+// Generated from antlr4_grammar/MingusLexer.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -26,25 +26,26 @@ public:
     MoveKeyword = 39, WeakKeyword = 40, SharedKeyword = 41, ImportDirective = 42, 
     FromDirective = 43, AsKeyword = 44, SizeOfKeyword = 45, AlignOfKeyword = 46, 
     IntegerType = 47, DoubleType = 48, FloatType = 49, ByteType = 50, StringType = 51, 
-    CharType = 52, BoolType = 53, VoidType = 54, BooleanLiteral = 55, AssignOperator = 56, 
-    PlusAssignOperator = 57, MinusAssignOperator = 58, MultiplyAssignOperator = 59, 
-    DivideAssignOperator = 60, ModuloAssignOperator = 61, BitwiseAndAssignOperator = 62, 
-    BitwiseOrAssignOperator = 63, BitwiseXorAssignOperator = 64, BitwiseLeftShiftAssignOperator = 65, 
-    BitwiseRightShiftAssignOperator = 66, LogicalOrOperator = 67, LogicalAndOperator = 68, 
-    UnequalOperator = 69, EqualOperator = 70, GreaterEqualOperator = 71, 
-    SmallerEqualOperator = 72, GreaterOperator = 73, SmallerOperator = 74, 
-    ShiftLeftOperator = 75, ShiftRightOperator = 76, PlusPlusOperator = 77, 
-    MinusMinusOperator = 78, PlusOperator = 79, MinusOperator = 80, StarOperator = 81, 
-    DivideOperator = 82, ModuloOperator = 83, LogicalNegationOperator = 84, 
-    ComplimentOperator = 85, SingleAndOperator = 86, BitwiseXorOperator = 87, 
-    BitwiseOrOperator = 88, PipeOperator = 89, ArrowOperator = 90, ReferenceAccessOperator = 91, 
-    DotOperator = 92, Ellipsis = 93, DotDotOperator = 94, QuestionMarkOperator = 95, 
-    ColonOperator = 96, SemicolonSeparator = 97, CommaSeparator = 98, UnderscoreWildcard = 99, 
-    OpeningRoundBracket = 100, ClosingRoundBracket = 101, SquareBracketLeft = 102, 
-    SquareBracketRight = 103, FloatingLiteral = 104, IntegerLiteral = 105, 
-    CharLiteral = 106, Identifier = 107, BLOCK_COMMENT = 108, LINE_COMMENT = 109, 
-    WS = 110, DQUOTE = 111, CURLY_L = 112, CURLY_R = 113, TEXT = 114, BACKSLASH_PAREN = 115, 
-    ESCAPE_SEQUENCE = 116
+    CharType = 52, BoolType = 53, VoidType = 54, ShortType = 55, UShortType = 56, 
+    UIntType = 57, LongType = 58, ULongType = 59, BooleanLiteral = 60, AssignOperator = 61, 
+    PlusAssignOperator = 62, MinusAssignOperator = 63, MultiplyAssignOperator = 64, 
+    DivideAssignOperator = 65, ModuloAssignOperator = 66, BitwiseAndAssignOperator = 67, 
+    BitwiseOrAssignOperator = 68, BitwiseXorAssignOperator = 69, BitwiseLeftShiftAssignOperator = 70, 
+    BitwiseRightShiftAssignOperator = 71, LogicalOrOperator = 72, LogicalAndOperator = 73, 
+    UnequalOperator = 74, EqualOperator = 75, GreaterEqualOperator = 76, 
+    SmallerEqualOperator = 77, GreaterOperator = 78, SmallerOperator = 79, 
+    ShiftLeftOperator = 80, ShiftRightOperator = 81, PlusPlusOperator = 82, 
+    MinusMinusOperator = 83, PlusOperator = 84, MinusOperator = 85, StarOperator = 86, 
+    DivideOperator = 87, ModuloOperator = 88, LogicalNegationOperator = 89, 
+    ComplimentOperator = 90, SingleAndOperator = 91, BitwiseXorOperator = 92, 
+    BitwiseOrOperator = 93, PipeOperator = 94, ArrowOperator = 95, ReferenceAccessOperator = 96, 
+    DotOperator = 97, Ellipsis = 98, DotDotOperator = 99, QuestionMarkOperator = 100, 
+    ColonOperator = 101, SemicolonSeparator = 102, CommaSeparator = 103, 
+    UnderscoreWildcard = 104, OpeningRoundBracket = 105, ClosingRoundBracket = 106, 
+    SquareBracketLeft = 107, SquareBracketRight = 108, FloatingLiteral = 109, 
+    IntegerLiteral = 110, CharLiteral = 111, Identifier = 112, BLOCK_COMMENT = 113, 
+    LINE_COMMENT = 114, WS = 115, DQUOTE = 116, CURLY_L = 117, CURLY_R = 118, 
+    TEXT = 119, BACKSLASH_PAREN = 120, ESCAPE_SEQUENCE = 121
   };
 
   enum {

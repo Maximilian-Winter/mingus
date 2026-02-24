@@ -39,13 +39,19 @@ namespace codegen {
 bool IRGenerator::isIntegerKind(TypeSymbol* t) {
     if (!t) return false;
     if (auto* p = t->as<PrimitiveTypeSymbol>()) {
-        return p->primitiveKind == PrimitiveKind::Int ||
-               p->primitiveKind == PrimitiveKind::Byte ||
-               p->primitiveKind == PrimitiveKind::Char;
+        return p->isIntegral();
     }
     if (auto* e = t->as<EnumSymbol>()) {
         if (e->underlyingType) return isIntegerKind(e->underlyingType.get());
         return true;  // default int
+    }
+    return false;
+}
+
+bool IRGenerator::isUnsignedKind(TypeSymbol* t) {
+    if (!t) return false;
+    if (auto* p = t->as<PrimitiveTypeSymbol>()) {
+        return p->isUnsigned();
     }
     return false;
 }
@@ -213,6 +219,16 @@ llvm::DIType* IRGenerator::mapDebugType(TypeSymbol* type) {
                     diBuilder_->createBasicType("char", 8, llvm::dwarf::DW_ATE_signed_char), 64);
             case PrimitiveKind::Void:
                 return nullptr;
+            case PrimitiveKind::Short:
+                return diBuilder_->createBasicType("short", 16, llvm::dwarf::DW_ATE_signed);
+            case PrimitiveKind::UShort:
+                return diBuilder_->createBasicType("ushort", 16, llvm::dwarf::DW_ATE_unsigned);
+            case PrimitiveKind::UInt:
+                return diBuilder_->createBasicType("uint", 32, llvm::dwarf::DW_ATE_unsigned);
+            case PrimitiveKind::Long:
+                return diBuilder_->createBasicType("long", 64, llvm::dwarf::DW_ATE_signed);
+            case PrimitiveKind::ULong:
+                return diBuilder_->createBasicType("ulong", 64, llvm::dwarf::DW_ATE_unsigned);
         }
     }
 
@@ -267,6 +283,11 @@ llvm::Type* IRGenerator::mapType(TypeSymbol* type) {
             case PrimitiveKind::Bool:   return llvm::Type::getInt1Ty(context_);
             case PrimitiveKind::Void:   return llvm::Type::getVoidTy(context_);
             case PrimitiveKind::String: return llvm::PointerType::getUnqual(context_);
+            case PrimitiveKind::Short:  return llvm::Type::getInt16Ty(context_);
+            case PrimitiveKind::UShort: return llvm::Type::getInt16Ty(context_);
+            case PrimitiveKind::UInt:   return llvm::Type::getInt32Ty(context_);
+            case PrimitiveKind::Long:   return llvm::Type::getInt64Ty(context_);
+            case PrimitiveKind::ULong:  return llvm::Type::getInt64Ty(context_);
         }
     }
 
@@ -414,6 +435,11 @@ static std::string mangleTypeTag(TypeSymbol* type) {
             case PrimitiveKind::Char:   return "c";
             case PrimitiveKind::String: return "s";
             case PrimitiveKind::Void:   return "v";
+            case PrimitiveKind::Short:  return "h";
+            case PrimitiveKind::UShort: return "t";
+            case PrimitiveKind::UInt:   return "j";
+            case PrimitiveKind::Long:   return "l";
+            case PrimitiveKind::ULong:  return "m";
         }
     }
     if (auto* ptr = type->as<PointerTypeSymbol>()) {
@@ -2831,6 +2857,27 @@ void IRGenerator::visit(VariableDeclaration& node) {
                 }
             }
 
+            // Implicit integer width coercion (e.g. int → short, int → long)
+            if (lastValue_->getType()->isIntegerTy() && varTy->isIntegerTy() &&
+                lastValue_->getType() != varTy) {
+                unsigned srcBits = lastValue_->getType()->getIntegerBitWidth();
+                unsigned dstBits = varTy->getIntegerBitWidth();
+                if (srcBits < dstBits) {
+                    lastValue_ = isUnsignedKind(node.initializer->resolvedType.get())
+                        ? builder_.CreateZExt(lastValue_, varTy, "var.zext")
+                        : builder_.CreateSExt(lastValue_, varTy, "var.sext");
+                } else if (srcBits > dstBits) {
+                    lastValue_ = builder_.CreateTrunc(lastValue_, varTy, "var.trunc");
+                }
+            }
+
+            // Implicit int-to-float coercion (e.g. int → float, int → double)
+            if (lastValue_->getType()->isIntegerTy() && varTy->isFloatingPointTy()) {
+                lastValue_ = isUnsignedKind(node.initializer->resolvedType.get())
+                    ? builder_.CreateUIToFP(lastValue_, varTy, "var.uitofp")
+                    : builder_.CreateSIToFP(lastValue_, varTy, "var.sitofp");
+            }
+
             // Implicit String → string conversion
             if (varSym->getType() && isStringKind(varSym->getType().get())) {
                 if (node.initializer->resolvedType &&
@@ -2933,7 +2980,10 @@ void IRGenerator::visit(TupleDestructuringDeclaration& node) {
 // Expression visitors
 //================================================================================
 void IRGenerator::visit(IntegerLiteral& node) {
-    lastValue_ = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), node.value);
+    // Use resolved type to emit correct width (i8/i16/i32/i64)
+    llvm::Type* ty = node.resolvedType ? mapType(node.resolvedType.get())
+                                       : llvm::Type::getInt32Ty(context_);
+    lastValue_ = llvm::ConstantInt::get(ty, node.value, /*isSigned=*/true);
 }
 
 void IRGenerator::visit(FloatLiteral& node) {
@@ -2982,7 +3032,23 @@ void IRGenerator::visit(InterpolatedStringExpression& node) {
                 }
                 formatStr += "%f";
             } else if (isIntegerKind(exprType)) {
-                formatStr += "%d";
+                // Promote small ints (i8/i16) to i32 for snprintf varargs
+                if (val->getType()->isIntegerTy() && val->getType()->getIntegerBitWidth() < 32) {
+                    val = isUnsignedKind(exprType)
+                        ? builder_.CreateZExt(val, llvm::Type::getInt32Ty(context_), "interp.promote")
+                        : builder_.CreateSExt(val, llvm::Type::getInt32Ty(context_), "interp.promote");
+                }
+                // Choose format specifier based on width and signedness
+                auto* primExpr = exprType->as<PrimitiveTypeSymbol>();
+                bool is64bit = primExpr && (primExpr->primitiveKind == PrimitiveKind::Long ||
+                                            primExpr->primitiveKind == PrimitiveKind::ULong);
+                if (is64bit) {
+                    formatStr += isUnsignedKind(exprType) ? "%llu" : "%lld";
+                } else if (isUnsignedKind(exprType)) {
+                    formatStr += "%u";
+                } else {
+                    formatStr += "%d";
+                }
             } else if (isBoolKind(exprType)) {
                 formatStr += "%d";
             } else if (isPointerKind(exprType)) {
@@ -3406,10 +3472,14 @@ void IRGenerator::visit(BinaryExpression& node) {
     bool rightIsInt = isIntegerKind(rightType);
 
     if (leftIsInt && rightIsFloat) {
-        leftVal = builder_.CreateSIToFP(leftVal, rightVal->getType(), "widen");
+        leftVal = isUnsignedKind(leftType)
+            ? builder_.CreateUIToFP(leftVal, rightVal->getType(), "uwiden")
+            : builder_.CreateSIToFP(leftVal, rightVal->getType(), "widen");
         leftIsFloat = true; leftIsInt = false;
     } else if (leftIsFloat && rightIsInt) {
-        rightVal = builder_.CreateSIToFP(rightVal, leftVal->getType(), "widen");
+        rightVal = isUnsignedKind(rightType)
+            ? builder_.CreateUIToFP(rightVal, leftVal->getType(), "uwiden")
+            : builder_.CreateSIToFP(rightVal, leftVal->getType(), "widen");
         rightIsFloat = true; rightIsInt = false;
     }
 
@@ -3433,30 +3503,49 @@ void IRGenerator::visit(BinaryExpression& node) {
 
     // Integer operations
     if (leftIsInt && rightIsInt) {
+        bool isUnsOp = isUnsignedKind(leftType) || isUnsignedKind(rightType);
         if (leftVal->getType() != rightVal->getType()) {
             if (leftVal->getType()->getIntegerBitWidth() < rightVal->getType()->getIntegerBitWidth()) {
-                leftVal = builder_.CreateSExt(leftVal, rightVal->getType(), "sext");
+                leftVal = isUnsOp
+                    ? builder_.CreateZExt(leftVal, rightVal->getType(), "zext")
+                    : builder_.CreateSExt(leftVal, rightVal->getType(), "sext");
             } else {
-                rightVal = builder_.CreateSExt(rightVal, leftVal->getType(), "sext");
+                rightVal = isUnsOp
+                    ? builder_.CreateZExt(rightVal, leftVal->getType(), "zext")
+                    : builder_.CreateSExt(rightVal, leftVal->getType(), "sext");
             }
         }
         switch (node.op) {
             case BinaryOp::Add: lastValue_ = builder_.CreateAdd(leftVal, rightVal, "add"); return;
             case BinaryOp::Sub: lastValue_ = builder_.CreateSub(leftVal, rightVal, "sub"); return;
             case BinaryOp::Mul: lastValue_ = builder_.CreateMul(leftVal, rightVal, "mul"); return;
-            case BinaryOp::Div: lastValue_ = builder_.CreateSDiv(leftVal, rightVal, "sdiv"); return;
-            case BinaryOp::Mod: lastValue_ = builder_.CreateSRem(leftVal, rightVal, "srem"); return;
+            case BinaryOp::Div:
+                lastValue_ = isUnsOp ? builder_.CreateUDiv(leftVal, rightVal, "udiv")
+                                     : builder_.CreateSDiv(leftVal, rightVal, "sdiv"); return;
+            case BinaryOp::Mod:
+                lastValue_ = isUnsOp ? builder_.CreateURem(leftVal, rightVal, "urem")
+                                     : builder_.CreateSRem(leftVal, rightVal, "srem"); return;
             case BinaryOp::Equal:        lastValue_ = builder_.CreateICmpEQ(leftVal, rightVal, "eq"); return;
             case BinaryOp::NotEqual:     lastValue_ = builder_.CreateICmpNE(leftVal, rightVal, "ne"); return;
-            case BinaryOp::Less:         lastValue_ = builder_.CreateICmpSLT(leftVal, rightVal, "slt"); return;
-            case BinaryOp::LessEqual:    lastValue_ = builder_.CreateICmpSLE(leftVal, rightVal, "sle"); return;
-            case BinaryOp::Greater:      lastValue_ = builder_.CreateICmpSGT(leftVal, rightVal, "sgt"); return;
-            case BinaryOp::GreaterEqual: lastValue_ = builder_.CreateICmpSGE(leftVal, rightVal, "sge"); return;
+            case BinaryOp::Less:
+                lastValue_ = isUnsOp ? builder_.CreateICmpULT(leftVal, rightVal, "ult")
+                                     : builder_.CreateICmpSLT(leftVal, rightVal, "slt"); return;
+            case BinaryOp::LessEqual:
+                lastValue_ = isUnsOp ? builder_.CreateICmpULE(leftVal, rightVal, "ule")
+                                     : builder_.CreateICmpSLE(leftVal, rightVal, "sle"); return;
+            case BinaryOp::Greater:
+                lastValue_ = isUnsOp ? builder_.CreateICmpUGT(leftVal, rightVal, "ugt")
+                                     : builder_.CreateICmpSGT(leftVal, rightVal, "sgt"); return;
+            case BinaryOp::GreaterEqual:
+                lastValue_ = isUnsOp ? builder_.CreateICmpUGE(leftVal, rightVal, "uge")
+                                     : builder_.CreateICmpSGE(leftVal, rightVal, "sge"); return;
             case BinaryOp::BitwiseAnd:   lastValue_ = builder_.CreateAnd(leftVal, rightVal, "and"); return;
             case BinaryOp::BitwiseOr:    lastValue_ = builder_.CreateOr(leftVal, rightVal, "or"); return;
             case BinaryOp::BitwiseXor:   lastValue_ = builder_.CreateXor(leftVal, rightVal, "xor"); return;
             case BinaryOp::ShiftLeft:    lastValue_ = builder_.CreateShl(leftVal, rightVal, "shl"); return;
-            case BinaryOp::ShiftRight:   lastValue_ = builder_.CreateAShr(leftVal, rightVal, "ashr"); return;
+            case BinaryOp::ShiftRight:
+                lastValue_ = isUnsOp ? builder_.CreateLShr(leftVal, rightVal, "lshr")
+                                     : builder_.CreateAShr(leftVal, rightVal, "ashr"); return;
             default: break;
         }
     }
@@ -3600,6 +3689,32 @@ void IRGenerator::visit(AssignmentExpression& node) {
                 lastValue_ = llvm::ConstantAggregateZero::get(getFatPtrType());
             }
 
+            // Implicit integer width coercion for assignment
+            llvm::Type* storeTy = targetType ? mapType(targetType) : nullptr;
+            if (storeTy && lastValue_->getType()->isIntegerTy() && storeTy->isIntegerTy() &&
+                lastValue_->getType() != storeTy) {
+                unsigned srcBits = lastValue_->getType()->getIntegerBitWidth();
+                unsigned dstBits = storeTy->getIntegerBitWidth();
+                TypeSymbol* srcType = node.value->resolvedType ?
+                    node.value->resolvedType->as<TypeSymbol>() : nullptr;
+                if (srcBits < dstBits) {
+                    lastValue_ = isUnsignedKind(srcType)
+                        ? builder_.CreateZExt(lastValue_, storeTy, "assign.zext")
+                        : builder_.CreateSExt(lastValue_, storeTy, "assign.sext");
+                } else if (srcBits > dstBits) {
+                    lastValue_ = builder_.CreateTrunc(lastValue_, storeTy, "assign.trunc");
+                }
+            }
+
+            // Implicit int-to-float coercion for assignment
+            if (storeTy && lastValue_->getType()->isIntegerTy() && storeTy->isFloatingPointTy()) {
+                TypeSymbol* srcType = node.value->resolvedType ?
+                    node.value->resolvedType->as<TypeSymbol>() : nullptr;
+                lastValue_ = isUnsignedKind(srcType)
+                    ? builder_.CreateUIToFP(lastValue_, storeTy, "assign.uitofp")
+                    : builder_.CreateSIToFP(lastValue_, storeTy, "assign.sitofp");
+            }
+
             builder_.CreateStore(lastValue_, targetPtr);
 
             // Retain new closure envPtr when storing into a field
@@ -3691,8 +3806,11 @@ void IRGenerator::visit(AssignmentExpression& node) {
         if (!rhsVal) return;
 
         bool isFloat = isFloatingKind(targetType);
+        bool isUnsOp = isUnsignedKind(targetType);
         if (isFloat && rhsVal->getType()->isIntegerTy()) {
-            rhsVal = builder_.CreateSIToFP(rhsVal, oldVal->getType(), "widen");
+            rhsVal = isUnsOp
+                ? builder_.CreateUIToFP(rhsVal, oldVal->getType(), "uwiden")
+                : builder_.CreateSIToFP(rhsVal, oldVal->getType(), "widen");
         }
 
         llvm::Value* result = nullptr;
@@ -3709,15 +3827,19 @@ void IRGenerator::visit(AssignmentExpression& node) {
                                  : builder_.CreateMul(oldVal, rhsVal, "mul"); break;
             case AssignOp::DivAssign:
                 result = isFloat ? builder_.CreateFDiv(oldVal, rhsVal, "div")
-                                 : builder_.CreateSDiv(oldVal, rhsVal, "div"); break;
+                    : (isUnsOp ? builder_.CreateUDiv(oldVal, rhsVal, "udiv")
+                               : builder_.CreateSDiv(oldVal, rhsVal, "div")); break;
             case AssignOp::ModAssign:
                 result = isFloat ? builder_.CreateFRem(oldVal, rhsVal, "mod")
-                                 : builder_.CreateSRem(oldVal, rhsVal, "mod"); break;
+                    : (isUnsOp ? builder_.CreateURem(oldVal, rhsVal, "umod")
+                               : builder_.CreateSRem(oldVal, rhsVal, "mod")); break;
             case AssignOp::AndAssign:    result = builder_.CreateAnd(oldVal, rhsVal, "and"); break;
             case AssignOp::OrAssign:     result = builder_.CreateOr(oldVal, rhsVal, "or"); break;
             case AssignOp::XorAssign:    result = builder_.CreateXor(oldVal, rhsVal, "xor"); break;
             case AssignOp::ShiftLeftAssign:  result = builder_.CreateShl(oldVal, rhsVal, "shl"); break;
-            case AssignOp::ShiftRightAssign: result = builder_.CreateAShr(oldVal, rhsVal, "ashr"); break;
+            case AssignOp::ShiftRightAssign:
+                result = isUnsOp ? builder_.CreateLShr(oldVal, rhsVal, "lshr")
+                                 : builder_.CreateAShr(oldVal, rhsVal, "ashr"); break;
             default: break;
         }
 
@@ -4306,8 +4428,13 @@ void IRGenerator::visit(CallExpression& node) {
                 if (isVariadicArg && lastValue_) {
                     auto* ty = lastValue_->getType();
                     if (ty->isIntegerTy() && ty->getIntegerBitWidth() < 32) {
-                        lastValue_ = builder_.CreateSExt(lastValue_,
-                            llvm::Type::getInt32Ty(context_), "vararg.promote");
+                        TypeSymbol* argType = arg->resolvedType ?
+                            arg->resolvedType->as<TypeSymbol>() : nullptr;
+                        lastValue_ = isUnsignedKind(argType)
+                            ? builder_.CreateZExt(lastValue_,
+                                llvm::Type::getInt32Ty(context_), "vararg.promote")
+                            : builder_.CreateSExt(lastValue_,
+                                llvm::Type::getInt32Ty(context_), "vararg.promote");
                     } else if (ty->isFloatTy()) {
                         lastValue_ = builder_.CreateFPExt(lastValue_,
                             llvm::Type::getDoubleTy(context_), "vararg.fpromote");
@@ -4347,7 +4474,12 @@ void IRGenerator::visit(CallExpression& node) {
             auto* actualTy = args[i]->getType();
             if (expectedTy->isIntegerTy() && actualTy->isIntegerTy() &&
                 expectedTy->getIntegerBitWidth() > actualTy->getIntegerBitWidth()) {
-                args[i] = builder_.CreateSExt(args[i], expectedTy, "arg.widen");
+                // Determine signedness from the argument expression
+                TypeSymbol* argExprType = (i < node.arguments->expressions.size())
+                    ? node.arguments->expressions[i]->resolvedType.get() : nullptr;
+                args[i] = isUnsignedKind(argExprType)
+                    ? builder_.CreateZExt(args[i], expectedTy, "arg.uwiden")
+                    : builder_.CreateSExt(args[i], expectedTy, "arg.widen");
             }
         }
     }
@@ -4734,9 +4866,13 @@ void IRGenerator::visit(CastExpression& node) {
         node.targetType->resolvedType->as<TypeSymbol>() : nullptr;
 
     if (isIntegerKind(fromType) && isFloatingKind(toType)) {
-        lastValue_ = builder_.CreateSIToFP(val, targetTy, "sitofp");
+        lastValue_ = isUnsignedKind(fromType)
+            ? builder_.CreateUIToFP(val, targetTy, "uitofp")
+            : builder_.CreateSIToFP(val, targetTy, "sitofp");
     } else if (isFloatingKind(fromType) && isIntegerKind(toType)) {
-        lastValue_ = builder_.CreateFPToSI(val, targetTy, "fptosi");
+        lastValue_ = isUnsignedKind(toType)
+            ? builder_.CreateFPToUI(val, targetTy, "fptoui")
+            : builder_.CreateFPToSI(val, targetTy, "fptosi");
     } else if (isFloatingKind(fromType) && isFloatingKind(toType)) {
         if (val->getType()->getPrimitiveSizeInBits() < targetTy->getPrimitiveSizeInBits()) {
             lastValue_ = builder_.CreateFPExt(val, targetTy, "fpext");
@@ -4746,7 +4882,11 @@ void IRGenerator::visit(CastExpression& node) {
     } else if (isIntegerKind(fromType) && isIntegerKind(toType)) {
         unsigned fromBits = val->getType()->getIntegerBitWidth();
         unsigned toBits = targetTy->getIntegerBitWidth();
-        if (fromBits < toBits) lastValue_ = builder_.CreateSExt(val, targetTy, "sext");
+        if (fromBits < toBits) {
+            lastValue_ = isUnsignedKind(fromType)
+                ? builder_.CreateZExt(val, targetTy, "zext")
+                : builder_.CreateSExt(val, targetTy, "sext");
+        }
         else if (fromBits > toBits) lastValue_ = builder_.CreateTrunc(val, targetTy, "trunc");
     } else if (isPointerKind(fromType) && isIntegerKind(toType)) {
         lastValue_ = builder_.CreatePtrToInt(val, targetTy, "ptrtoint");
@@ -4922,7 +5062,9 @@ void IRGenerator::visit(MatchExpression& node) {
             } else {
                 if (subjectVal->getType() != patVal->getType() &&
                     subjectVal->getType()->isIntegerTy() && patVal->getType()->isIntegerTy()) {
-                    patVal = builder_.CreateSExtOrTrunc(patVal, subjectVal->getType());
+                    patVal = isUnsignedKind(subjectType)
+                        ? builder_.CreateZExtOrTrunc(patVal, subjectVal->getType())
+                        : builder_.CreateSExtOrTrunc(patVal, subjectVal->getType());
                 }
                 cond = builder_.CreateICmpEQ(subjectVal, patVal, "match.cmp");
             }

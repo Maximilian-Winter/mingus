@@ -110,27 +110,35 @@ TypeSymbolPtr TypeChecker::getWiderType(TypeSymbol* a, TypeSymbol* b) {
     auto* pb = b->as<PrimitiveTypeSymbol>();
     if (!pa || !pb) return symbolTable_.getErrorType();
 
-    // Widening rules: double > float > int > char > byte
-    auto rank = [](PrimitiveKind k) -> int {
+    // Width-based ranking: wider type wins, float outranks all integers
+    auto widthRank = [](PrimitiveKind k) -> int {
         switch (k) {
-            case PrimitiveKind::Byte:   return 1;
-            case PrimitiveKind::Char:   return 2;
-            case PrimitiveKind::Int:    return 3;
-            case PrimitiveKind::Float:  return 4;
-            case PrimitiveKind::Double: return 5;
+            case PrimitiveKind::Byte:   case PrimitiveKind::Char:   return 1; // 8-bit
+            case PrimitiveKind::Short:  case PrimitiveKind::UShort: return 2; // 16-bit
+            case PrimitiveKind::Int:    case PrimitiveKind::UInt:   return 3; // 32-bit
+            case PrimitiveKind::Long:   case PrimitiveKind::ULong:  return 4; // 64-bit
+            case PrimitiveKind::Float:  return 5;
+            case PrimitiveKind::Double: return 6;
             default: return 0;
         }
     };
 
-    int ra = rank(pa->primitiveKind);
-    int rb = rank(pb->primitiveKind);
+    int ra = widthRank(pa->primitiveKind);
+    int rb = widthRank(pb->primitiveKind);
     if (ra == 0 || rb == 0) return symbolTable_.getErrorType();
 
-    if (ra >= rb) {
+    // Different width ranks: wider type wins
+    if (ra > rb) return symbolTable_.resolveType(a->getName());
+    if (rb > ra) return symbolTable_.resolveType(b->getName());
+
+    // Same rank, different signs: unsigned wins (C convention)
+    if (pa->isUnsigned() && !pb->isUnsigned())
         return symbolTable_.resolveType(a->getName());
-    } else {
+    if (!pa->isUnsigned() && pb->isUnsigned())
         return symbolTable_.resolveType(b->getName());
-    }
+
+    // Same rank, same sign (e.g. byte vs char at rank 1)
+    return symbolTable_.resolveType(a->getName());
 }
 
 std::shared_ptr<OperatorSymbol> TypeChecker::findOperatorOverload(
@@ -505,7 +513,12 @@ void TypeChecker::visit(SwitchStatement& node) {
 // ============================================================================
 
 void TypeChecker::visit(IntegerLiteral& node) {
-    node.resolvedType = symbolTable_.getIntType();
+    // Auto-promote based on value (C++ convention: int → long for large values)
+    if (node.value >= -2147483648LL && node.value <= 2147483647LL) {
+        node.resolvedType = symbolTable_.getIntType();      // fits in i32
+    } else {
+        node.resolvedType = symbolTable_.getLongType();      // needs i64
+    }
 }
 
 void TypeChecker::visit(FloatLiteral& node) {

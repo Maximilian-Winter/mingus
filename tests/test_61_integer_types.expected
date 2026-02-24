@@ -1,0 +1,15 @@
+short: 1000
+ushort: 50000
+uint: 3000000000
+long: 9000000000
+ulong: 18000000000
+short add: 1500
+uint div: 1500000000
+long mul: 18000000000
+uint mod: 1
+uint cmp: correct
+short->int: 1000
+int->uint: 42
+ulong->double: 18000000000
+mixed: 9000001000
+udiv: 2000000000
