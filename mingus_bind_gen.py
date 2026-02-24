@@ -129,6 +129,7 @@ class MingusBindingGenerator:
         "new", "delete", "null", "true", "false", "this", "extern", "import",
         "using", "match", "operator", "constructor", "destructor",
         "int", "double", "float", "byte", "char", "bool", "string", "void",
+        "short", "ushort", "uint", "long", "ulong",
         "shared", "opaque", "raw", "weak", "link",
     }
 
@@ -371,25 +372,35 @@ class MingusBindingGenerator:
         if kind == TypeKind.BOOL:
             return ("bool", "")
 
-        # 8-bit: char, signed char, unsigned char
-        if kind in (TypeKind.CHAR_S, TypeKind.SCHAR, TypeKind.CHAR_U, TypeKind.UCHAR):
+        # 8-bit: signed char → char, unsigned char → byte
+        if kind in (TypeKind.CHAR_S, TypeKind.SCHAR):
+            return ("char", "")
+        if kind in (TypeKind.CHAR_U, TypeKind.UCHAR):
             return ("byte", "")
 
-        # 16-bit: short
-        if kind in (TypeKind.SHORT, TypeKind.USHORT):
-            return ("int", "narrowed from 16-bit to int(i32)")
+        # 16-bit: short → short, unsigned short → ushort
+        if kind == TypeKind.SHORT:
+            return ("short", "")
+        if kind == TypeKind.USHORT:
+            return ("ushort", "")
 
-        # 32-bit: int
-        if kind in (TypeKind.INT, TypeKind.UINT):
+        # 32-bit: int → int, unsigned int → uint
+        if kind == TypeKind.INT:
             return ("int", "")
+        if kind == TypeKind.UINT:
+            return ("uint", "")
 
-        # Platform-dependent: long (32-bit on Windows, 64-bit on Linux)
-        if kind in (TypeKind.LONG, TypeKind.ULONG):
-            return ("int", "C long — may be 64-bit on non-Windows")
+        # Platform-dependent: C long (32-bit on Windows LLP64, 64-bit on Linux LP64)
+        if kind == TypeKind.LONG:
+            return ("int", "C long — 64-bit on LP64 platforms (Linux/macOS)")
+        if kind == TypeKind.ULONG:
+            return ("uint", "C unsigned long — 64-bit on LP64 platforms (Linux/macOS)")
 
-        # 64-bit: long long
-        if kind in (TypeKind.LONGLONG, TypeKind.ULONGLONG):
-            return ("int", "64-bit integer mapped to int(i32) — may truncate")
+        # 64-bit: long long → long, unsigned long long → ulong
+        if kind == TypeKind.LONGLONG:
+            return ("long", "")
+        if kind == TypeKind.ULONGLONG:
+            return ("ulong", "")
 
         # Float / Double
         if kind == TypeKind.FLOAT:
