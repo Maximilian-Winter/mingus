@@ -84,9 +84,12 @@ public:
     void visit(DestructorDeclaration& node) override;
     void visit(OperatorDeclaration& node) override;
     void visit(ExternFunctionDeclaration& node) override;
+    void visit(ExternVariableDeclaration& node) override;
     void visit(EnumMemberNode& node) override;
     void visit(EnumDeclaration& node) override;
     void visit(StructDeclaration& node) override;
+    void visit(UnionDeclaration& node) override;
+    void visit(ExternUnionDeclaration& node) override;
     void visit(ClassDeclaration& node) override;
     void visit(InterfaceDeclaration& node) override;
     void visit(ImportDeclaration& node) override;
@@ -198,6 +201,9 @@ private:
 
     // Struct cleanup functions for structs with closure-typed fields
     std::unordered_map<std::string, llvm::Function*> structCleanupCache_;
+
+    // Global variables (module-level, extern, static locals)
+    std::unordered_map<Symbol*, llvm::GlobalVariable*> globalVariableCache_;
 
     //==========================================================================
     // Loop context (for break/continue, supports labeled loops)
@@ -317,6 +323,9 @@ private:
     // Returns nullptr if not in a method context or symbol is not a field
     llvm::Value* emitFieldGEP(VariableSymbol* fieldSym);
 
+    // Evaluate constant expression for global/static variable initializers
+    llvm::Constant* emitConstantInitializer(ExpressionBaseNode* expr, llvm::Type* targetTy);
+
     //==========================================================================
     // RAII helpers
     //==========================================================================
@@ -332,6 +341,7 @@ private:
     //==========================================================================
     void declareStructTypes(ProgramNode& program);
     void declareExternFunctions(ProgramNode& program);
+    void declareExternGlobals(ProgramNode& program);
     void declareFunctions(ProgramNode& program);
     void declareVtables(ProgramNode& program);
     void declareItables(ProgramNode& program);

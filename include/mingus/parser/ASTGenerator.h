@@ -61,6 +61,7 @@ public:
     std::any visitClassDeclaration(MingusParser::ClassDeclarationContext* ctx) override;
     std::any visitInterfaceDeclaration(MingusParser::InterfaceDeclarationContext* ctx) override;
     std::any visitStructDeclaration(MingusParser::StructDeclarationContext* ctx) override;
+    std::any visitUnionDeclaration(MingusParser::UnionDeclarationContext* ctx) override;
     std::any visitEnumDeclaration(MingusParser::EnumDeclarationContext* ctx) override;
     std::any visitEnumMember(MingusParser::EnumMemberContext* ctx) override;
     std::any visitFunctionDeclaration(MingusParser::FunctionDeclarationContext* ctx) override;

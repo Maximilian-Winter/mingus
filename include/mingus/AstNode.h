@@ -401,6 +401,7 @@ public:
     virtual void visit(ConstructorDeclaration& node) {}
     virtual void visit(DestructorDeclaration& node) {}
     virtual void visit(ExternFunctionDeclaration& node) {}
+    virtual void visit(ExternVariableDeclaration& node) {}
     virtual void visit(OperatorDeclaration& node) {}
     virtual void visit(EnumMemberNode& node) {}
     virtual void visit(EnumDeclaration& node) {}
@@ -412,6 +413,8 @@ public:
     virtual void visit(LinkDirective& node) {}
     virtual void visit(OpaqueTypeDeclaration& node) {}
     virtual void visit(ExternStructDeclaration& node) {}
+    virtual void visit(UnionDeclaration& node) {}
+    virtual void visit(ExternUnionDeclaration& node) {}
 };
 
 } // namespace mingus

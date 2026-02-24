@@ -153,6 +153,7 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     // Phase A: Forward declarations
     declareStructTypes(program);
     declareExternFunctions(program);
+    declareExternGlobals(program);
     declareFunctions(program);
     declareVtables(program);
     declareItables(program);
@@ -564,6 +565,25 @@ void IRGenerator::declareStructTypes(ProgramNode& program) {
         std::vector<llvm::Type*> fieldTypes;
 
         if (auto* ss = typeSym->as<StructSymbol>()) {
+            if (ss->isUnion) {
+                // Union: body = { [maxFieldSize x i8] }
+                size_t maxSize = 0;
+                for (auto& field : ss->fields) {
+                    if (!field->getType()) continue;
+                    auto* fieldTy = mapType(field->getType());
+                    if (!fieldTy) continue;
+                    size_t sz = module_->getDataLayout().getTypeAllocSize(fieldTy);
+                    if (sz > maxSize) maxSize = sz;
+                }
+                if (maxSize > 0) {
+                    auto* arrayTy = llvm::ArrayType::get(
+                        llvm::Type::getInt8Ty(context_), maxSize);
+                    structTy->setBody({ arrayTy });
+                } else {
+                    structTy->setBody(llvm::Type::getInt8Ty(context_));
+                }
+                continue;  // skip the common setBody below
+            }
             for (auto& field : ss->fields) {
                 fieldTypes.push_back(mapType(field->getType()));
             }
@@ -755,6 +775,59 @@ void IRGenerator::declareExternFunctions(ProgramNode& program) {
     }
 }
 
+void IRGenerator::declareExternGlobals(ProgramNode& program) {
+    for (auto& mod : program.modules) {
+        if (!mod->resolvedModule) continue;
+        auto allSyms = mod->resolvedModule->getAllSymbols();
+        for (auto& sym : allSyms) {
+            auto* varSym = sym->as<VariableSymbol>();
+            if (!varSym || !varSym->isExtern) continue;
+            if (varSym->role != VariableRole::Global) continue;
+            if (globalVariableCache_.count(varSym)) continue;
+
+            llvm::Type* varTy = mapType(varSym->getType());
+            auto* gv = new llvm::GlobalVariable(
+                *module_, varTy, false,  // not constant (extern — mutable by default)
+                llvm::GlobalValue::ExternalLinkage,
+                nullptr,  // no initializer (resolved by linker)
+                varSym->getName());
+            globalVariableCache_[varSym] = gv;
+        }
+    }
+}
+
+llvm::Constant* IRGenerator::emitConstantInitializer(
+    ExpressionBaseNode* expr, llvm::Type* targetTy)
+{
+    // Integer literal
+    if (auto* intLit = expr->as<IntegerLiteral>()) {
+        return llvm::ConstantInt::get(targetTy, intLit->value, /*isSigned=*/true);
+    }
+    // Float literal
+    if (auto* floatLit = expr->as<FloatLiteral>()) {
+        return llvm::ConstantFP::get(targetTy, floatLit->value);
+    }
+    // Boolean literal
+    if (auto* boolLit = expr->as<BoolLiteral>()) {
+        return llvm::ConstantInt::get(targetTy, boolLit->value ? 1 : 0);
+    }
+    // String literal → global string pointer constant
+    if (auto* strLit = expr->as<StringLiteral>()) {
+        auto* strConst = llvm::ConstantDataArray::getString(context_, strLit->value, true);
+        auto* strGlobal = new llvm::GlobalVariable(
+            *module_, strConst->getType(), true,
+            llvm::GlobalValue::PrivateLinkage, strConst, ".str");
+        strGlobal->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        // GEP to get ptr to first element
+        llvm::Constant* zero = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context_), 0);
+        llvm::Constant* indices[] = { zero, zero };
+        return llvm::ConstantExpr::getInBoundsGetElementPtr(
+            strConst->getType(), strGlobal, indices);
+    }
+    // Non-constant expression → return nullptr (caller uses zero-init)
+    return nullptr;
+}
+
 void IRGenerator::declareFunctions(ProgramNode& program) {
     for (auto& mod : program.modules) {
         if (!mod->resolvedModule) continue;
@@ -912,6 +985,10 @@ llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
             auto it = namedValues_.find(ident->resolvedSymbol.get());
             if (it != namedValues_.end()) return it->second;
 
+            // Global variable -> GlobalVariable pointer
+            auto git = globalVariableCache_.find(ident->resolvedSymbol.get());
+            if (git != globalVariableCache_.end()) return git->second;
+
             // Field fallback: bare field name → GEP via this pointer
             if (auto* varSym = ident->resolvedSymbol->as<VariableSymbol>()) {
                 llvm::Value* fieldPtr = emitFieldGEP(varSym);
@@ -947,9 +1024,15 @@ llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
             mem->object->resolvedType->as<TypeSymbol>() : nullptr;
         // Auto-dereference pointer types
         if (auto* ptrTS = objType ? objType->as<PointerTypeSymbol>() : nullptr) {
-            // Shared pointer: adjust from rcPtr to objPtr (skip RC header)
             if (ptrTS->isShared) {
+                // Shared pointer: load rcPtr and adjust past RC header
                 objPtr = emitSharedObjPtr(objPtr);
+            } else if (!mem->isArrow) {
+                // Dot access on raw pointer (e.g., vp.x where vp is Vec2*):
+                // emitLValue returned the alloca — load the pointer value from it.
+                // Arrow access (e.g., a->field) already loaded via accept().
+                objPtr = builder_.CreateLoad(
+                    llvm::PointerType::getUnqual(context_), objPtr, "ptr.load");
             }
             objType = ptrTS->baseType ? ptrTS->baseType->as<TypeSymbol>() : nullptr;
         }
@@ -968,8 +1051,16 @@ llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
                                                     mem->memberName + "_ptr");
                 }
             } else {
-                // Structs: direct field index
+                // Structs and unions: field access
                 if (fieldSym->fieldIndex >= 0) {
+                    if (auto* structSym = objType->as<StructSymbol>()) {
+                        if (structSym->isUnion) {
+                            // Union: all fields at offset 0 — return objPtr directly.
+                            // With opaque pointers, load/store uses the correct field type.
+                            return objPtr;
+                        }
+                    }
+                    // Struct: direct GEP by field index
                     return builder_.CreateStructGEP(structTy, objPtr, fieldSym->fieldIndex,
                                                     mem->memberName + "_ptr");
                 }
@@ -2301,6 +2392,10 @@ void IRGenerator::visit(OperatorDeclaration& node) {
 }
 
 void IRGenerator::visit(ExternFunctionDeclaration& /*node*/) {}
+void IRGenerator::visit(ExternVariableDeclaration& /*node*/) {
+    // Extern globals are declared in declareExternGlobals() during Phase A.
+    // Nothing to do here — the GlobalVariable is already in globalVariableCache_.
+}
 void IRGenerator::visit(EnumMemberNode& /*node*/) {}
 void IRGenerator::visit(EnumDeclaration& /*node*/) {}
 
@@ -2316,6 +2411,22 @@ void IRGenerator::visit(StructDeclaration& node) {
     }
 
     currentStructSym_ = prevStructSym;
+}
+
+void IRGenerator::visit(UnionDeclaration& node) {
+    // Union methods (if any) — same pattern as structs
+    auto* prevStructSym = currentStructSym_;
+    currentStructSym_ = node.resolvedUnion.get();
+
+    for (auto& method : node.methods) {
+        method->accept(*this);
+    }
+
+    currentStructSym_ = prevStructSym;
+}
+
+void IRGenerator::visit(ExternUnionDeclaration& node) {
+    // No-op: extern union types are declared in declareStructTypes Phase A
 }
 
 void IRGenerator::visit(ClassDeclaration& node) {
@@ -2788,6 +2899,49 @@ void IRGenerator::visit(VariableDeclaration& node) {
     llvm::Type* varTy = mapType(varSym->getType());
     if (varTy->isVoidTy()) return;
 
+    // === MODULE-LEVEL GLOBAL VARIABLE ===
+    if (varSym->role == VariableRole::Global) {
+        // Evaluate constant initializer (or zero-init)
+        llvm::Constant* init = nullptr;
+        if (node.initializer) {
+            init = emitConstantInitializer(node.initializer.get(), varTy);
+        }
+        if (!init) {
+            init = llvm::Constant::getNullValue(varTy);
+        }
+
+        auto* gv = new llvm::GlobalVariable(
+            *module_, varTy, node.isConst,
+            llvm::GlobalValue::InternalLinkage,
+            init,
+            currentModuleName_ + "_" + node.name);
+        globalVariableCache_[varSym] = gv;
+        return;
+    }
+
+    // === STATIC LOCAL VARIABLE ===
+    if (node.isStatic) {
+        std::string mangledName = currentModuleName_ + "_"
+            + (currentFunction_ ? currentFunction_->getName().str() : "anon")
+            + "_static_" + node.name;
+
+        llvm::Constant* init = nullptr;
+        if (node.initializer) {
+            init = emitConstantInitializer(node.initializer.get(), varTy);
+        }
+        if (!init) {
+            init = llvm::Constant::getNullValue(varTy);
+        }
+
+        auto* gv = new llvm::GlobalVariable(
+            *module_, varTy, node.isConst,
+            llvm::GlobalValue::InternalLinkage,
+            init, mangledName);
+        globalVariableCache_[varSym] = gv;
+        return;
+    }
+
+    // === LOCAL VARIABLE (existing code) ===
     auto* alloca = createEntryBlockAlloca(currentFunction_, varTy, node.name);
     namedValues_[varSym] = alloca;
 
@@ -3125,6 +3279,15 @@ void IRGenerator::visit(IdentifierExpression& node) {
             return;
         }
         lastValue_ = builder_.CreateLoad(loadTy, it->second, node.name);
+        return;
+    }
+
+    // Global variable -> load from GlobalVariable
+    auto git = globalVariableCache_.find(node.resolvedSymbol.get());
+    if (git != globalVariableCache_.end()) {
+        llvm::Type* loadTy = mapType(node.resolvedType);
+        if (loadTy->isVoidTy()) { lastValue_ = nullptr; return; }
+        lastValue_ = builder_.CreateLoad(loadTy, git->second, node.name);
         return;
     }
 

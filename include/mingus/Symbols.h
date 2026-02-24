@@ -66,6 +66,9 @@ public:
     // For rvalue reference parameters (T&&): move semantics
     bool isRvalueReference = false;
 
+    // For extern variable declarations (extern { int errno; })
+    bool isExtern = false;
+
     // For class fields: initial value expression (optional, for future use)
     // std::shared_ptr<ExpressionBaseNode> defaultValue;
 
@@ -228,6 +231,7 @@ public:
 
     std::vector<std::shared_ptr<VariableSymbol>> fields;
     bool isExtern = false;  // true for extern struct (C interop, no cleanup)
+    bool isUnion = false;   // true for union types (all fields at offset 0)
 
     // Does any field require cleanup (closure-typed)?
     bool needsCleanup() const;

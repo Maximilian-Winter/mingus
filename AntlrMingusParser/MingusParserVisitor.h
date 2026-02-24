@@ -48,9 +48,13 @@ public:
 
     virtual std::any visitExternStructDeclaration(MingusParser::ExternStructDeclarationContext *context) = 0;
 
+    virtual std::any visitExternUnionDeclaration(MingusParser::ExternUnionDeclarationContext *context) = 0;
+
     virtual std::any visitExternFieldDeclaration(MingusParser::ExternFieldDeclarationContext *context) = 0;
 
     virtual std::any visitExternEnumDeclaration(MingusParser::ExternEnumDeclarationContext *context) = 0;
+
+    virtual std::any visitExternVariableDeclaration(MingusParser::ExternVariableDeclarationContext *context) = 0;
 
     virtual std::any visitClassDeclaration(MingusParser::ClassDeclarationContext *context) = 0;
 
@@ -79,6 +83,12 @@ public:
     virtual std::any visitStructBlock(MingusParser::StructBlockContext *context) = 0;
 
     virtual std::any visitStructMember(MingusParser::StructMemberContext *context) = 0;
+
+    virtual std::any visitUnionDeclaration(MingusParser::UnionDeclarationContext *context) = 0;
+
+    virtual std::any visitUnionBlock(MingusParser::UnionBlockContext *context) = 0;
+
+    virtual std::any visitUnionMember(MingusParser::UnionMemberContext *context) = 0;
 
     virtual std::any visitEnumDeclaration(MingusParser::EnumDeclarationContext *context) = 0;
 

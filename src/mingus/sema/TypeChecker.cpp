@@ -351,6 +351,17 @@ void TypeChecker::visit(StructDeclaration& node) {
     currentClass_ = savedClass;
 }
 
+void TypeChecker::visit(UnionDeclaration& node) {
+    auto savedClass = currentClass_;
+    currentClass_ = node.resolvedUnion.get();
+
+    for (auto& method : node.methods) {
+        if (method) method->accept(*this);
+    }
+
+    currentClass_ = savedClass;
+}
+
 void TypeChecker::visit(ClassDeclaration& node) {
     auto savedClass = currentClass_;
     currentClass_ = node.resolvedClass.get();

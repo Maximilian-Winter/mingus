@@ -28,6 +28,9 @@ public:
   virtual void enterModuleDeclaration(MingusParser::ModuleDeclarationContext *ctx) = 0;
   virtual void exitModuleDeclaration(MingusParser::ModuleDeclarationContext *ctx) = 0;
 
+  virtual void enterTypedefDeclaration(MingusParser::TypedefDeclarationContext *ctx) = 0;
+  virtual void exitTypedefDeclaration(MingusParser::TypedefDeclarationContext *ctx) = 0;
+
   virtual void enterImportDefinition(MingusParser::ImportDefinitionContext *ctx) = 0;
   virtual void exitImportDefinition(MingusParser::ImportDefinitionContext *ctx) = 0;
 
@@ -40,8 +43,32 @@ public:
   virtual void enterExternBody(MingusParser::ExternBodyContext *ctx) = 0;
   virtual void exitExternBody(MingusParser::ExternBodyContext *ctx) = 0;
 
+  virtual void enterExternMember(MingusParser::ExternMemberContext *ctx) = 0;
+  virtual void exitExternMember(MingusParser::ExternMemberContext *ctx) = 0;
+
   virtual void enterExternFunctionDeclaration(MingusParser::ExternFunctionDeclarationContext *ctx) = 0;
   virtual void exitExternFunctionDeclaration(MingusParser::ExternFunctionDeclarationContext *ctx) = 0;
+
+  virtual void enterExternLinkDirective(MingusParser::ExternLinkDirectiveContext *ctx) = 0;
+  virtual void exitExternLinkDirective(MingusParser::ExternLinkDirectiveContext *ctx) = 0;
+
+  virtual void enterExternOpaqueTypeDeclaration(MingusParser::ExternOpaqueTypeDeclarationContext *ctx) = 0;
+  virtual void exitExternOpaqueTypeDeclaration(MingusParser::ExternOpaqueTypeDeclarationContext *ctx) = 0;
+
+  virtual void enterExternStructDeclaration(MingusParser::ExternStructDeclarationContext *ctx) = 0;
+  virtual void exitExternStructDeclaration(MingusParser::ExternStructDeclarationContext *ctx) = 0;
+
+  virtual void enterExternUnionDeclaration(MingusParser::ExternUnionDeclarationContext *ctx) = 0;
+  virtual void exitExternUnionDeclaration(MingusParser::ExternUnionDeclarationContext *ctx) = 0;
+
+  virtual void enterExternFieldDeclaration(MingusParser::ExternFieldDeclarationContext *ctx) = 0;
+  virtual void exitExternFieldDeclaration(MingusParser::ExternFieldDeclarationContext *ctx) = 0;
+
+  virtual void enterExternEnumDeclaration(MingusParser::ExternEnumDeclarationContext *ctx) = 0;
+  virtual void exitExternEnumDeclaration(MingusParser::ExternEnumDeclarationContext *ctx) = 0;
+
+  virtual void enterExternVariableDeclaration(MingusParser::ExternVariableDeclarationContext *ctx) = 0;
+  virtual void exitExternVariableDeclaration(MingusParser::ExternVariableDeclarationContext *ctx) = 0;
 
   virtual void enterClassDeclaration(MingusParser::ClassDeclarationContext *ctx) = 0;
   virtual void exitClassDeclaration(MingusParser::ClassDeclarationContext *ctx) = 0;
@@ -85,6 +112,15 @@ public:
   virtual void enterStructMember(MingusParser::StructMemberContext *ctx) = 0;
   virtual void exitStructMember(MingusParser::StructMemberContext *ctx) = 0;
 
+  virtual void enterUnionDeclaration(MingusParser::UnionDeclarationContext *ctx) = 0;
+  virtual void exitUnionDeclaration(MingusParser::UnionDeclarationContext *ctx) = 0;
+
+  virtual void enterUnionBlock(MingusParser::UnionBlockContext *ctx) = 0;
+  virtual void exitUnionBlock(MingusParser::UnionBlockContext *ctx) = 0;
+
+  virtual void enterUnionMember(MingusParser::UnionMemberContext *ctx) = 0;
+  virtual void exitUnionMember(MingusParser::UnionMemberContext *ctx) = 0;
+
   virtual void enterEnumDeclaration(MingusParser::EnumDeclarationContext *ctx) = 0;
   virtual void exitEnumDeclaration(MingusParser::EnumDeclarationContext *ctx) = 0;
 
@@ -108,6 +144,9 @@ public:
 
   virtual void enterVariableDeclaration(MingusParser::VariableDeclarationContext *ctx) = 0;
   virtual void exitVariableDeclaration(MingusParser::VariableDeclarationContext *ctx) = 0;
+
+  virtual void enterConstVariableDeclaration(MingusParser::ConstVariableDeclarationContext *ctx) = 0;
+  virtual void exitConstVariableDeclaration(MingusParser::ConstVariableDeclarationContext *ctx) = 0;
 
   virtual void enterTypedVariableDeclaration(MingusParser::TypedVariableDeclarationContext *ctx) = 0;
   virtual void exitTypedVariableDeclaration(MingusParser::TypedVariableDeclarationContext *ctx) = 0;
@@ -205,8 +244,14 @@ public:
   virtual void enterWhileStatement(MingusParser::WhileStatementContext *ctx) = 0;
   virtual void exitWhileStatement(MingusParser::WhileStatementContext *ctx) = 0;
 
+  virtual void enterDoWhileStatement(MingusParser::DoWhileStatementContext *ctx) = 0;
+  virtual void exitDoWhileStatement(MingusParser::DoWhileStatementContext *ctx) = 0;
+
   virtual void enterReturnStatement(MingusParser::ReturnStatementContext *ctx) = 0;
   virtual void exitReturnStatement(MingusParser::ReturnStatementContext *ctx) = 0;
+
+  virtual void enterLabeledStatement(MingusParser::LabeledStatementContext *ctx) = 0;
+  virtual void exitLabeledStatement(MingusParser::LabeledStatementContext *ctx) = 0;
 
   virtual void enterBreakStatement(MingusParser::BreakStatementContext *ctx) = 0;
   virtual void exitBreakStatement(MingusParser::BreakStatementContext *ctx) = 0;
@@ -295,6 +340,9 @@ public:
   virtual void enterPrimaryExpression(MingusParser::PrimaryExpressionContext *ctx) = 0;
   virtual void exitPrimaryExpression(MingusParser::PrimaryExpressionContext *ctx) = 0;
 
+  virtual void enterArrayLiteral(MingusParser::ArrayLiteralContext *ctx) = 0;
+  virtual void exitArrayLiteral(MingusParser::ArrayLiteralContext *ctx) = 0;
+
   virtual void enterPostfixOperation(MingusParser::PostfixOperationContext *ctx) = 0;
   virtual void exitPostfixOperation(MingusParser::PostfixOperationContext *ctx) = 0;
 
@@ -333,6 +381,9 @@ public:
 
   virtual void enterTypeModifier(MingusParser::TypeModifierContext *ctx) = 0;
   virtual void exitTypeModifier(MingusParser::TypeModifierContext *ctx) = 0;
+
+  virtual void enterRvalueReferenceLevel(MingusParser::RvalueReferenceLevelContext *ctx) = 0;
+  virtual void exitRvalueReferenceLevel(MingusParser::RvalueReferenceLevelContext *ctx) = 0;
 
   virtual void enterReferenceLevel(MingusParser::ReferenceLevelContext *ctx) = 0;
   virtual void exitReferenceLevel(MingusParser::ReferenceLevelContext *ctx) = 0;

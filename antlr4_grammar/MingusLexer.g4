@@ -21,6 +21,7 @@ lexer grammar MingusLexer;
 DeclareModule:       'module';
 DeclareClass:        'class';
 DeclareStruct:       'struct';
+DeclareUnion:        'union';
 DeclareEnum:         'enum';
 DeclareFunction:     'func';
 DeclareConstructor:  'constructor';

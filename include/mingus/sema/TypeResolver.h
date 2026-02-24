@@ -48,6 +48,7 @@ public:
     void visit(ConstructorDeclaration& node) override;
     void visit(DestructorDeclaration& node) override;
     void visit(ExternFunctionDeclaration& node) override;
+    void visit(ExternVariableDeclaration& node) override;
     void visit(OperatorDeclaration& node) override;
     void visit(EnumDeclaration& node) override;
     void visit(StructDeclaration& node) override;
@@ -55,6 +56,8 @@ public:
     void visit(InterfaceDeclaration& node) override;
     void visit(ImportDeclaration& node) override;
     void visit(ExternStructDeclaration& node) override;
+    void visit(UnionDeclaration& node) override;
+    void visit(ExternUnionDeclaration& node) override;
 
     // Statements (recurse)
     void visit(ExpressionStatement& node) override;

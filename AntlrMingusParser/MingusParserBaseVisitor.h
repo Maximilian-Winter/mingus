@@ -73,11 +73,19 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitExternUnionDeclaration(MingusParser::ExternUnionDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitExternFieldDeclaration(MingusParser::ExternFieldDeclarationContext *ctx) override {
     return visitChildren(ctx);
   }
 
   virtual std::any visitExternEnumDeclaration(MingusParser::ExternEnumDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitExternVariableDeclaration(MingusParser::ExternVariableDeclarationContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -134,6 +142,18 @@ public:
   }
 
   virtual std::any visitStructMember(MingusParser::StructMemberContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitUnionDeclaration(MingusParser::UnionDeclarationContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitUnionBlock(MingusParser::UnionBlockContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitUnionMember(MingusParser::UnionMemberContext *ctx) override {
     return visitChildren(ctx);
   }
 

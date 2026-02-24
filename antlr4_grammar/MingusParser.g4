@@ -75,6 +75,7 @@ moduleBlock
 moduleDeclaration
     : classDeclaration
     | structDeclaration
+    | unionDeclaration
     | enumDeclaration
     | interfaceDeclaration
     | functionDeclaration
@@ -117,6 +118,7 @@ externBody
     : externFunctionDeclaration
     | externLinkDirective
     | externOpaqueTypeDeclaration
+    | externVariableDeclaration
     | CURLY_L externMember* CURLY_R
     ;
 
@@ -125,7 +127,9 @@ externMember
     | externLinkDirective
     | externOpaqueTypeDeclaration
     | externStructDeclaration
+    | externUnionDeclaration
     | externEnumDeclaration
+    | externVariableDeclaration
     ;
 
 externFunctionDeclaration
@@ -146,6 +150,10 @@ externStructDeclaration
     : DeclareStruct Identifier CURLY_L externFieldDeclaration* CURLY_R
     ;
 
+externUnionDeclaration
+    : DeclareUnion Identifier CURLY_L externFieldDeclaration* CURLY_R
+    ;
+
 externFieldDeclaration
     : typeIdentifier Identifier SemicolonSeparator
     ;
@@ -153,6 +161,10 @@ externFieldDeclaration
 externEnumDeclaration
     : DeclareEnum Identifier ( ColonOperator typeIdentifier )?
       CURLY_L enumMember ( CommaSeparator enumMember )* CommaSeparator? CURLY_R
+    ;
+
+externVariableDeclaration
+    : typeIdentifier Identifier SemicolonSeparator
     ;
 
 // ============================================================================
@@ -247,6 +259,24 @@ structBlock
 structMember
     : operatorDeclaration
     | functionDeclaration
+    | variableDeclaration
+    ;
+
+// ============================================================================
+// Union
+// ============================================================================
+
+unionDeclaration
+    : accessModifier?
+      DeclareUnion Identifier ( unionBlock | SemicolonSeparator )
+    ;
+
+unionBlock
+    : CURLY_L unionMember* CURLY_R
+    ;
+
+unionMember
+    : functionDeclaration
     | variableDeclaration
     ;
 

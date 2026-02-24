@@ -87,6 +87,8 @@ void SymbolTableBuilder::visit(ModuleNode& node) {
         else if (auto* e = decl->as<EnumDeclaration>())         preRegisterType(*e);
         else if (auto* o = decl->as<OpaqueTypeDeclaration>())   preRegisterType(*o);
         else if (auto* es = decl->as<ExternStructDeclaration>()) preRegisterType(*es);
+        else if (auto* u = decl->as<UnionDeclaration>())        preRegisterType(*u);
+        else if (auto* eu = decl->as<ExternUnionDeclaration>()) preRegisterType(*eu);
     }
 
     // Sub-pass B: full processing (existing traversal)
@@ -170,6 +172,24 @@ void SymbolTableBuilder::preRegisterType(ExternStructDeclaration& node) {
     node.resolvedStruct = structSym;
 }
 
+void SymbolTableBuilder::preRegisterType(UnionDeclaration& node) {
+    auto sym = std::make_shared<StructSymbol>(node.name);
+    sym->isUnion = true;
+    sym->accessLevel = node.accessModifier;
+    symbolTable_.defineSymbol(sym);
+    symbolTable_.registerType(node.name, sym);
+    node.resolvedUnion = sym;
+}
+
+void SymbolTableBuilder::preRegisterType(ExternUnionDeclaration& node) {
+    auto sym = std::make_shared<StructSymbol>(node.name);
+    sym->isUnion = true;
+    sym->isExtern = true;
+    symbolTable_.defineSymbol(sym);
+    symbolTable_.registerType(node.name, sym);
+    node.resolvedUnion = sym;
+}
+
 // ============================================================================
 // Block Statement
 // ============================================================================
@@ -188,7 +208,16 @@ void SymbolTableBuilder::visit(VariableDeclaration& node) {
     setScope(node);
 
     auto varSym = std::make_shared<VariableSymbol>(node.name, nullptr);
-    varSym->role = inTypeScope_ ? VariableRole::Field : VariableRole::Local;
+
+    // Determine variable role based on scope context
+    if (inTypeScope_) {
+        varSym->role = VariableRole::Field;
+    } else if (dynamic_cast<ModuleSymbol*>(symbolTable_.getCurrentScope().get())) {
+        varSym->role = VariableRole::Global;
+    } else {
+        varSym->role = VariableRole::Local;
+    }
+
     varSym->isInferred = node.isInferred;
     varSym->isMutable = !node.isConst;
     varSym->accessLevel = node.accessModifier;
@@ -199,6 +228,17 @@ void SymbolTableBuilder::visit(VariableDeclaration& node) {
     if (node.initializer) {
         node.initializer->accept(*this);
     }
+}
+
+void SymbolTableBuilder::visit(ExternVariableDeclaration& node) {
+    setScope(node);
+
+    auto varSym = std::make_shared<VariableSymbol>(node.name, nullptr);
+    varSym->role = VariableRole::Global;
+    varSym->isExtern = true;
+    varSym->isMutable = true;
+    symbolTable_.defineSymbol(varSym);
+    node.resolvedVariable = varSym;
 }
 
 void SymbolTableBuilder::visit(VariableDeclarationExpression& node) {
@@ -1087,6 +1127,75 @@ void SymbolTableBuilder::visit(ExternStructDeclaration& node) {
         fieldSym->fieldIndex = static_cast<int>(i);
         symbolTable_.defineSymbol(fieldSym);
         structSym->fields.push_back(fieldSym);
+    }
+    symbolTable_.popScope();
+}
+
+// ============================================================================
+// Union Declarations
+// ============================================================================
+
+void SymbolTableBuilder::visit(UnionDeclaration& node) {
+    setScope(node);
+
+    std::shared_ptr<StructSymbol> unionSym;
+    if (node.resolvedUnion) {
+        unionSym = node.resolvedUnion;  // already pre-registered
+    } else {
+        unionSym = std::make_shared<StructSymbol>(node.name);
+        unionSym->isUnion = true;
+        unionSym->accessLevel = node.accessModifier;
+        symbolTable_.defineSymbol(unionSym);
+        symbolTable_.registerType(node.name, unionSym);
+        node.resolvedUnion = unionSym;
+    }
+
+    // StructSymbol IS the member scope — push it
+    symbolTable_.pushScope(unionSym);
+    auto savedInType = inTypeScope_;
+    auto savedClass = currentClass_;
+    inTypeScope_ = true;
+    currentClass_ = nullptr;
+
+    // Fields — ALL at fieldIndex 0 (overlapping layout)
+    for (auto& field : node.fields) {
+        if (field) {
+            field->accept(*this);
+            if (field->resolvedVariable) {
+                field->resolvedVariable->fieldIndex = 0;  // Union: all fields at offset 0
+                unionSym->fields.push_back(field->resolvedVariable);
+            }
+        }
+    }
+
+    // Methods
+    for (auto& method : node.methods) {
+        if (method) method->accept(*this);
+    }
+
+    inTypeScope_ = savedInType;
+    currentClass_ = savedClass;
+    symbolTable_.popScope();
+}
+
+void SymbolTableBuilder::visit(ExternUnionDeclaration& node) {
+    setScope(node);
+
+    auto unionSym = node.resolvedUnion;
+    if (!unionSym) return;  // pre-registration failed
+
+    // Create VariableSymbol for each field (type resolved later by Pass 2)
+    symbolTable_.pushScope(unionSym);
+    for (size_t i = 0; i < node.fields.size(); i++) {
+        auto& param = node.fields[i];
+        if (!param) continue;
+
+        auto fieldSym = std::make_shared<VariableSymbol>(
+            param->name, nullptr);
+        fieldSym->role = VariableRole::Field;
+        fieldSym->fieldIndex = 0;  // Union: all fields at offset 0
+        symbolTable_.defineSymbol(fieldSym);
+        unionSym->fields.push_back(fieldSym);
     }
     symbolTable_.popScope();
 }

@@ -1,0 +1,100 @@
+// Test 62: FFI Phase 1 — Verify existing capabilities
+// Tests: typed pointer params, multi-level pointers, array fields in extern structs,
+//        nested extern structs, address-of output params
+module Test62
+{
+    extern func printf(string fmt, ...) => int;
+
+    // === Case 1: Typed pointer output params ===
+    // Mingus function taking int* and writing through it
+    func set_value(int* p, int val) => void
+    {
+        *p = val;
+    }
+
+    // === Case 2: Swap via pointer params ===
+    func swap(int* a, int* b) => void
+    {
+        int tmp = *a;
+        *a = *b;
+        *b = tmp;
+    }
+
+    // === Extern structs for testing ===
+    extern {
+        // Case 4: Array fields in extern struct
+        struct IntBuffer {
+            int[4] data;
+            int count;
+        }
+
+        // Case 5: Nested extern structs
+        struct Vec2 {
+            int x;
+            int y;
+        }
+
+        struct Rect {
+            Vec2 pos;
+            Vec2 size;
+        }
+    }
+
+    func main() => int
+    {
+        // === Case 1: Typed pointer output param ===
+        int x = 0;
+        set_value(&x, 42);
+        printf("Case 1 set_value: %d\n", x);
+
+        // === Case 2: Swap via pointers ===
+        int a = 10;
+        int b = 20;
+        swap(&a, &b);
+        printf("Case 2 swap: %d %d\n", a, b);
+
+        // === Case 3: Multi-level pointers ===
+        int val = 99;
+        int* p = &val;
+        int** pp = &p;
+        printf("Case 3 deref: %d\n", *p);
+        printf("Case 3 double deref: %d\n", **pp);
+
+        // Write through double pointer
+        **pp = 77;
+        printf("Case 3 after write: %d\n", val);
+
+        // === Case 4: Array fields in extern struct ===
+        IntBuffer buf;
+        buf.data[0] = 100;
+        buf.data[1] = 200;
+        buf.data[2] = 300;
+        buf.data[3] = 400;
+        buf.count = 4;
+        printf("Case 4 array: %d %d %d %d count=%d\n",
+            buf.data[0], buf.data[1], buf.data[2], buf.data[3], buf.count);
+
+        // === Case 5: Nested extern structs ===
+        Rect r;
+        r.pos.x = 10;
+        r.pos.y = 20;
+        r.size.x = 640;
+        r.size.y = 480;
+        printf("Case 5 rect: (%d,%d) %dx%d\n",
+            r.pos.x, r.pos.y, r.size.x, r.size.y);
+
+        // === Case 6: Address-of struct field ===
+        int* px = &r.pos.x;
+        *px = 55;
+        printf("Case 6 field ptr: %d\n", r.pos.x);
+
+        // === Case 7: Pointer to extern struct ===
+        Vec2 point;
+        point.x = 3;
+        point.y = 7;
+        Vec2* vp = &point;
+        printf("Case 7 struct ptr: %d %d\n", vp.x, vp.y);
+
+        return 0;
+    }
+}

@@ -132,6 +132,21 @@ public:
 };
 
 // ============================================================================
+// ExternVariableDeclaration — extern int errno;
+// ============================================================================
+
+class ExternVariableDeclaration : public DeclarationBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string name;
+    std::shared_ptr<TypeNode> type;
+
+    // Resolved in Pass 1
+    std::shared_ptr<VariableSymbol> resolvedVariable;
+};
+
+// ============================================================================
 // OperatorDeclaration — operator+(params) => RetType { body }
 // ============================================================================
 
@@ -190,6 +205,38 @@ public:
 
     // Resolved in Pass 1
     std::shared_ptr<StructSymbol> resolvedStruct;
+};
+
+// ============================================================================
+// UnionDeclaration — union Value { int i; float f; byte b; }
+// ============================================================================
+
+class UnionDeclaration : public DeclarationBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string name;
+    AccessModifier accessModifier = AccessModifier::Public;
+    std::vector<std::shared_ptr<VariableDeclaration>> fields;
+    std::vector<std::shared_ptr<FunctionDeclaration>> methods;
+
+    // Resolved in Pass 1 — reuses StructSymbol with isUnion=true
+    std::shared_ptr<StructSymbol> resolvedUnion;
+};
+
+// ============================================================================
+// ExternUnionDeclaration — extern { union RawValue { int asInt; float asFloat; } }
+// ============================================================================
+
+class ExternUnionDeclaration : public DeclarationBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string name;
+    std::vector<std::shared_ptr<ParameterNode>> fields;
+
+    // Resolved in Pass 1
+    std::shared_ptr<StructSymbol> resolvedUnion;
 };
 
 // ============================================================================

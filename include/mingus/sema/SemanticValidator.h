@@ -84,6 +84,7 @@ public:
     void visit(OperatorDeclaration& node) override;
     void visit(EnumDeclaration& node) override;
     void visit(StructDeclaration& node) override;
+    void visit(UnionDeclaration& node) override;
     void visit(ClassDeclaration& node) override;
     void visit(InterfaceDeclaration& node) override;
     void visit(ImportDeclaration& node) override;

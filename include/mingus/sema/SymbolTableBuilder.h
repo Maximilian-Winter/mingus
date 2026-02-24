@@ -45,6 +45,7 @@ public:
     void visit(ConstructorDeclaration& node) override;
     void visit(DestructorDeclaration& node) override;
     void visit(ExternFunctionDeclaration& node) override;
+    void visit(ExternVariableDeclaration& node) override;
     void visit(OperatorDeclaration& node) override;
     void visit(EnumDeclaration& node) override;
     void visit(StructDeclaration& node) override;
@@ -54,6 +55,8 @@ public:
     void visit(TypedefDeclaration& node) override;
     void visit(OpaqueTypeDeclaration& node) override;
     void visit(ExternStructDeclaration& node) override;
+    void visit(UnionDeclaration& node) override;
+    void visit(ExternUnionDeclaration& node) override;
 
     // Statements (set scope, recurse)
     void visit(ExpressionStatement& node) override;
@@ -128,6 +131,8 @@ private:
     void preRegisterType(EnumDeclaration& node);
     void preRegisterType(OpaqueTypeDeclaration& node);
     void preRegisterType(ExternStructDeclaration& node);
+    void preRegisterType(UnionDeclaration& node);
+    void preRegisterType(ExternUnionDeclaration& node);
 
     // State tracking
     bool inTypeScope_ = false;   // true when inside struct/class members

@@ -80,6 +80,7 @@ void FunctionDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void ConstructorDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void DestructorDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void ExternFunctionDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
+void ExternVariableDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void OperatorDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void EnumMemberNode::accept(ASTVisitor& v) { v.visit(*this); }
 void EnumDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
@@ -91,5 +92,7 @@ void TypedefDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void LinkDirective::accept(ASTVisitor& v) { v.visit(*this); }
 void OpaqueTypeDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void ExternStructDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
+void UnionDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
+void ExternUnionDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 
 } // namespace mingus

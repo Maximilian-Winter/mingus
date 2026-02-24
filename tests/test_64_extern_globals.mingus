@@ -1,0 +1,33 @@
+// Test 64: Extern Global Variables
+module Test64
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Module-level globals accessed by multiple functions
+    int sharedValue = 99;
+
+    func readShared() => int
+    {
+        return sharedValue;
+    }
+
+    func writeShared(int val) => void
+    {
+        sharedValue = val;
+    }
+
+    func main() => int
+    {
+        // Case 1: Read module global from function
+        printf("Case 1: %d\n", readShared());
+
+        // Case 2: Write and read back via functions
+        writeShared(777);
+        printf("Case 2: %d\n", readShared());
+
+        // Case 3: Direct access from main
+        printf("Case 3: %d\n", sharedValue);
+
+        return 0;
+    }
+}

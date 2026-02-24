@@ -394,6 +394,15 @@ void TypeResolver::visit(ExternFunctionDeclaration& node) {
     resolveReturnType(node.returnType, funcSym);
 }
 
+void TypeResolver::visit(ExternVariableDeclaration& node) {
+    if (node.type) {
+        node.type->accept(*this);
+        if (node.resolvedVariable && node.type->resolvedType) {
+            node.resolvedVariable->setType(node.type->resolvedType);
+        }
+    }
+}
+
 void TypeResolver::visit(OperatorDeclaration& node) {
     auto funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.resolvedOperator);
     if (!funcSym) return;
@@ -499,6 +508,36 @@ void TypeResolver::visit(ExternStructDeclaration& node) {
         auto resolvedType = resolveTypeNode(param->type);
         if (i < node.resolvedStruct->fields.size()) {
             node.resolvedStruct->fields[i]->setType(
+                resolvedType ? resolvedType : symbolTable_.getErrorType());
+        }
+    }
+}
+
+void TypeResolver::visit(UnionDeclaration& node) {
+    if (!node.resolvedUnion) return;
+
+    // Resolve field types
+    for (auto& field : node.fields) {
+        if (field) field->accept(*this);
+    }
+
+    // Resolve method signatures
+    for (auto& method : node.methods) {
+        if (method) method->accept(*this);
+    }
+}
+
+void TypeResolver::visit(ExternUnionDeclaration& node) {
+    if (!node.resolvedUnion) return;
+
+    // Resolve field types from ParameterNode type annotations
+    for (size_t i = 0; i < node.fields.size(); i++) {
+        auto& param = node.fields[i];
+        if (!param || !param->type) continue;
+
+        auto resolvedType = resolveTypeNode(param->type);
+        if (i < node.resolvedUnion->fields.size()) {
+            node.resolvedUnion->fields[i]->setType(
                 resolvedType ? resolvedType : symbolTable_.getErrorType());
         }
     }

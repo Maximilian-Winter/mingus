@@ -116,6 +116,7 @@ class FunctionDeclaration;
 class ConstructorDeclaration;
 class DestructorDeclaration;
 class ExternFunctionDeclaration;
+class ExternVariableDeclaration;
 class OperatorDeclaration;
 class EnumDeclaration;
 class StructDeclaration;
@@ -127,6 +128,8 @@ class EnumMemberNode;
 class LinkDirective;
 class OpaqueTypeDeclaration;
 class ExternStructDeclaration;
+class UnionDeclaration;
+class ExternUnionDeclaration;
 class OpaqueTypeSymbol;
 
 // ---- AST pattern nodes (for match expressions) ----
@@ -154,7 +157,8 @@ enum class AccessModifier {
 enum class VariableRole {
     Local,
     Parameter,
-    Field
+    Field,
+    Global      // Module-level variables, extern globals, static locals
 };
 
 enum class PrimitiveKind {

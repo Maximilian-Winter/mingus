@@ -1,0 +1,59 @@
+// Test 65: Untagged Unions
+module Test65
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Mingus-native union
+    union Value
+    {
+        int i;
+        float f;
+        byte b;
+    }
+
+    // Extern union (C interop style)
+    extern {
+        union RawValue {
+            int asInt;
+            float asFloat;
+            double asDouble;
+        }
+    }
+
+    func readInt(Value v) => int
+    {
+        return v.i;
+    }
+
+    func main() => int
+    {
+        // Case 1: Write int, read int
+        Value v;
+        v.i = 42;
+        printf("Case 1 int: %d\n", v.i);
+
+        // Case 2: Write float, read float
+        v.f = 3.14f;
+        printf("Case 2 float: %f\n", v.f);
+
+        // Case 3: Write byte
+        Value v2;
+        v2.b = 255;
+        printf("Case 3 byte: %d\n", v2.b);
+
+        // Case 4: Extern union
+        RawValue rv;
+        rv.asInt = 100;
+        printf("Case 4 int: %d\n", rv.asInt);
+
+        rv.asDouble = 2.718;
+        printf("Case 4 double: %f\n", rv.asDouble);
+
+        // Case 5: Union as function parameter
+        Value v3;
+        v3.i = 99;
+        printf("Case 5 param: %d\n", readInt(v3));
+
+        return 0;
+    }
+}

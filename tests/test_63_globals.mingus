@@ -1,0 +1,54 @@
+// Test 63: Module-Level Variables and Static Locals
+module Test63
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Module-level variables
+    int globalCounter = 0;
+    const int MAX_VALUE = 100;
+    const double PI = 3.14159;
+
+    func increment() => void
+    {
+        globalCounter = globalCounter + 1;
+    }
+
+    func getCounter() => int
+    {
+        return globalCounter;
+    }
+
+    // Static local variable
+    func nextId() => int
+    {
+        static int id = 0;
+        id = id + 1;
+        return id;
+    }
+
+    func main() => int
+    {
+        // Case 1: Module-level variable read/write
+        printf("Case 1 initial: %d\n", globalCounter);
+        globalCounter = 42;
+        printf("Case 1 assigned: %d\n", globalCounter);
+
+        // Case 2: Module-level constant
+        printf("Case 2 const: %d\n", MAX_VALUE);
+        printf("Case 2 pi: %f\n", PI);
+
+        // Case 3: Module-level var via function
+        globalCounter = 0;
+        increment();
+        increment();
+        increment();
+        printf("Case 3 after 3 increments: %d\n", getCounter());
+
+        // Case 4: Static local persistence
+        printf("Case 4 id1: %d\n", nextId());
+        printf("Case 4 id2: %d\n", nextId());
+        printf("Case 4 id3: %d\n", nextId());
+
+        return 0;
+    }
+}

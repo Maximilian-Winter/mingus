@@ -30,6 +30,9 @@ public:
   virtual void enterModuleDeclaration(MingusParser::ModuleDeclarationContext * /*ctx*/) override { }
   virtual void exitModuleDeclaration(MingusParser::ModuleDeclarationContext * /*ctx*/) override { }
 
+  virtual void enterTypedefDeclaration(MingusParser::TypedefDeclarationContext * /*ctx*/) override { }
+  virtual void exitTypedefDeclaration(MingusParser::TypedefDeclarationContext * /*ctx*/) override { }
+
   virtual void enterImportDefinition(MingusParser::ImportDefinitionContext * /*ctx*/) override { }
   virtual void exitImportDefinition(MingusParser::ImportDefinitionContext * /*ctx*/) override { }
 
@@ -42,8 +45,32 @@ public:
   virtual void enterExternBody(MingusParser::ExternBodyContext * /*ctx*/) override { }
   virtual void exitExternBody(MingusParser::ExternBodyContext * /*ctx*/) override { }
 
+  virtual void enterExternMember(MingusParser::ExternMemberContext * /*ctx*/) override { }
+  virtual void exitExternMember(MingusParser::ExternMemberContext * /*ctx*/) override { }
+
   virtual void enterExternFunctionDeclaration(MingusParser::ExternFunctionDeclarationContext * /*ctx*/) override { }
   virtual void exitExternFunctionDeclaration(MingusParser::ExternFunctionDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterExternLinkDirective(MingusParser::ExternLinkDirectiveContext * /*ctx*/) override { }
+  virtual void exitExternLinkDirective(MingusParser::ExternLinkDirectiveContext * /*ctx*/) override { }
+
+  virtual void enterExternOpaqueTypeDeclaration(MingusParser::ExternOpaqueTypeDeclarationContext * /*ctx*/) override { }
+  virtual void exitExternOpaqueTypeDeclaration(MingusParser::ExternOpaqueTypeDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterExternStructDeclaration(MingusParser::ExternStructDeclarationContext * /*ctx*/) override { }
+  virtual void exitExternStructDeclaration(MingusParser::ExternStructDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterExternUnionDeclaration(MingusParser::ExternUnionDeclarationContext * /*ctx*/) override { }
+  virtual void exitExternUnionDeclaration(MingusParser::ExternUnionDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterExternFieldDeclaration(MingusParser::ExternFieldDeclarationContext * /*ctx*/) override { }
+  virtual void exitExternFieldDeclaration(MingusParser::ExternFieldDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterExternEnumDeclaration(MingusParser::ExternEnumDeclarationContext * /*ctx*/) override { }
+  virtual void exitExternEnumDeclaration(MingusParser::ExternEnumDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterExternVariableDeclaration(MingusParser::ExternVariableDeclarationContext * /*ctx*/) override { }
+  virtual void exitExternVariableDeclaration(MingusParser::ExternVariableDeclarationContext * /*ctx*/) override { }
 
   virtual void enterClassDeclaration(MingusParser::ClassDeclarationContext * /*ctx*/) override { }
   virtual void exitClassDeclaration(MingusParser::ClassDeclarationContext * /*ctx*/) override { }
@@ -87,6 +114,15 @@ public:
   virtual void enterStructMember(MingusParser::StructMemberContext * /*ctx*/) override { }
   virtual void exitStructMember(MingusParser::StructMemberContext * /*ctx*/) override { }
 
+  virtual void enterUnionDeclaration(MingusParser::UnionDeclarationContext * /*ctx*/) override { }
+  virtual void exitUnionDeclaration(MingusParser::UnionDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterUnionBlock(MingusParser::UnionBlockContext * /*ctx*/) override { }
+  virtual void exitUnionBlock(MingusParser::UnionBlockContext * /*ctx*/) override { }
+
+  virtual void enterUnionMember(MingusParser::UnionMemberContext * /*ctx*/) override { }
+  virtual void exitUnionMember(MingusParser::UnionMemberContext * /*ctx*/) override { }
+
   virtual void enterEnumDeclaration(MingusParser::EnumDeclarationContext * /*ctx*/) override { }
   virtual void exitEnumDeclaration(MingusParser::EnumDeclarationContext * /*ctx*/) override { }
 
@@ -110,6 +146,9 @@ public:
 
   virtual void enterVariableDeclaration(MingusParser::VariableDeclarationContext * /*ctx*/) override { }
   virtual void exitVariableDeclaration(MingusParser::VariableDeclarationContext * /*ctx*/) override { }
+
+  virtual void enterConstVariableDeclaration(MingusParser::ConstVariableDeclarationContext * /*ctx*/) override { }
+  virtual void exitConstVariableDeclaration(MingusParser::ConstVariableDeclarationContext * /*ctx*/) override { }
 
   virtual void enterTypedVariableDeclaration(MingusParser::TypedVariableDeclarationContext * /*ctx*/) override { }
   virtual void exitTypedVariableDeclaration(MingusParser::TypedVariableDeclarationContext * /*ctx*/) override { }
@@ -207,8 +246,14 @@ public:
   virtual void enterWhileStatement(MingusParser::WhileStatementContext * /*ctx*/) override { }
   virtual void exitWhileStatement(MingusParser::WhileStatementContext * /*ctx*/) override { }
 
+  virtual void enterDoWhileStatement(MingusParser::DoWhileStatementContext * /*ctx*/) override { }
+  virtual void exitDoWhileStatement(MingusParser::DoWhileStatementContext * /*ctx*/) override { }
+
   virtual void enterReturnStatement(MingusParser::ReturnStatementContext * /*ctx*/) override { }
   virtual void exitReturnStatement(MingusParser::ReturnStatementContext * /*ctx*/) override { }
+
+  virtual void enterLabeledStatement(MingusParser::LabeledStatementContext * /*ctx*/) override { }
+  virtual void exitLabeledStatement(MingusParser::LabeledStatementContext * /*ctx*/) override { }
 
   virtual void enterBreakStatement(MingusParser::BreakStatementContext * /*ctx*/) override { }
   virtual void exitBreakStatement(MingusParser::BreakStatementContext * /*ctx*/) override { }
@@ -297,6 +342,9 @@ public:
   virtual void enterPrimaryExpression(MingusParser::PrimaryExpressionContext * /*ctx*/) override { }
   virtual void exitPrimaryExpression(MingusParser::PrimaryExpressionContext * /*ctx*/) override { }
 
+  virtual void enterArrayLiteral(MingusParser::ArrayLiteralContext * /*ctx*/) override { }
+  virtual void exitArrayLiteral(MingusParser::ArrayLiteralContext * /*ctx*/) override { }
+
   virtual void enterPostfixOperation(MingusParser::PostfixOperationContext * /*ctx*/) override { }
   virtual void exitPostfixOperation(MingusParser::PostfixOperationContext * /*ctx*/) override { }
 
@@ -335,6 +383,9 @@ public:
 
   virtual void enterTypeModifier(MingusParser::TypeModifierContext * /*ctx*/) override { }
   virtual void exitTypeModifier(MingusParser::TypeModifierContext * /*ctx*/) override { }
+
+  virtual void enterRvalueReferenceLevel(MingusParser::RvalueReferenceLevelContext * /*ctx*/) override { }
+  virtual void exitRvalueReferenceLevel(MingusParser::RvalueReferenceLevelContext * /*ctx*/) override { }
 
   virtual void enterReferenceLevel(MingusParser::ReferenceLevelContext * /*ctx*/) override { }
   virtual void exitReferenceLevel(MingusParser::ReferenceLevelContext * /*ctx*/) override { }

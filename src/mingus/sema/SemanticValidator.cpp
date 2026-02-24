@@ -76,8 +76,9 @@ void SemanticValidator::checkLambdaCapture(IdentifierExpression& node) {
     auto* varSym = node.resolvedSymbol->as<VariableSymbol>();
     if (!varSym) return;
 
-    // Only capture locals and parameters (not fields)
+    // Only capture locals and parameters (not fields or globals)
     if (varSym->role == VariableRole::Field) return;
+    if (varSym->role == VariableRole::Global) return;
 
     // Walk from innermost lambda outward
     for (int i = static_cast<int>(lambdaStack_.size()) - 1; i >= 0; --i) {
@@ -686,6 +687,19 @@ void SemanticValidator::visit(StructDeclaration& node) {
     }
     for (auto& op : node.operators) {
         if (op) op->accept(*this);
+    }
+
+    currentScope_ = savedScope;
+}
+
+void SemanticValidator::visit(UnionDeclaration& node) {
+    auto savedScope = currentScope_;
+    if (node.resolvedUnion) {
+        currentScope_ = node.resolvedUnion.get();
+    }
+
+    for (auto& method : node.methods) {
+        if (method) method->accept(*this);
     }
 
     currentScope_ = savedScope;

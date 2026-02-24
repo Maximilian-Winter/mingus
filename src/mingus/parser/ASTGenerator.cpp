@@ -268,6 +268,11 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
                     visitStructDeclaration(declCtx->structDeclaration()));
                 if (strct) mod->declarations.push_back(strct);
 
+            } else if (declCtx->unionDeclaration()) {
+                auto uni = anyToNode<UnionDeclaration>(
+                    visitUnionDeclaration(declCtx->unionDeclaration()));
+                if (uni) mod->declarations.push_back(uni);
+
             } else if (declCtx->enumDeclaration()) {
                 auto enm = anyToNode<EnumDeclaration>(
                     visitEnumDeclaration(declCtx->enumDeclaration()));
@@ -308,6 +313,15 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
                         opaque->debugInfo = makeDebugInfo(body->externOpaqueTypeDeclaration());
                         opaque->name = body->externOpaqueTypeDeclaration()->Identifier()->getText();
                         mod->declarations.push_back(opaque);
+                    }
+                    if (body->externVariableDeclaration()) {
+                        auto extVar = std::make_shared<ExternVariableDeclaration>();
+                        auto* evCtx = body->externVariableDeclaration();
+                        extVar->debugInfo = makeDebugInfo(evCtx);
+                        extVar->name = evCtx->Identifier()->getText();
+                        extVar->type = anyToNode<TypeNode>(
+                            visitTypeIdentifier(evCtx->typeIdentifier()));
+                        mod->declarations.push_back(extVar);
                     }
 
                     // Block form: extern { ... }
@@ -352,6 +366,21 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
                             }
                             mod->declarations.push_back(extStruct);
                         }
+                        if (memberCtx->externUnionDeclaration()) {
+                            auto extUnion = std::make_shared<ExternUnionDeclaration>();
+                            auto* euCtx = memberCtx->externUnionDeclaration();
+                            extUnion->debugInfo = makeDebugInfo(euCtx);
+                            extUnion->name = euCtx->Identifier()->getText();
+                            for (auto* fieldCtx : euCtx->externFieldDeclaration()) {
+                                auto param = std::make_shared<ParameterNode>();
+                                param->debugInfo = makeDebugInfo(fieldCtx);
+                                param->name = fieldCtx->Identifier()->getText();
+                                param->type = anyToNode<TypeNode>(
+                                    visitTypeIdentifier(fieldCtx->typeIdentifier()));
+                                extUnion->fields.push_back(param);
+                            }
+                            mod->declarations.push_back(extUnion);
+                        }
                         if (memberCtx->externEnumDeclaration()) {
                             auto* eeCtx = memberCtx->externEnumDeclaration();
                             auto ed = std::make_shared<EnumDeclaration>();
@@ -373,6 +402,15 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
                                 ed->members.push_back(mem);
                             }
                             mod->declarations.push_back(ed);
+                        }
+                        if (memberCtx->externVariableDeclaration()) {
+                            auto extVar = std::make_shared<ExternVariableDeclaration>();
+                            auto* evCtx = memberCtx->externVariableDeclaration();
+                            extVar->debugInfo = makeDebugInfo(evCtx);
+                            extVar->name = evCtx->Identifier()->getText();
+                            extVar->type = anyToNode<TypeNode>(
+                                visitTypeIdentifier(evCtx->typeIdentifier()));
+                            mod->declarations.push_back(extVar);
                         }
                     }
                 }
@@ -839,6 +877,32 @@ std::any ASTGenerator::visitStructDeclaration(
     }
 
     return std::any(std::static_pointer_cast<DeclarationBaseNode>(strct));
+}
+
+std::any ASTGenerator::visitUnionDeclaration(
+    MingusParser::UnionDeclarationContext* ctx)
+{
+    auto uni = std::make_shared<UnionDeclaration>();
+    uni->debugInfo = makeDebugInfo(ctx);
+    uni->name = ctx->Identifier()->getText();
+    uni->accessModifier = parseAccessModifier(ctx->accessModifier());
+
+    if (ctx->unionBlock()) {
+        for (auto* memberCtx : ctx->unionBlock()->unionMember()) {
+            if (memberCtx->functionDeclaration()) {
+                auto method = anyToNode<FunctionDeclaration>(
+                    visitFunctionDeclaration(memberCtx->functionDeclaration()));
+                if (method) uni->methods.push_back(method);
+
+            } else if (memberCtx->variableDeclaration()) {
+                auto field = anyToNode<VariableDeclaration>(
+                    visitVariableDeclaration(memberCtx->variableDeclaration()));
+                if (field) uni->fields.push_back(field);
+            }
+        }
+    }
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(uni));
 }
 
 std::any ASTGenerator::visitEnumDeclaration(

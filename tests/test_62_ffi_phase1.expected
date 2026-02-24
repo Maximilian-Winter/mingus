@@ -1,0 +1,9 @@
+Case 1 set_value: 42
+Case 2 swap: 20 10
+Case 3 deref: 99
+Case 3 double deref: 99
+Case 3 after write: 77
+Case 4 array: 100 200 300 400 count=4
+Case 5 rect: (10,20) 640x480
+Case 6 field ptr: 55
+Case 7 struct ptr: 3 7

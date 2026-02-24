@@ -110,6 +110,7 @@ class StructBinding:
 class EnumBinding:
     name: str
     values: list[tuple[str, int]]  # (name, value)
+    underlying_type: str = "int"   # Mingus type for the underlying integer
 
 @dataclass
 class TypeWarning:
@@ -343,8 +344,29 @@ class MingusBindingGenerator:
             if child.kind == CursorKind.ENUM_CONSTANT_DECL:
                 values.append((child.spelling, child.enum_value))
 
+        # Detect underlying integer type from the enum's canonical type
+        enum_int_type = cursor.enum_type
+        underlying = "int"
+        if enum_int_type:
+            ek = enum_int_type.get_canonical().kind
+            if ek == TypeKind.UINT:
+                underlying = "uint"
+            elif ek in (TypeKind.ULONG, TypeKind.ULONGLONG):
+                underlying = "ulong"
+            elif ek in (TypeKind.LONG, TypeKind.LONGLONG):
+                underlying = "long"
+            elif ek == TypeKind.USHORT:
+                underlying = "ushort"
+            elif ek == TypeKind.SHORT:
+                underlying = "short"
+            elif ek in (TypeKind.UCHAR, TypeKind.CHAR_U):
+                underlying = "byte"
+            elif ek in (TypeKind.SCHAR, TypeKind.CHAR_S):
+                underlying = "char"
+
         if values:
-            self.enums[name] = EnumBinding(name=name, values=values)
+            self.enums[name] = EnumBinding(name=name, values=values,
+                                           underlying_type=underlying)
 
     # ── Helpers ────────────────────────────────────────────────────────
 
@@ -432,16 +454,25 @@ class MingusBindingGenerator:
                 return (name, "")
             return ("byte*", "anonymous struct mapped to byte*")
 
-        # Enum (by value)
+        # Enum (by value) — use the enum's name if available
         if kind == TypeKind.ENUM:
+            decl = canonical.get_declaration()
+            enum_name = decl.spelling if decl else ""
+            # Check typedef mapping for anonymous enums
+            if not enum_name:
+                for tname, ename in self._typedef_to_enum.items():
+                    if ename == "":
+                        enum_name = tname
+                        break
+            if enum_name and enum_name in self.enums:
+                return (enum_name, "")
             return ("int", "")
 
-        # Fixed-size array
+        # Fixed-size array → Mingus array type (e.g., int[8], byte[32])
         if kind == TypeKind.CONSTANTARRAY:
             elem_type, warn = self._map_type(canonical.element_type)
             count = canonical.element_count
-            # Mingus doesn't directly support C array types in extern — use comment
-            return (f"byte*", f"C array {clang_type.spelling} — pass as pointer")
+            return (f"{elem_type}[{count}]", warn)
 
         # Incomplete array (e.g. int[])
         if kind == TypeKind.INCOMPLETEARRAY:
@@ -497,13 +528,36 @@ class MingusBindingGenerator:
                 return (f"{name}*", "")
             return ("byte*", "anonymous struct pointer")
 
-        # Pointer to pointer → byte*
+        # Pointer to pointer → recurse for T**
         if pk == TypeKind.POINTER:
-            return ("byte*", "pointer-to-pointer mapped to byte*")
+            inner, inner_warn = self._map_pointer_type(pointee_canon)
+            if inner.endswith("*"):
+                return (f"{inner}*", inner_warn)
+            return ("byte*", f"pointer-to-pointer ({pointee.spelling}*)")
 
-        # Pointer to basic int types → int* (but Mingus may not support this well)
-        if pk in (TypeKind.INT, TypeKind.UINT):
-            return ("byte*", "int pointer mapped to byte*")
+        # Pointer to integer types → typed pointer (int*, uint*, short*, etc.)
+        int_pointer_map = {
+            TypeKind.INT: "int*",
+            TypeKind.UINT: "uint*",
+            TypeKind.SHORT: "short*",
+            TypeKind.USHORT: "ushort*",
+            TypeKind.LONG: "int*",       # C long = 32-bit on Windows LLP64
+            TypeKind.ULONG: "uint*",
+            TypeKind.LONGLONG: "long*",
+            TypeKind.ULONGLONG: "ulong*",
+        }
+        if pk in int_pointer_map:
+            return (int_pointer_map[pk], "")
+
+        # Pointer to float/double
+        if pk == TypeKind.FLOAT:
+            return ("float*", "")
+        if pk == TypeKind.DOUBLE:
+            return ("double*", "")
+
+        # Pointer to bool
+        if pk == TypeKind.BOOL:
+            return ("bool*", "")
 
         # Any other pointer → byte*
         return ("byte*", f"pointer to {pointee.spelling}")
@@ -589,7 +643,7 @@ class MingusBindingGenerator:
             lines.append("        // --- Enums ---")
             for name in sorted(emit_enums.keys()):
                 eb = emit_enums[name]
-                lines.append(f"        enum {name} : int {{")
+                lines.append(f"        enum {name} : {eb.underlying_type} {{")
                 for i, (vname, vval) in enumerate(eb.values):
                     comma = "," if i < len(eb.values) - 1 else ""
                     lines.append(f"            {vname} = {vval}{comma}")
