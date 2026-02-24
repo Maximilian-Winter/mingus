@@ -1,0 +1,9 @@
+Version: 1
+Max: 1024
+Flag A: 1
+Flag B: 2
+Hex: 3735928559
+PI: 3.141590
+Half: 0.500000
+Name: TestDefines
+Flags: 3

@@ -99,6 +99,7 @@ call :run_test test_62_ffi_phase1 Test62_main "FFI Phase 1"
 call :run_test test_63_globals Test63_main "Module Globals"
 call :run_test test_64_extern_globals Test64_main "Extern Globals"
 call :run_test test_65_unions Test65_main "Unions"
+call :run_test test_66_define_constants Test66_main "Define Constants"
 
 echo.
 echo ============================================================

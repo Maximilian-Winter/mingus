@@ -1,0 +1,32 @@
+module Test66
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Constants extracted from #define (inlined for compiler test)
+    const int TD_VERSION = 1;
+    const int TD_MAX_SIZE = 1024;
+    const int TD_FLAG_A = 0x01;
+    const int TD_FLAG_B = 0x02;
+    const uint TD_BIG_HEX = 0xDEADBEEF;
+    const double TD_PI = 3.14159;
+    const float TD_HALF = 0.5f;
+    const string TD_NAME = "TestDefines";
+
+    func main() => int
+    {
+        printf("Version: %d\n", TD_VERSION);
+        printf("Max: %d\n", TD_MAX_SIZE);
+        printf("Flag A: %d\n", TD_FLAG_A);
+        printf("Flag B: %d\n", TD_FLAG_B);
+        printf("Hex: %u\n", TD_BIG_HEX);
+        printf("PI: %f\n", TD_PI);
+        printf("Half: %f\n", TD_HALF);
+        printf("Name: %s\n", TD_NAME);
+
+        // Use constants in expressions
+        var flags = TD_FLAG_A + TD_FLAG_B;
+        printf("Flags: %d\n", flags);
+
+        return 0;
+    }
+}

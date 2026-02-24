@@ -4,3 +4,4 @@
 /build
 /.venv/
 /v2/build
+/__pycache__

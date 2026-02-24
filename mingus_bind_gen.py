@@ -31,6 +31,7 @@ Examples:
 import sys
 import os
 import re
+import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -105,6 +106,7 @@ class StructBinding:
     name: str
     fields: list[FieldBinding]
     is_opaque: bool      # True if forward-declared / no visible body
+    is_union: bool = False  # True for C union types
 
 @dataclass
 class EnumBinding:
@@ -118,6 +120,13 @@ class TypeWarning:
     c_type: str
     mingus_type: str
     message: str
+
+@dataclass
+class MacroConstant:
+    name: str
+    mingus_type: str      # "int", "uint", "long", "ulong", "double", "float", "string"
+    mingus_value: str     # literal value in Mingus syntax
+    c_value: str          # original C macro value (for comment)
 
 
 # ── Binding Generator ────────────────────────────────────────────────────────
@@ -143,6 +152,7 @@ class MingusBindingGenerator:
         self.functions: list[FuncBinding] = []
         self.structs: dict[str, StructBinding] = {}
         self.enums: dict[str, EnumBinding] = {}
+        self.macro_constants: list[MacroConstant] = []
         self.warnings: list[TypeWarning] = []
 
         self._seen_funcs: set[str] = set()
@@ -174,6 +184,9 @@ class MingusBindingGenerator:
         self._collect_typedefs(tu.cursor)
         # Second pass: collect all declarations
         self._walk(tu.cursor)
+
+        # Extract #define constants via clang subprocess
+        self._extract_macros(filepath)
 
     def parse_directory(self, dirpath: str, extensions=None):
         """Parse all C header files in a directory."""
@@ -319,13 +332,15 @@ class MingusBindingGenerator:
             self.structs[name] = StructBinding(
                 name=name,
                 fields=fields,
-                is_opaque=len(fields) == 0
+                is_opaque=len(fields) == 0,
+                is_union=(cursor.kind == CursorKind.UNION_DECL)
             )
         else:
             # Forward declaration — opaque
             if name not in self.structs:
                 self.structs[name] = StructBinding(
-                    name=name, fields=[], is_opaque=True
+                    name=name, fields=[], is_opaque=True,
+                    is_union=(cursor.kind == CursorKind.UNION_DECL)
                 )
 
     def _collect_enum(self, cursor: Cursor, override_name: str = None):
@@ -577,6 +592,7 @@ class MingusBindingGenerator:
 
     def generate(self, module_name: str, source_files: list[str] = None,
                  include_structs: bool = True, include_enums: bool = True,
+                 include_defines: bool = True,
                  prefixes: list[str] = None) -> str:
         """Generate complete Mingus binding source code."""
         lines = []
@@ -596,6 +612,12 @@ class MingusBindingGenerator:
         structs = dict(self.structs)
         enums = dict(self.enums)
 
+        # Filter macro constants by prefix
+        macros = list(self.macro_constants) if include_defines else []
+        if prefixes and macros:
+            macros = [m for m in macros
+                      if any(m.name.startswith(p) for p in prefixes)]
+
         if prefixes:
             funcs = [f for f in funcs
                      if any(f.name.startswith(p) for p in prefixes)]
@@ -611,10 +633,24 @@ class MingusBindingGenerator:
         concrete_structs = {k: v for k, v in structs.items() if not v.is_opaque} if include_structs else {}
         emit_enums = enums if include_enums else {}
 
-        has_content = opaque_types or concrete_structs or emit_enums or funcs
+        has_content = opaque_types or concrete_structs or emit_enums or funcs or macros
         if not has_content:
             lines.append("    // No declarations found")
             lines.append("}")
+            return "\n".join(lines)
+
+        # Emit macro constants at module level (before extern block)
+        if macros:
+            lines.append("    // --- Constants (from #define) ---")
+            for mc in sorted(macros, key=lambda m: m.name):
+                lines.append(f"    // #define {mc.name} {mc.c_value}")
+                lines.append(f"    const {mc.mingus_type} {mc.name} = {mc.mingus_value};")
+            lines.append("")
+
+        has_extern_content = opaque_types or concrete_structs or emit_enums or funcs
+        if not has_extern_content:
+            lines.append("}")
+            lines.append("")
             return "\n".join(lines)
 
         lines.append("    extern {")
@@ -626,13 +662,27 @@ class MingusBindingGenerator:
                 lines.append(f"        opaque {name};")
             lines.append("")
 
-        # Concrete structs
-        if concrete_structs:
+        # Concrete structs and unions
+        concrete_unions = {k: v for k, v in concrete_structs.items() if v.is_union}
+        concrete_plain = {k: v for k, v in concrete_structs.items() if not v.is_union}
+
+        if concrete_plain:
             lines.append("        // --- Structs ---")
-            for name in sorted(concrete_structs.keys()):
-                sb = concrete_structs[name]
+            for name in sorted(concrete_plain.keys()):
+                sb = concrete_plain[name]
                 lines.append(f"        struct {name} {{")
                 for fld in sb.fields:
+                    warn_comment = f"  // WARNING: {fld.warning}" if fld.warning else ""
+                    lines.append(f"            {fld.mingus_type} {fld.name};{warn_comment}")
+                lines.append("        }")
+            lines.append("")
+
+        if concrete_unions:
+            lines.append("        // --- Unions ---")
+            for name in sorted(concrete_unions.keys()):
+                ub = concrete_unions[name]
+                lines.append(f"        union {name} {{")
+                for fld in ub.fields:
                     warn_comment = f"  // WARNING: {fld.warning}" if fld.warning else ""
                     lines.append(f"            {fld.mingus_type} {fld.name};{warn_comment}")
                 lines.append("        }")
@@ -697,13 +747,251 @@ class MingusBindingGenerator:
                     return True
         return False
 
+    # ── Macro Constant Extraction ────────────────────────────────────────
+
+    # Regex patterns for parsing clang -dD -E output
+    _LINE_DIRECTIVE_RE = re.compile(r'^# \d+ "([^"]+)"')
+    _DEFINE_RE = re.compile(r'^#define (\w+)\s+(.*)')
+
+    # Regex patterns for type inference
+    _STRING_RE = re.compile(r'^".*"$')
+    _CHAR_RE = re.compile(r"^'.'$")
+    _HEX_RE = re.compile(r'^0[xX]([0-9a-fA-F]+)([uU]?[lL]{0,2}|[lL]{0,2}[uU]?)$')
+    _BIN_RE = re.compile(r'^0[bB]([01]+)([uU]?[lL]{0,2}|[lL]{0,2}[uU]?)$')
+    _OCT_RE = re.compile(r'^0([0-7]+)([uU]?[lL]{0,2}|[lL]{0,2}[uU]?)$')
+    _DEC_RE = re.compile(r'^(-?\d+)([uU]?[lL]{0,2}|[lL]{0,2}[uU]?)$')
+    _FLOAT_RE = re.compile(r'^-?\d+\.\d*([eE][+-]?\d+)?[fF]?$')
+    _DOUBLE_RE = re.compile(r'^-?\d+\.\d*([eE][+-]?\d+)?$')
+
+    def _extract_macros(self, filepath: str):
+        """Extract #define constants from a C header using clang -dD -E."""
+        cmd = ["clang", "-dD", "-E", "-x", "c", "-std=c11"]
+        cmd.extend(self.compile_args)
+        cmd.append(filepath)
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                print(f"  Warning: clang -dD -E failed (exit {result.returncode})",
+                      file=sys.stderr)
+                if result.stderr:
+                    for line in result.stderr.strip().split('\n')[:3]:
+                        print(f"    {line}", file=sys.stderr)
+                return
+        except FileNotFoundError:
+            print("  Warning: 'clang' not found — skipping #define extraction",
+                  file=sys.stderr)
+            return
+        except subprocess.TimeoutExpired:
+            print("  Warning: clang -dD -E timed out — skipping #define extraction",
+                  file=sys.stderr)
+            return
+
+        # Parse output with file tracking
+        raw_macros = self._parse_dD_output(result.stdout, filepath)
+
+        # Type-infer and collect
+        seen_names = set()
+        for name, value in raw_macros:
+            if name in seen_names:
+                continue
+            macro = self._infer_macro_type(name, value)
+            if macro:
+                self.macro_constants.append(macro)
+                seen_names.add(name)
+
+    def _parse_dD_output(self, output: str, target_filepath: str) -> list[tuple[str, str]]:
+        """Parse clang -dD -E output, collecting only macros from the target file."""
+        # Normalize target path for comparison (normpath + forward slashes, lowercase on Windows)
+        target_norm = os.path.normpath(target_filepath).replace("\\", "/")
+        if sys.platform == "win32":
+            target_norm = target_norm.lower()
+
+        current_file = ""
+        in_target = False
+        macros = []
+
+        for line in output.split('\n'):
+            # Check for line directives: # linenum "filename"
+            m = self._LINE_DIRECTIVE_RE.match(line)
+            if m:
+                current_file = os.path.normpath(m.group(1)).replace("\\", "/")
+                if sys.platform == "win32":
+                    current_file = current_file.lower()
+                in_target = (current_file == target_norm)
+                continue
+
+            if not in_target:
+                continue
+
+            # Check for #define
+            m = self._DEFINE_RE.match(line)
+            if not m:
+                continue
+
+            name = m.group(1)
+            value = m.group(2).strip()
+
+            # Skip empty defines (include guards, feature flags)
+            if not value:
+                continue
+
+            # Skip function-like macros: #define NAME(... has no space before (
+            # We detect this by checking if original line has NAME( with no space
+            if re.match(r'^#define \w+\(', line):
+                continue
+
+            # Skip compiler internals / reserved names
+            if name.startswith('__') or name.startswith('_'):
+                continue
+
+            macros.append((name, value))
+
+        return macros
+
+    def _infer_macro_type(self, name: str, raw_value: str) -> MacroConstant | None:
+        """Attempt to infer the Mingus type of a macro value. Returns None if not a simple literal."""
+        value = raw_value.strip()
+
+        # Strip outer parentheses: ((int)0x20) → (int)0x20 → 0x20
+        while value.startswith('(') and value.endswith(')'):
+            inner = value[1:-1]
+            # Check balanced parens
+            depth = 0
+            balanced = True
+            for ch in inner:
+                if ch == '(':
+                    depth += 1
+                elif ch == ')':
+                    depth -= 1
+                    if depth < 0:
+                        balanced = False
+                        break
+            if balanced and depth == 0:
+                value = inner.strip()
+            else:
+                break
+
+        # Strip C-style casts: (unsigned int)0x20 → 0x20
+        cast_re = re.compile(r'^\((?:unsigned\s+|signed\s+)?(?:long\s+long|long|int|short|char)\)\s*(.+)$')
+        m = cast_re.match(value)
+        if m:
+            value = m.group(1).strip()
+
+        # --- String literal ---
+        if self._STRING_RE.match(value):
+            return MacroConstant(name=name, mingus_type="string",
+                                 mingus_value=value, c_value=raw_value)
+
+        # --- Char literal ---
+        if self._CHAR_RE.match(value):
+            return MacroConstant(name=name, mingus_type="char",
+                                 mingus_value=value, c_value=raw_value)
+
+        # --- Hex integer ---
+        m = self._HEX_RE.match(value)
+        if m:
+            digits = m.group(1)
+            suffix = m.group(2).upper()
+            int_val = int(digits, 16)
+            mingus_type = self._type_from_suffix_and_value(suffix, int_val)
+            # Keep hex representation for Mingus
+            mingus_value = f"0x{digits.upper()}"
+            return MacroConstant(name=name, mingus_type=mingus_type,
+                                 mingus_value=mingus_value, c_value=raw_value)
+
+        # --- Binary integer ---
+        m = self._BIN_RE.match(value)
+        if m:
+            digits = m.group(1)
+            suffix = m.group(2).upper()
+            int_val = int(digits, 2)
+            mingus_type = self._type_from_suffix_and_value(suffix, int_val)
+            return MacroConstant(name=name, mingus_type=mingus_type,
+                                 mingus_value=str(int_val), c_value=raw_value)
+
+        # --- Octal integer ---
+        m = self._OCT_RE.match(value)
+        if m:
+            digits = m.group(1)
+            suffix = m.group(2).upper()
+            int_val = int(digits, 8)
+            mingus_type = self._type_from_suffix_and_value(suffix, int_val)
+            # Convert to decimal for Mingus
+            return MacroConstant(name=name, mingus_type=mingus_type,
+                                 mingus_value=str(int_val), c_value=raw_value)
+
+        # --- Float literal (with f/F suffix) ---
+        if re.match(r'^-?\d+\.\d*([eE][+-]?\d+)?[fF]$', value):
+            float_val = value.rstrip('fF')
+            # Mingus float literals also need f suffix
+            return MacroConstant(name=name, mingus_type="float",
+                                 mingus_value=float_val + "f", c_value=raw_value)
+
+        # --- Double literal (no suffix, has decimal point) ---
+        if re.match(r'^-?\d+\.\d*([eE][+-]?\d+)?$', value):
+            return MacroConstant(name=name, mingus_type="double",
+                                 mingus_value=value, c_value=raw_value)
+
+        # --- Decimal integer ---
+        m = self._DEC_RE.match(value)
+        if m:
+            dec_str = m.group(1)
+            suffix = m.group(2).upper()
+            int_val = int(dec_str)
+            mingus_type = self._type_from_suffix_and_value(suffix, int_val)
+            return MacroConstant(name=name, mingus_type=mingus_type,
+                                 mingus_value=dec_str, c_value=raw_value)
+
+        # Not a simple literal — skip (expression macros, etc.)
+        return None
+
+    def _type_from_suffix_and_value(self, suffix: str, value: int) -> str:
+        """Determine Mingus integer type from C suffix and value range."""
+        suffix = suffix.upper().replace(" ", "")
+
+        # Explicit suffix takes priority
+        if "ULL" in suffix or "LLU" in suffix:
+            return "ulong"
+        if "LL" in suffix:
+            return "long"
+        if "UL" in suffix or "LU" in suffix:
+            # On Windows LLP64: unsigned long = 32-bit
+            return "ulong" if value > 0xFFFFFFFF else "uint"
+        if "L" in suffix:
+            # On Windows LLP64: long = 32-bit
+            return "int"
+        if "U" in suffix:
+            return "ulong" if value > 0xFFFFFFFF else "uint"
+
+        # No suffix — infer from value range
+        if value < 0:
+            if value >= -(2**31):
+                return "int"
+            elif value >= -(2**63):
+                return "long"
+            else:
+                return "long"  # best effort
+        else:
+            if value <= 0x7FFFFFFF:
+                return "int"
+            elif value <= 0xFFFFFFFF:
+                return "uint"
+            elif value <= 0x7FFFFFFFFFFFFFFF:
+                return "long"
+            else:
+                return "ulong"
+
     def print_summary(self):
         """Print a summary of collected declarations to stderr."""
         opaque = sum(1 for s in self.structs.values() if s.is_opaque)
         concrete = sum(1 for s in self.structs.values() if not s.is_opaque)
         print(f"\n  Collected: {len(self.functions)} functions, "
               f"{concrete} structs, {opaque} opaque types, "
-              f"{len(self.enums)} enums", file=sys.stderr)
+              f"{len(self.enums)} enums, "
+              f"{len(self.macro_constants)} #define constants", file=sys.stderr)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -745,6 +1033,8 @@ Examples:
                         help="Skip struct generation")
     parser.add_argument("--no-enums", action="store_true",
                         help="Skip enum generation")
+    parser.add_argument("--no-defines", action="store_true",
+                        help="Skip #define constant extraction")
     parser.add_argument("--compile-args", nargs="*", default=[],
                         help="Additional compiler arguments")
 
@@ -784,6 +1074,7 @@ Examples:
         source_files=source_files,
         include_structs=not args.no_structs,
         include_enums=not args.no_enums,
+        include_defines=not args.no_defines,
         prefixes=args.prefix if args.prefix else None
     )
 
