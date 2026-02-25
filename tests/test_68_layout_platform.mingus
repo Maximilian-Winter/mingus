@@ -1,0 +1,53 @@
+module Test {
+    extern func printf(string fmt, ...) => int;
+    extern func strlen(string s) => size_t;
+
+    // Test 1: @packed struct
+    @packed
+    struct PackedPoint {
+        byte x;
+        int y;
+        byte z;
+    }
+
+    // Test 2: Normal struct (for size comparison)
+    struct NormalPoint {
+        byte x;
+        int y;
+        byte z;
+    }
+
+    func testPlatformTypes() => void {
+        size_t sz = 42;
+        intptr_t ptr = 100;
+        uintptr_t uptr = 200;
+        printf("size_t = %llu\n", sz);
+        printf("intptr_t = %lld\n", ptr);
+        printf("uintptr_t = %llu\n", uptr);
+    }
+
+    func testStrlen() => void {
+        size_t len = strlen("hello");
+        printf("strlen = %llu\n", len);
+    }
+
+    func testPacked() => void {
+        printf("sizeof(PackedPoint) = %d\n", sizeof(PackedPoint));
+        printf("sizeof(NormalPoint) = %d\n", sizeof(NormalPoint));
+
+        PackedPoint p;
+        p.x = 1;
+        p.y = 42;
+        p.z = 2;
+        printf("packed: %d %d %d\n", p.x, p.y, p.z);
+    }
+
+    func main() => void {
+        printf("=== Test 1: Platform types ===\n");
+        testPlatformTypes();
+        printf("=== Test 2: strlen with size_t ===\n");
+        testStrlen();
+        printf("=== Test 3: Packed struct ===\n");
+        testPacked();
+    }
+}

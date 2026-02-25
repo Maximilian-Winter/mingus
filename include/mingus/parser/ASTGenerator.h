@@ -171,6 +171,8 @@ private:
     BinaryOp parseBinaryOperator(const std::string& op);
     UnaryOp parseUnaryOperator(const std::string& op);
     OverloadableOp parseOperatorKind(MingusParser::OverloadableOperatorContext* ctx);
+    void parseLayoutAttributes(const std::vector<MingusParser::AttributeContext*>& attrs,
+                               bool& isPacked, unsigned& alignment);
 
     // Template helpers — extract shared_ptr from std::any
     template<typename T>

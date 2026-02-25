@@ -51,6 +51,8 @@
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/GVN.h>
+#include <llvm/TargetParser/Triple.h>
+#include <llvm/TargetParser/Host.h>
 #pragma warning(pop)
 
 #include <algorithm>
@@ -354,7 +356,8 @@ int main(int argc, char* argv[]) {
                   << "  --link <lib>      Link a C library (e.g. --link SDL2)\n"
                   << "  --lib-path <dir>  Add library search path (e.g. --lib-path /usr/lib)\n"
                   << "  --include-path <dir>  Add import search path for .mingus files\n"
-                  << "  --bench [N]           Benchmark: run N times (default 10) and report timing\n";
+                  << "  --bench [N]           Benchmark: run N times (default 10) and report timing\n"
+                  << "  --target <triple>     Target triple (default: host platform)\n";
         return 1;
     }
 
@@ -368,6 +371,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> libPaths;
     std::vector<std::string> importPaths;
     int benchIterations = 0;
+    std::string targetTriple;
 
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -394,6 +398,8 @@ int main(int argc, char* argv[]) {
                 try { benchIterations = std::stoi(argv[i + 1]); ++i; }
                 catch (...) {}  // next arg isn't a number, keep default
             }
+        } else if (arg == "--target" && i + 1 < argc) {
+            targetTriple = argv[++i];
         }
     }
 
@@ -437,8 +443,16 @@ int main(int argc, char* argv[]) {
         program->linkLibraries.push_back(lib);
     }
 
+    // ---- Target triple + platform types ----
+    if (targetTriple.empty()) {
+        targetTriple = llvm::sys::getDefaultTargetTriple();
+    }
+    llvm::Triple triple(targetTriple);
+    unsigned pointerWidth = triple.isArch64Bit() ? 8 : 4;
+
     // ---- Semantic Analysis (4 passes, multi-error recovery) ----
     mingus::SymbolTable symbolTable;
+    symbolTable.registerPlatformTypes(pointerWidth);
     mingus::ErrorReporter errors;
     errors.setDefaultSourceFile(sourceFile);
     errors.setErrorLimit(20);
@@ -501,7 +515,7 @@ int main(int argc, char* argv[]) {
 
     // ---- IR Generation ----
     mingus::codegen::IRGenerator irgen(symbolTable, pass4.getRAIIInfo(),
-                                        debugMode, sourceFile);
+                                        debugMode, sourceFile, targetTriple);
     auto llvmModule = irgen.generate(*program);
     if (!llvmModule) {
         std::cerr << "error: IR generation failed\n";

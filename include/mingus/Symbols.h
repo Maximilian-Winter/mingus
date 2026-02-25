@@ -233,6 +233,10 @@ public:
     bool isExtern = false;  // true for extern struct (C interop, no cleanup)
     bool isUnion = false;   // true for union types (all fields at offset 0)
 
+    // Layout attributes (@packed, @align(N))
+    bool isPacked = false;
+    unsigned alignment = 0;  // 0 = default (natural alignment)
+
     // Does any field require cleanup (closure-typed)?
     bool needsCleanup() const;
 };

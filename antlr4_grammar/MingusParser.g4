@@ -148,11 +148,11 @@ externOpaqueTypeDeclaration
     ;
 
 externStructDeclaration
-    : DeclareStruct Identifier CURLY_L externFieldDeclaration* CURLY_R
+    : attribute* DeclareStruct Identifier CURLY_L externFieldDeclaration* CURLY_R
     ;
 
 externUnionDeclaration
-    : DeclareUnion Identifier CURLY_L externFieldDeclaration* CURLY_R
+    : attribute* DeclareUnion Identifier CURLY_L externFieldDeclaration* CURLY_R
     ;
 
 externFieldDeclaration
@@ -245,11 +245,19 @@ interfaceMember
     ;
 
 // ============================================================================
+// Attributes — Layout annotations (@packed, @align(N))
+// ============================================================================
+
+attribute
+    : AtSign Identifier ( OpeningRoundBracket IntegerLiteral ClosingRoundBracket )?
+    ;
+
+// ============================================================================
 // Struct — Value types with methods, no inheritance
 // ============================================================================
 
 structDeclaration
-    : accessModifier?
+    : attribute* accessModifier?
       DeclareStruct Identifier ( structBlock | SemicolonSeparator )
     ;
 
@@ -268,7 +276,7 @@ structMember
 // ============================================================================
 
 unionDeclaration
-    : accessModifier?
+    : attribute* accessModifier?
       DeclareUnion Identifier ( unionBlock | SemicolonSeparator )
     ;
 

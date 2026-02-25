@@ -1,0 +1,10 @@
+=== Test 1: Platform types ===
+size_t = 42
+intptr_t = 100
+uintptr_t = 200
+=== Test 2: strlen with size_t ===
+strlen = 5
+=== Test 3: Packed struct ===
+sizeof(PackedPoint) = 6
+sizeof(NormalPoint) = 12
+packed: 1 42 2

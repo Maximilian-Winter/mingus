@@ -189,6 +189,7 @@ ColonOperator:          ':';
 SemicolonSeparator:     ';';
 CommaSeparator:         ',';
 UnderscoreWildcard:     '_';
+AtSign:                 '@';
 
 OpeningRoundBracket:    '(';
 ClosingRoundBracket:    ')';

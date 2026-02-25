@@ -54,6 +54,24 @@ void SymbolTable::registerPrimitives() {
     types_["String"]  = stringObjectType_;
 }
 
+void SymbolTable::registerPlatformTypes(unsigned pointerWidthBytes) {
+    if (pointerWidthBytes == 8) {
+        // 64-bit target
+        types_["size_t"]    = ulongType_;   // uint64
+        types_["ssize_t"]   = longType_;    // int64
+        types_["intptr_t"]  = longType_;    // int64
+        types_["uintptr_t"] = ulongType_;   // uint64
+        types_["ptrdiff_t"] = longType_;    // int64
+    } else {
+        // 32-bit target
+        types_["size_t"]    = uintType_;    // uint32
+        types_["ssize_t"]   = intType_;     // int32
+        types_["intptr_t"]  = intType_;     // int32
+        types_["uintptr_t"] = uintType_;    // uint32
+        types_["ptrdiff_t"] = intType_;     // int32
+    }
+}
+
 // ============================================================================
 // Root scope
 // ============================================================================

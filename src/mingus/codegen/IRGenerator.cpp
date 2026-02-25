@@ -19,6 +19,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/TargetParser/Triple.h>
+#include <llvm/TargetParser/Host.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/DIBuilder.h>
 #include <llvm/IR/DebugInfoMetadata.h>
@@ -112,12 +113,14 @@ bool IRGenerator::isFunctionKind(TypeSymbol* t) {
 IRGenerator::IRGenerator(SymbolTable& symbolTable,
                          const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo,
                          bool debugMode,
-                         const std::string& sourceFile)
+                         const std::string& sourceFile,
+                         const std::string& targetTriple)
     : builder_(context_)
     , symbolTable_(symbolTable)
     , raiiInfo_(raiiInfo)
     , debugMode_(debugMode)
     , sourceFile_(sourceFile)
+    , targetTriple_(targetTriple)
 {}
 
 //================================================================================
@@ -125,7 +128,11 @@ IRGenerator::IRGenerator(SymbolTable& symbolTable,
 //================================================================================
 std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     module_ = std::make_unique<llvm::Module>("mingus_module", context_);
-    module_->setTargetTriple(llvm::Triple("x86_64-pc-windows-msvc"));
+    // Set target triple (from CLI --target or host default)
+    std::string tripleStr = targetTriple_.empty()
+        ? llvm::sys::getDefaultTargetTriple()
+        : targetTriple_;
+    module_->setTargetTriple(llvm::Triple(tripleStr));
 
     // Debug info initialization
     if (debugMode_) {
@@ -604,7 +611,9 @@ void IRGenerator::declareStructTypes(ProgramNode& program) {
 
         std::vector<llvm::Type*> fieldTypes;
 
+        bool isPacked = false;
         if (auto* ss = typeSym->as<StructSymbol>()) {
+            isPacked = ss->isPacked;
             if (ss->isUnion) {
                 // Union: body = { [maxFieldSize x i8] }
                 size_t maxSize = 0;
@@ -618,9 +627,9 @@ void IRGenerator::declareStructTypes(ProgramNode& program) {
                 if (maxSize > 0) {
                     auto* arrayTy = llvm::ArrayType::get(
                         llvm::Type::getInt8Ty(context_), maxSize);
-                    structTy->setBody({ arrayTy });
+                    structTy->setBody({ arrayTy }, isPacked);
                 } else {
-                    structTy->setBody(llvm::Type::getInt8Ty(context_));
+                    structTy->setBody({llvm::Type::getInt8Ty(context_)}, isPacked);
                 }
                 continue;  // skip the common setBody below
             }
@@ -639,9 +648,9 @@ void IRGenerator::declareStructTypes(ProgramNode& program) {
         }
 
         if (!fieldTypes.empty()) {
-            structTy->setBody(fieldTypes);
+            structTy->setBody(fieldTypes, isPacked);
         } else {
-            structTy->setBody(llvm::Type::getInt8Ty(context_));
+            structTy->setBody({llvm::Type::getInt8Ty(context_)}, isPacked);
         }
     }
 }
@@ -2993,6 +3002,13 @@ void IRGenerator::visit(VariableDeclaration& node) {
     // === LOCAL VARIABLE (existing code) ===
     auto* alloca = createEntryBlockAlloca(currentFunction_, varTy, node.name);
     namedValues_[varSym] = alloca;
+
+    // Apply alignment from @align(N) on struct types
+    if (auto* ss = varSym->getType() ? varSym->getType()->as<StructSymbol>() : nullptr) {
+        if (ss->alignment > 0) {
+            alloca->setAlignment(llvm::Align(ss->alignment));
+        }
+    }
 
     // Debug info: create local variable descriptor
     if (debugMode_ && diBuilder_ && !diScopeStack_.empty()) {

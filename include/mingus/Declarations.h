@@ -203,6 +203,10 @@ public:
     std::vector<std::shared_ptr<FunctionDeclaration>> methods;
     std::vector<std::shared_ptr<OperatorDeclaration>> operators;
 
+    // Layout attributes (@packed, @align(N))
+    bool isPacked = false;
+    unsigned alignment = 0;  // 0 = default (natural alignment)
+
     // Resolved in Pass 1
     std::shared_ptr<StructSymbol> resolvedStruct;
 };
@@ -220,6 +224,10 @@ public:
     std::vector<std::shared_ptr<VariableDeclaration>> fields;
     std::vector<std::shared_ptr<FunctionDeclaration>> methods;
 
+    // Layout attributes (@packed, @align(N))
+    bool isPacked = false;
+    unsigned alignment = 0;
+
     // Resolved in Pass 1 — reuses StructSymbol with isUnion=true
     std::shared_ptr<StructSymbol> resolvedUnion;
 };
@@ -234,6 +242,10 @@ public:
 
     std::string name;
     std::vector<std::shared_ptr<ParameterNode>> fields;
+
+    // Layout attributes (@packed, @align(N))
+    bool isPacked = false;
+    unsigned alignment = 0;
 
     // Resolved in Pass 1
     std::shared_ptr<StructSymbol> resolvedUnion;
@@ -375,6 +387,10 @@ public:
 
     std::string name;
     std::vector<std::shared_ptr<ParameterNode>> fields;
+
+    // Layout attributes (@packed, @align(N))
+    bool isPacked = false;
+    unsigned alignment = 0;
 
     // Resolved in Pass 1
     std::shared_ptr<StructSymbol> resolvedStruct;

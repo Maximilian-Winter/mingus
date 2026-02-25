@@ -59,7 +59,8 @@ public:
     IRGenerator(SymbolTable& symbolTable,
                 const std::unordered_map<Scope*, ScopeRAIIInfo>& raiiInfo,
                 bool debugMode = false,
-                const std::string& sourceFile = "");
+                const std::string& sourceFile = "",
+                const std::string& targetTriple = "");
 
     // Entry point — generates LLVM IR and returns the module
     std::unique_ptr<llvm::Module> generate(ProgramNode& program);
@@ -157,6 +158,7 @@ private:
     //==========================================================================
     bool debugMode_ = false;
     std::string sourceFile_;
+    std::string targetTriple_;
     std::unique_ptr<llvm::DIBuilder> diBuilder_;
     llvm::DICompileUnit* diCompileUnit_ = nullptr;
     llvm::DIFile* diFile_ = nullptr;

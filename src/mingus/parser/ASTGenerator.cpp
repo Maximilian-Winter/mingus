@@ -225,6 +225,22 @@ OverloadableOp ASTGenerator::parseOperatorKind(
     return OverloadableOp::Add;
 }
 
+void ASTGenerator::parseLayoutAttributes(
+    const std::vector<MingusParser::AttributeContext*>& attrs,
+    bool& isPacked, unsigned& alignment)
+{
+    for (auto* attr : attrs) {
+        std::string name = attr->Identifier()->getText();
+        if (name == "packed") {
+            isPacked = true;
+        } else if (name == "align") {
+            if (attr->IntegerLiteral()) {
+                alignment = std::stoul(attr->IntegerLiteral()->getText());
+            }
+        }
+    }
+}
+
 //================================================================================
 // Program Structure
 //================================================================================
@@ -361,6 +377,10 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
                             auto* esCtx = memberCtx->externStructDeclaration();
                             extStruct->debugInfo = makeDebugInfo(esCtx);
                             extStruct->name = esCtx->Identifier()->getText();
+                            if (!esCtx->attribute().empty()) {
+                                parseLayoutAttributes(esCtx->attribute(),
+                                    extStruct->isPacked, extStruct->alignment);
+                            }
                             for (auto* fieldCtx : esCtx->externFieldDeclaration()) {
                                 auto param = std::make_shared<ParameterNode>();
                                 param->debugInfo = makeDebugInfo(fieldCtx);
@@ -376,6 +396,10 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
                             auto* euCtx = memberCtx->externUnionDeclaration();
                             extUnion->debugInfo = makeDebugInfo(euCtx);
                             extUnion->name = euCtx->Identifier()->getText();
+                            if (!euCtx->attribute().empty()) {
+                                parseLayoutAttributes(euCtx->attribute(),
+                                    extUnion->isPacked, extUnion->alignment);
+                            }
                             for (auto* fieldCtx : euCtx->externFieldDeclaration()) {
                                 auto param = std::make_shared<ParameterNode>();
                                 param->debugInfo = makeDebugInfo(fieldCtx);
@@ -860,6 +884,9 @@ std::any ASTGenerator::visitStructDeclaration(
     strct->debugInfo = makeDebugInfo(ctx);
     strct->name = ctx->Identifier()->getText();
     strct->accessModifier = parseAccessModifier(ctx->accessModifier());
+    if (!ctx->attribute().empty()) {
+        parseLayoutAttributes(ctx->attribute(), strct->isPacked, strct->alignment);
+    }
 
     if (ctx->structBlock()) {
         for (auto* memberCtx : ctx->structBlock()->structMember()) {
@@ -891,6 +918,9 @@ std::any ASTGenerator::visitUnionDeclaration(
     uni->debugInfo = makeDebugInfo(ctx);
     uni->name = ctx->Identifier()->getText();
     uni->accessModifier = parseAccessModifier(ctx->accessModifier());
+    if (!ctx->attribute().empty()) {
+        parseLayoutAttributes(ctx->attribute(), uni->isPacked, uni->alignment);
+    }
 
     if (ctx->unionBlock()) {
         for (auto* memberCtx : ctx->unionBlock()->unionMember()) {

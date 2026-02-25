@@ -485,6 +485,10 @@ void SymbolTableBuilder::visit(StructDeclaration& node) {
         node.resolvedStruct = structSym;
     }
 
+    // Layout attributes
+    structSym->isPacked = node.isPacked;
+    structSym->alignment = node.alignment;
+
     // StructSymbol IS the member scope — push it
     symbolTable_.pushScope(structSym);
     auto savedInType = inTypeScope_;
@@ -1138,6 +1142,10 @@ void SymbolTableBuilder::visit(ExternStructDeclaration& node) {
     auto structSym = node.resolvedStruct;
     if (!structSym) return;  // pre-registration failed
 
+    // Layout attributes
+    structSym->isPacked = node.isPacked;
+    structSym->alignment = node.alignment;
+
     // Create VariableSymbol for each field (type resolved later by Pass 2)
     symbolTable_.pushScope(structSym);
     for (size_t i = 0; i < node.fields.size(); i++) {
@@ -1173,6 +1181,10 @@ void SymbolTableBuilder::visit(UnionDeclaration& node) {
         node.resolvedUnion = unionSym;
     }
 
+    // Layout attributes
+    unionSym->isPacked = node.isPacked;
+    unionSym->alignment = node.alignment;
+
     // StructSymbol IS the member scope — push it
     symbolTable_.pushScope(unionSym);
     auto savedInType = inTypeScope_;
@@ -1206,6 +1218,10 @@ void SymbolTableBuilder::visit(ExternUnionDeclaration& node) {
 
     auto unionSym = node.resolvedUnion;
     if (!unionSym) return;  // pre-registration failed
+
+    // Layout attributes
+    unionSym->isPacked = node.isPacked;
+    unionSym->alignment = node.alignment;
 
     // Create VariableSymbol for each field (type resolved later by Pass 2)
     symbolTable_.pushScope(unionSym);

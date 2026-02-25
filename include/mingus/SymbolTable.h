@@ -119,6 +119,11 @@ private:
 
     // Initialize primitive types
     void registerPrimitives();
+
+public:
+    // Register platform-sized type aliases (size_t, intptr_t, etc.)
+    // Must be called after construction, once target pointer width is known.
+    void registerPlatformTypes(unsigned pointerWidthBytes);
 };
 
 } // namespace mingus
