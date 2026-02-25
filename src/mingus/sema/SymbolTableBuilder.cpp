@@ -327,6 +327,16 @@ void SymbolTableBuilder::visit(FunctionDeclaration& node) {
                 auto tpSym = std::make_shared<TypeParameterSymbol>(tpName);
                 symbolTable_.defineSymbol(tpSym);
             }
+            // Set astScopeNode on parameter types AND return type so TypeResolver
+            // can find TypeParameterSymbol("T") during type resolution
+            for (auto& param : node.parameters) {
+                if (param && param->type) {
+                    param->type->astScopeNode = funcSym;
+                }
+            }
+            if (node.returnType) {
+                node.returnType->astScopeNode = funcSym;
+            }
         }
 
         createParameterSymbols(node.parameters, funcSym);

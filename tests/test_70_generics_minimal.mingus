@@ -1,0 +1,12 @@
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    func identity<T>(T value) => T {
+        return value;
+    }
+
+    func main() => void {
+        int a = identity::<int>(42);
+        printf("identity<int>(42) = %d\n", a);
+    }
+}

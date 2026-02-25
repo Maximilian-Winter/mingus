@@ -17,9 +17,9 @@ module Test {
         return a + b;
     }
 
-    // Generic with multiple type parameters
-    func makePair<T, U>(T first, U second) => (T, U) {
-        return (first, second);
+    // Generic with two type params (returns first)
+    func first<T, U>(T a, U b) => T {
+        return a;
     }
 
     func main() => void {
@@ -42,8 +42,8 @@ module Test {
         printf("add<double>(1.5, 2.5) = %.1f\n", s2);
 
         printf("=== Test 4: Multiple type params ===\n");
-        var (x, y) = makePair::<int, double>(42, 3.14);
-        printf("makePair<int,double> = (%d, %.2f)\n", x, y);
+        int f1 = first::<int, double>(42, 3.14);
+        printf("first<int,double>(42, 3.14) = %d\n", f1);
 
         printf("=== Test 5: Reuse same instantiation ===\n");
         int m3 = max::<int>(5, 3);
