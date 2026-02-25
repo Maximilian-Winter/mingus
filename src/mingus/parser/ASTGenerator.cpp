@@ -273,6 +273,11 @@ std::any ASTGenerator::visitModule(MingusParser::ModuleContext* ctx) {
                     visitUnionDeclaration(declCtx->unionDeclaration()));
                 if (uni) mod->declarations.push_back(uni);
 
+            } else if (declCtx->taggedUnionDeclaration()) {
+                auto tu = anyToNode<TaggedUnionDeclaration>(
+                    visitTaggedUnionDeclaration(declCtx->taggedUnionDeclaration()));
+                if (tu) mod->declarations.push_back(tu);
+
             } else if (declCtx->enumDeclaration()) {
                 auto enm = anyToNode<EnumDeclaration>(
                     visitEnumDeclaration(declCtx->enumDeclaration()));
@@ -903,6 +908,50 @@ std::any ASTGenerator::visitUnionDeclaration(
     }
 
     return std::any(std::static_pointer_cast<DeclarationBaseNode>(uni));
+}
+
+std::any ASTGenerator::visitTaggedUnionDeclaration(
+    MingusParser::TaggedUnionDeclarationContext* ctx)
+{
+    auto tu = std::make_shared<TaggedUnionDeclaration>();
+    tu->debugInfo = makeDebugInfo(ctx);
+    tu->name = ctx->Identifier()->getText();
+    tu->accessModifier = parseAccessModifier(ctx->accessModifier());
+
+    for (auto* variantCtx : ctx->taggedUnionVariant()) {
+        auto variant = anyToNode<TaggedUnionVariantNode>(
+            visitTaggedUnionVariant(variantCtx));
+        if (variant) tu->variants.push_back(variant);
+    }
+
+    return std::any(std::static_pointer_cast<DeclarationBaseNode>(tu));
+}
+
+std::any ASTGenerator::visitTaggedUnionVariant(
+    MingusParser::TaggedUnionVariantContext* ctx)
+{
+    auto variant = std::make_shared<TaggedUnionVariantNode>();
+    variant->debugInfo = makeDebugInfo(ctx);
+    variant->name = ctx->Identifier()->getText();
+
+    for (auto* fieldCtx : ctx->taggedUnionField()) {
+        visitTaggedUnionField(fieldCtx);
+        // Extract field info directly
+        TaggedUnionFieldNode field;
+        field.name = fieldCtx->Identifier()->getText();
+        field.type = anyToNode<TypeNode>(
+            visitTypeIdentifier(fieldCtx->typeIdentifier()));
+        variant->fields.push_back(std::move(field));
+    }
+
+    return std::any(variant);
+}
+
+std::any ASTGenerator::visitTaggedUnionField(
+    MingusParser::TaggedUnionFieldContext* ctx)
+{
+    // Field info extracted inline in visitTaggedUnionVariant
+    return {};
 }
 
 std::any ASTGenerator::visitEnumDeclaration(
@@ -2425,6 +2474,20 @@ std::any ASTGenerator::visitLiteralPattern(
         pat->value = lit;
 
     } else if (ctx->qualifiedName()) {
+        // Check if this is a variant pattern: qualifiedName ( variantPatternField, ... )
+        if (ctx->OpeningRoundBracket()) {
+            auto vp = std::make_shared<VariantPattern>();
+            vp->debugInfo = makeDebugInfo(ctx);
+            vp->variantPath = parseQualifiedName(ctx->qualifiedName());
+            for (auto* fieldCtx : ctx->variantPatternField()) {
+                auto fieldPat = anyToNode<PatternNode>(
+                    visitVariantPatternField(fieldCtx));
+                if (fieldPat) vp->fieldPatterns.push_back(fieldPat);
+            }
+            return std::any(std::static_pointer_cast<PatternNode>(vp));
+        }
+
+        // Plain qualified name literal pattern
         auto qname = std::make_shared<QualifiedNameExpression>();
         qname->debugInfo = makeDebugInfo(ctx);
         qname->parts = parseQualifiedName(ctx->qualifiedName());
@@ -2476,6 +2539,19 @@ std::any ASTGenerator::visitTuplePattern(
 {
     // V2 AST does not yet have a TuplePattern node
     reportError(ctx, "Tuple patterns not yet supported in V2");
+    return std::any(std::shared_ptr<PatternNode>(nullptr));
+}
+
+std::any ASTGenerator::visitVariantPatternField(
+    MingusParser::VariantPatternFieldContext* ctx)
+{
+    if (ctx->bindingPattern()) {
+        return visitBindingPattern(ctx->bindingPattern());
+    } else if (ctx->wildcardPattern()) {
+        return visitWildcardPattern(ctx->wildcardPattern());
+    } else if (ctx->literalPattern()) {
+        return visitLiteralPattern(ctx->literalPattern());
+    }
     return std::any(std::shared_ptr<PatternNode>(nullptr));
 }
 

@@ -97,6 +97,11 @@ public:
     std::string resolvedEnumStringValue;
     bool isStringEnumAccess = false;
 
+    // Tagged union variant resolution (set by TypeChecker)
+    bool isTaggedUnionVariant = false;
+    int resolvedVariantTag = -1;
+    std::shared_ptr<TaggedUnionSymbol> resolvedTaggedUnion;
+
     // resolvedSymbol inherited from ExpressionBaseNode
 };
 
@@ -134,6 +139,11 @@ public:
 
     // Static method access: ClassName.staticMethod()
     bool isStaticAccess = false;
+
+    // Tagged union variant access: Option.Some, Result.Err
+    bool isTaggedUnionVariant = false;
+    int resolvedVariantTag = -1;
+    std::shared_ptr<TaggedUnionSymbol> resolvedTaggedUnion;
 };
 
 // ============================================================================

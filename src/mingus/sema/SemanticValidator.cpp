@@ -448,9 +448,54 @@ void SemanticValidator::checkExhaustiveness(MatchExpression& node) {
             }
             return;
         }
+
+        // Check tagged union coverage
+        auto* tuSym = node.subject->resolvedType->as<TaggedUnionSymbol>();
+        if (tuSym) {
+            std::set<std::string> covered;
+            for (auto& arm : node.arms) {
+                if (!arm.pattern) continue;
+
+                // VariantPattern: Result.Ok(var v) → covers "Ok"
+                if (auto* varPat = arm.pattern->as<VariantPattern>()) {
+                    if (!varPat->variantPath.empty()) {
+                        covered.insert(varPat->variantPath.back());
+                    }
+                }
+
+                // LiteralPattern with QualifiedNameExpression: Option.None
+                if (auto* litPat = arm.pattern->as<LiteralPattern>()) {
+                    if (litPat->value) {
+                        if (auto* qname = litPat->value->as<QualifiedNameExpression>()) {
+                            if (qname->isTaggedUnionVariant && !qname->parts.empty()) {
+                                covered.insert(qname->parts.back());
+                            }
+                        }
+                    }
+                }
+            }
+
+            std::vector<std::string> missing;
+            for (auto& variant : tuSym->variants) {
+                if (covered.find(variant.name) == covered.end()) {
+                    missing.push_back(variant.name);
+                }
+            }
+
+            if (!missing.empty()) {
+                std::string msg = "non-exhaustive match on tagged union '"
+                    + tuSym->getName() + "': missing ";
+                for (size_t i = 0; i < missing.size(); i++) {
+                    if (i > 0) msg += ", ";
+                    msg += "'" + missing[i] + "'";
+                }
+                errors_.warning(msg, node.debugInfo);
+            }
+            return;
+        }
     }
 
-    // Non-enum without wildcard
+    // Non-enum/tagged-union without wildcard
     errors_.warning("match expression may not be exhaustive", node.debugInfo);
 }
 
@@ -703,6 +748,10 @@ void SemanticValidator::visit(UnionDeclaration& node) {
     }
 
     currentScope_ = savedScope;
+}
+
+void SemanticValidator::visit(TaggedUnionDeclaration& node) {
+    // No special validation needed for tagged unions in V1
 }
 
 void SemanticValidator::visit(ClassDeclaration& node) {

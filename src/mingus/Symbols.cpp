@@ -191,6 +191,22 @@ const EnumSymbol::MemberInfo* EnumSymbol::findMember(const std::string& name) co
 }
 
 // ============================================================================
+// TaggedUnionSymbol
+// ============================================================================
+
+TaggedUnionSymbol::TaggedUnionSymbol(const std::string& name)
+    : TypeSymbol(name, /*isPrimaryType=*/false) {}
+
+const TaggedUnionSymbol::VariantInfo* TaggedUnionSymbol::findVariant(const std::string& name) const {
+    for (const auto& variant : variants) {
+        if (variant.name == name) {
+            return &variant;
+        }
+    }
+    return nullptr;
+}
+
+// ============================================================================
 // InterfaceSymbol
 // ============================================================================
 

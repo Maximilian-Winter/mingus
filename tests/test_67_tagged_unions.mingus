@@ -1,0 +1,96 @@
+module Test67
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Basic tagged union: Option with Some(int) and None
+    tagged union Option {
+        Some(int value),
+        None
+    }
+
+    // Multi-field tagged union: Result with Ok(int) and Err(string)
+    tagged union Result {
+        Ok(int value),
+        Err(string message)
+    }
+
+    // Function returning tagged union
+    func makeOption(bool hasSome, int val) => Option
+    {
+        if (hasSome) {
+            return Option.Some(val);
+        }
+        return Option.None;
+    }
+
+    // Function taking tagged union as parameter
+    func printOption(Option opt) => void
+    {
+        match opt {
+            Option.Some(var v) => printf("Some(%d)\n", v),
+            Option.None => printf("None\n"),
+        };
+    }
+
+    func main() => int
+    {
+        // Test 1: Basic Option construction and matching
+        printf("=== Test 1: Basic Option ===\n");
+        var some = Option.Some(42);
+        var none = Option.None;
+
+        match some {
+            Option.Some(var v) => printf("some = Some(%d)\n", v),
+            Option.None => printf("some = None\n"),
+        };
+
+        match none {
+            Option.Some(var v) => printf("none = Some(%d)\n", v),
+            Option.None => printf("none = None\n"),
+        };
+
+        // Test 2: Result with string payload
+        printf("=== Test 2: Result ===\n");
+        var ok = Result.Ok(100);
+        var err = Result.Err("not found");
+
+        match ok {
+            Result.Ok(var v) => printf("ok = Ok(%d)\n", v),
+            Result.Err(var msg) => printf("ok = Err(%s)\n", msg),
+        };
+
+        match err {
+            Result.Ok(var v) => printf("err = Ok(%d)\n", v),
+            Result.Err(var msg) => printf("err = Err(%s)\n", msg),
+        };
+
+        // Test 3: Function returning tagged union
+        printf("=== Test 3: Function return ===\n");
+        var opt1 = makeOption(true, 7);
+        var opt2 = makeOption(false, 0);
+
+        match opt1 {
+            Option.Some(var v) => printf("opt1 = Some(%d)\n", v),
+            Option.None => printf("opt1 = None\n"),
+        };
+
+        match opt2 {
+            Option.Some(var v) => printf("opt2 = Some(%d)\n", v),
+            Option.None => printf("opt2 = None\n"),
+        };
+
+        // Test 4: Tagged union as function parameter
+        printf("=== Test 4: Function parameter ===\n");
+        printOption(Option.Some(99));
+        printOption(Option.None);
+
+        // Test 5: Direct assignment of empty variant
+        printf("=== Test 5: Direct assignment ===\n");
+        var x = Option.None;
+        printOption(x);
+        x = Option.Some(123);
+        printOption(x);
+
+        return 0;
+    }
+}

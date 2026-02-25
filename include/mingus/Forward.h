@@ -46,6 +46,7 @@ class OperatorSymbol;
 class ClassSymbol;
 class StructSymbol;
 class EnumSymbol;
+class TaggedUnionSymbol;
 class InterfaceSymbol;
 class TypeAliasSymbol;
 class ModuleSymbol;
@@ -130,6 +131,8 @@ class OpaqueTypeDeclaration;
 class ExternStructDeclaration;
 class UnionDeclaration;
 class ExternUnionDeclaration;
+class TaggedUnionDeclaration;
+class TaggedUnionVariantNode;
 class OpaqueTypeSymbol;
 
 // ---- AST pattern nodes (for match expressions) ----
@@ -138,6 +141,7 @@ class LiteralPattern;
 class IdentifierPattern;
 class WildcardPattern;
 class RangePattern;
+class VariantPattern;
 
 // ---- Common type aliases ----
 using SymbolPtr     = std::shared_ptr<Symbol>;

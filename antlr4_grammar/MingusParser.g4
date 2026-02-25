@@ -76,6 +76,7 @@ moduleDeclaration
     : classDeclaration
     | structDeclaration
     | unionDeclaration
+    | taggedUnionDeclaration
     | enumDeclaration
     | interfaceDeclaration
     | functionDeclaration
@@ -281,6 +282,23 @@ unionMember
     ;
 
 // ============================================================================
+// Tagged Union (Discriminated Union / Sum Type)
+// ============================================================================
+
+taggedUnionDeclaration
+    : accessModifier? TaggedKeyword DeclareUnion Identifier
+      CURLY_L taggedUnionVariant (CommaSeparator taggedUnionVariant)* CommaSeparator? CURLY_R
+    ;
+
+taggedUnionVariant
+    : Identifier (OpeningRoundBracket taggedUnionField (CommaSeparator taggedUnionField)* ClosingRoundBracket)?
+    ;
+
+taggedUnionField
+    : typeIdentifier Identifier
+    ;
+
+// ============================================================================
 // Enum
 // ============================================================================
 
@@ -480,7 +498,7 @@ literalPattern
     | CharLiteral
     | string
     | NullReference
-    | qualifiedName
+    | qualifiedName ( OpeningRoundBracket variantPatternField ( CommaSeparator variantPatternField )* ClosingRoundBracket )?
     ;
 
 rangePattern
@@ -497,6 +515,12 @@ bindingPattern
 
 tuplePattern
     : OpeningRoundBracket pattern ( CommaSeparator pattern )+ ClosingRoundBracket
+    ;
+
+variantPatternField
+    : bindingPattern
+    | wildcardPattern
+    | literalPattern
     ;
 
 // ============================================================================

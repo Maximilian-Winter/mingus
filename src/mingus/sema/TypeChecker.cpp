@@ -362,6 +362,10 @@ void TypeChecker::visit(UnionDeclaration& node) {
     currentClass_ = savedClass;
 }
 
+void TypeChecker::visit(TaggedUnionDeclaration& node) {
+    // Types already resolved by TypeResolver (Pass 2) — nothing else to check
+}
+
 void TypeChecker::visit(ClassDeclaration& node) {
     auto savedClass = currentClass_;
     currentClass_ = node.resolvedClass.get();
@@ -653,6 +657,29 @@ void TypeChecker::visit(QualifiedNameExpression& node) {
             return;
         }
 
+        // Tagged union variant access: Result.Ok, Option.None
+        if (auto* tuSym = sym->as<TaggedUnionSymbol>()) {
+            auto* variant = tuSym->findVariant(node.parts[i]);
+            if (variant) {
+                node.isTaggedUnionVariant = true;
+                node.resolvedVariantTag = variant->tagValue;
+                node.resolvedTaggedUnion = std::dynamic_pointer_cast<TaggedUnionSymbol>(
+                    symbolTable_.resolveType(tuSym->getName()));
+
+                // Type is the tagged union itself
+                node.resolvedType = node.resolvedTaggedUnion;
+
+                // If variant has fields, this is a constructor call (e.g. Result.Ok(42))
+                // The CallExpression visitor will handle argument checking.
+                // If no fields, this IS the constructed value (e.g. Option.None)
+                return;
+            }
+            errors_.error("'" + node.parts[i] + "' not found in tagged union '"
+                + tuSym->getName() + "'", node.debugInfo);
+            node.resolvedType = symbolTable_.getErrorType();
+            return;
+        }
+
         auto* symScope = dynamic_cast<Scope*>(sym.get());
         if (!symScope) {
             errors_.error("'" + node.parts[i-1] + "' is not a scope", node.debugInfo);
@@ -715,6 +742,23 @@ void TypeChecker::visit(MemberAccessExpression& node) {
             }
             return;
         }
+    }
+
+    // Tagged union variant access: Option.Some, Option.None
+    if (auto* tuSym = objType->as<TaggedUnionSymbol>()) {
+        auto* variant = tuSym->findVariant(node.memberName);
+        if (variant) {
+            node.isTaggedUnionVariant = true;
+            node.resolvedVariantTag = variant->tagValue;
+            node.resolvedTaggedUnion = std::dynamic_pointer_cast<TaggedUnionSymbol>(
+                symbolTable_.resolveType(tuSym->getName()));
+            node.resolvedType = node.resolvedTaggedUnion;
+            return;
+        }
+        errors_.error("'" + node.memberName + "' not found in tagged union '"
+            + tuSym->getName() + "'", node.debugInfo);
+        node.resolvedType = symbolTable_.getErrorType();
+        return;
     }
 
     // String builtin methods (for `string` / char*)
@@ -1245,6 +1289,55 @@ void TypeChecker::visit(CallExpression& node) {
         return;
     }
 
+    // Tagged union variant constructor: Result.Ok(42)
+    if (!funcType) {
+        // Via QualifiedNameExpression path (patterns)
+        auto* qnameCallee = node.callee->as<QualifiedNameExpression>();
+        // Via MemberAccessExpression path (expressions)
+        auto* memCallee = node.callee->as<MemberAccessExpression>();
+
+        std::shared_ptr<TaggedUnionSymbol> tuSym;
+        std::string variantName;
+        if (qnameCallee && qnameCallee->isTaggedUnionVariant && qnameCallee->resolvedTaggedUnion) {
+            tuSym = qnameCallee->resolvedTaggedUnion;
+            variantName = qnameCallee->parts.back();
+        } else if (memCallee && memCallee->isTaggedUnionVariant && memCallee->resolvedTaggedUnion) {
+            tuSym = memCallee->resolvedTaggedUnion;
+            variantName = memCallee->memberName;
+        }
+
+        if (tuSym) {
+            auto* variant = tuSym->findVariant(variantName);
+            if (variant) {
+                // Check argument count matches variant field count
+                size_t argCount = node.arguments ? node.arguments->expressions.size() : 0;
+                size_t fieldCount = variant->fields.size();
+                if (argCount != fieldCount) {
+                    errors_.error("variant '" + variant->name + "' expects "
+                        + std::to_string(fieldCount) + " arguments, got "
+                        + std::to_string(argCount), node.debugInfo);
+                }
+                // Type-check each argument against variant field type
+                if (node.arguments) {
+                    node.arguments->isReference.clear();
+                    for (size_t i = 0; i < node.arguments->expressions.size(); i++) {
+                        node.arguments->isReference.push_back(false);  // no ref params for variants
+                        if (i < variant->fields.size() && node.arguments->expressions[i]) {
+                            auto argType = node.arguments->expressions[i]->resolvedType;
+                            auto fieldType = variant->fields[i].type;
+                            if (argType && fieldType) {
+                                checkAssignability(argType.get(), fieldType.get(),
+                                    node.arguments->expressions[i]->debugInfo, "variant argument");
+                            }
+                        }
+                    }
+                }
+                node.resolvedType = tuSym;
+                return;
+            }
+        }
+    }
+
     if (!funcType) {
         errors_.error("call to non-callable type '" + calleeType->getTypeDescription() + "'",
             node.debugInfo);
@@ -1409,6 +1502,45 @@ void TypeChecker::visit(MatchExpression& node) {
                     idPat->resolvedSymbol->setType(node.subject->resolvedType);
                 }
                 if (idPat->guard) idPat->guard->accept(*this);
+            }
+
+            // Variant patterns: resolve tagged union + set binding types
+            if (auto* varPat = arm.pattern->as<VariantPattern>()) {
+                if (varPat->variantPath.size() >= 2) {
+                    // Resolve the tagged union type from the path
+                    auto* scope = arm.pattern->astScopeNode
+                        ? arm.pattern->astScopeNode.get() : nullptr;
+                    if (scope) {
+                        auto tuSym = scope->resolve(varPat->variantPath[0]);
+                        auto* tuType = tuSym ? tuSym->as<TaggedUnionSymbol>() : nullptr;
+                        if (tuType) {
+                            varPat->resolvedUnion = std::dynamic_pointer_cast<TaggedUnionSymbol>(
+                                symbolTable_.resolveType(tuType->getName()));
+                            auto* variant = tuType->findVariant(varPat->variantPath[1]);
+                            if (variant) {
+                                varPat->resolvedVariantIndex = variant->tagValue;
+
+                                // Set binding variable types from variant fields
+                                for (size_t fi = 0; fi < varPat->fieldPatterns.size(); fi++) {
+                                    auto& fp = varPat->fieldPatterns[fi];
+                                    if (!fp) continue;
+                                    if (auto* idFP = fp->as<IdentifierPattern>()) {
+                                        if (idFP->resolvedSymbol && fi < variant->fields.size()) {
+                                            idFP->resolvedSymbol->setType(variant->fields[fi].type);
+                                        }
+                                    }
+                                }
+                            } else {
+                                errors_.error("variant '" + varPat->variantPath[1]
+                                    + "' not found in tagged union '"
+                                    + tuType->getName() + "'", arm.pattern->debugInfo);
+                            }
+                        } else {
+                            errors_.error("'" + varPat->variantPath[0]
+                                + "' is not a tagged union", arm.pattern->debugInfo);
+                        }
+                    }
+                }
             }
         }
 

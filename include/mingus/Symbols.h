@@ -263,6 +263,34 @@ public:
 };
 
 // ============================================================================
+// TaggedUnionSymbol — Discriminated union declarations (sum types)
+//
+// Each variant has a name, an auto-assigned tag, and optional payload fields.
+// LLVM layout: { i32 tag, [maxPayloadSize x i8] }.
+// ============================================================================
+
+class TaggedUnionSymbol : public TypeSymbol {
+public:
+    explicit TaggedUnionSymbol(const std::string& name);
+
+    struct VariantField {
+        std::string name;
+        TypeSymbolPtr type;
+    };
+
+    struct VariantInfo {
+        std::string name;
+        int tagValue = 0;
+        std::vector<VariantField> fields;  // empty for no-payload variants
+    };
+
+    std::vector<VariantInfo> variants;
+
+    // Find a variant by name
+    const VariantInfo* findVariant(const std::string& name) const;
+};
+
+// ============================================================================
 // InterfaceSymbol — Interface declarations
 //
 // Defines abstract method signatures. Classes that implement an interface

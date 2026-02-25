@@ -191,6 +191,17 @@ public:
     std::shared_ptr<ExpressionBaseNode> high;
 };
 
+class VariantPattern : public PatternNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+    std::vector<std::string> variantPath;  // e.g. ["Result", "Ok"]
+    std::vector<std::shared_ptr<PatternNode>> fieldPatterns;
+
+    // Resolved by sema
+    std::shared_ptr<TaggedUnionSymbol> resolvedUnion;
+    int resolvedVariantIndex = -1;
+};
+
 // ============================================================================
 // ParameterNode — Function/lambda parameter declaration
 //
@@ -415,6 +426,8 @@ public:
     virtual void visit(ExternStructDeclaration& node) {}
     virtual void visit(UnionDeclaration& node) {}
     virtual void visit(ExternUnionDeclaration& node) {}
+    virtual void visit(TaggedUnionDeclaration& node) {}
+    virtual void visit(VariantPattern& node) {}
 };
 
 } // namespace mingus

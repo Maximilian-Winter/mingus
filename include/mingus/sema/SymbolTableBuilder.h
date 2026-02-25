@@ -57,6 +57,7 @@ public:
     void visit(ExternStructDeclaration& node) override;
     void visit(UnionDeclaration& node) override;
     void visit(ExternUnionDeclaration& node) override;
+    void visit(TaggedUnionDeclaration& node) override;
 
     // Statements (set scope, recurse)
     void visit(ExpressionStatement& node) override;
@@ -133,6 +134,7 @@ private:
     void preRegisterType(ExternStructDeclaration& node);
     void preRegisterType(UnionDeclaration& node);
     void preRegisterType(ExternUnionDeclaration& node);
+    void preRegisterType(TaggedUnionDeclaration& node);
 
     // State tracking
     bool inTypeScope_ = false;   // true when inside struct/class members

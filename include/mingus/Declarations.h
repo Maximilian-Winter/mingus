@@ -240,6 +240,35 @@ public:
 };
 
 // ============================================================================
+// TaggedUnionDeclaration — tagged union Result { Ok(int value), Err(string msg) }
+// ============================================================================
+
+struct TaggedUnionFieldNode {
+    std::string name;
+    std::shared_ptr<TypeNode> type;
+};
+
+class TaggedUnionVariantNode : public AstBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string name;
+    std::vector<TaggedUnionFieldNode> fields;  // empty for no-payload variants
+};
+
+class TaggedUnionDeclaration : public DeclarationBaseNode {
+public:
+    void accept(ASTVisitor& visitor) override;
+
+    std::string name;
+    AccessModifier accessModifier = AccessModifier::Public;
+    std::vector<std::shared_ptr<TaggedUnionVariantNode>> variants;
+
+    // Resolved in Pass 1
+    std::shared_ptr<TaggedUnionSymbol> resolvedTaggedUnion;
+};
+
+// ============================================================================
 // ClassDeclaration — class Dog : Animal implements Drawable { ... }
 // ============================================================================
 

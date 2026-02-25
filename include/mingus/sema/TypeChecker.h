@@ -53,6 +53,7 @@ public:
     void visit(InterfaceDeclaration& node) override;
     void visit(ImportDeclaration& node) override;
     void visit(TypedefDeclaration& node) override;
+    void visit(TaggedUnionDeclaration& node) override;
 
     // Statements
     void visit(ExpressionStatement& node) override;

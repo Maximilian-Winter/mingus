@@ -22,6 +22,7 @@ DeclareModule:       'module';
 DeclareClass:        'class';
 DeclareStruct:       'struct';
 DeclareUnion:        'union';
+TaggedKeyword:       'tagged';
 DeclareEnum:         'enum';
 DeclareFunction:     'func';
 DeclareConstructor:  'constructor';

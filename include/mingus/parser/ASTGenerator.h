@@ -77,6 +77,9 @@ public:
     std::any visitTupleDestructuring(MingusParser::TupleDestructuringContext* ctx) override;
     std::any visitTupleDestructureElement(MingusParser::TupleDestructureElementContext* ctx) override;
     std::any visitTypedefDeclaration(MingusParser::TypedefDeclarationContext* ctx) override;
+    std::any visitTaggedUnionDeclaration(MingusParser::TaggedUnionDeclarationContext* ctx) override;
+    std::any visitTaggedUnionVariant(MingusParser::TaggedUnionVariantContext* ctx) override;
+    std::any visitTaggedUnionField(MingusParser::TaggedUnionFieldContext* ctx) override;
 
     // Visitor overrides — Statements
     std::any visitBlock(MingusParser::BlockContext* ctx) override;
@@ -135,6 +138,7 @@ public:
     std::any visitWildcardPattern(MingusParser::WildcardPatternContext* ctx) override;
     std::any visitBindingPattern(MingusParser::BindingPatternContext* ctx) override;
     std::any visitTuplePattern(MingusParser::TuplePatternContext* ctx) override;
+    std::any visitVariantPatternField(MingusParser::VariantPatternFieldContext* ctx) override;
 
     // Visitor overrides — Types
     std::any visitTypeIdentifier(MingusParser::TypeIdentifierContext* ctx) override;

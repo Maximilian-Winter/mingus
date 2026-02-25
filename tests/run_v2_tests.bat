@@ -100,6 +100,7 @@ call :run_test test_63_globals Test63_main "Module Globals"
 call :run_test test_64_extern_globals Test64_main "Extern Globals"
 call :run_test test_65_unions Test65_main "Unions"
 call :run_test test_66_define_constants Test66_main "Define Constants"
+call :run_test test_67_tagged_unions Test67_main "Tagged Unions"
 
 echo.
 echo ============================================================

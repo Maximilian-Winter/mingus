@@ -94,5 +94,8 @@ void OpaqueTypeDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void ExternStructDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void UnionDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
 void ExternUnionDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
+void TaggedUnionVariantNode::accept(ASTVisitor& v) { /* no visitor method — leaf node */ }
+void TaggedUnionDeclaration::accept(ASTVisitor& v) { v.visit(*this); }
+void VariantPattern::accept(ASTVisitor& v) { v.visit(*this); }
 
 } // namespace mingus

@@ -543,6 +543,32 @@ void TypeResolver::visit(ExternUnionDeclaration& node) {
     }
 }
 
+void TypeResolver::visit(TaggedUnionDeclaration& node) {
+    auto tuSym = node.resolvedTaggedUnion;
+    if (!tuSym) return;
+
+    // Resolve variant field types
+    for (size_t vi = 0; vi < node.variants.size(); vi++) {
+        auto& variantNode = node.variants[vi];
+        if (!variantNode) continue;
+
+        // Ensure variant index matches symbol
+        if (vi >= tuSym->variants.size()) break;
+        auto& variantInfo = tuSym->variants[vi];
+
+        for (size_t fi = 0; fi < variantNode->fields.size(); fi++) {
+            auto& fieldNode = variantNode->fields[fi];
+            if (!fieldNode.type) continue;
+
+            auto resolvedType = resolveTypeNode(fieldNode.type);
+            if (fi < variantInfo.fields.size()) {
+                variantInfo.fields[fi].type = resolvedType
+                    ? resolvedType : symbolTable_.getErrorType();
+            }
+        }
+    }
+}
+
 void TypeResolver::visit(TypedefDeclaration& node) {
     if (!node.resolvedTypeAlias) return;
 

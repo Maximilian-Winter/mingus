@@ -1,0 +1,15 @@
+=== Test 1: Basic Option ===
+some = Some(42)
+none = None
+=== Test 2: Result ===
+ok = Ok(100)
+err = Err(not found)
+=== Test 3: Function return ===
+opt1 = Some(7)
+opt2 = None
+=== Test 4: Function parameter ===
+Some(99)
+None
+=== Test 5: Direct assignment ===
+None
+Some(123)

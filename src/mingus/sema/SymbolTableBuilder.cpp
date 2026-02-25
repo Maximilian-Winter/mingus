@@ -89,6 +89,7 @@ void SymbolTableBuilder::visit(ModuleNode& node) {
         else if (auto* es = decl->as<ExternStructDeclaration>()) preRegisterType(*es);
         else if (auto* u = decl->as<UnionDeclaration>())        preRegisterType(*u);
         else if (auto* eu = decl->as<ExternUnionDeclaration>()) preRegisterType(*eu);
+        else if (auto* tu = decl->as<TaggedUnionDeclaration>()) preRegisterType(*tu);
     }
 
     // Sub-pass B: full processing (existing traversal)
@@ -188,6 +189,14 @@ void SymbolTableBuilder::preRegisterType(ExternUnionDeclaration& node) {
     symbolTable_.defineSymbol(sym);
     symbolTable_.registerType(node.name, sym);
     node.resolvedUnion = sym;
+}
+
+void SymbolTableBuilder::preRegisterType(TaggedUnionDeclaration& node) {
+    auto tuSym = std::make_shared<TaggedUnionSymbol>(node.name);
+    tuSym->accessLevel = node.accessModifier;
+    symbolTable_.defineSymbol(tuSym);
+    symbolTable_.registerType(node.name, tuSym);
+    node.resolvedTaggedUnion = tuSym;
 }
 
 // ============================================================================
@@ -1042,6 +1051,20 @@ void SymbolTableBuilder::visit(MatchExpression& node) {
                 idPat->resolvedSymbol = bindSym;
                 if (idPat->guard) idPat->guard->accept(*this);
             }
+
+            // Variant patterns: create binding variables for each field pattern
+            if (auto* varPat = arm.pattern->as<VariantPattern>()) {
+                for (auto& fieldPat : varPat->fieldPatterns) {
+                    if (!fieldPat) continue;
+                    fieldPat->astScopeNode = armScope;
+                    if (auto* idFP = fieldPat->as<IdentifierPattern>()) {
+                        auto bindSym = std::make_shared<VariableSymbol>(idFP->name, nullptr);
+                        bindSym->role = VariableRole::Local;
+                        symbolTable_.defineSymbol(bindSym);
+                        idFP->resolvedSymbol = bindSym;
+                    }
+                }
+            }
         }
 
         if (arm.body) arm.body->accept(*this);
@@ -1198,6 +1221,46 @@ void SymbolTableBuilder::visit(ExternUnionDeclaration& node) {
         unionSym->fields.push_back(fieldSym);
     }
     symbolTable_.popScope();
+}
+
+// ============================================================================
+// Tagged Union Declarations
+// ============================================================================
+
+void SymbolTableBuilder::visit(TaggedUnionDeclaration& node) {
+    setScope(node);
+
+    auto tuSym = node.resolvedTaggedUnion;
+    if (!tuSym) {
+        // Fallback: create symbol if preRegisterType was skipped
+        tuSym = std::make_shared<TaggedUnionSymbol>(node.name);
+        tuSym->accessLevel = node.accessModifier;
+        symbolTable_.defineSymbol(tuSym);
+        symbolTable_.registerType(node.name, tuSym);
+        node.resolvedTaggedUnion = tuSym;
+    }
+
+    // Populate variant info: names + auto-assigned tags
+    // Field types are resolved later by TypeResolver (Pass 2)
+    int tagValue = 0;
+    for (auto& variant : node.variants) {
+        if (!variant) continue;
+        setScope(*variant);
+
+        TaggedUnionSymbol::VariantInfo info;
+        info.name = variant->name;
+        info.tagValue = tagValue++;
+
+        // Add field stubs (type = nullptr, resolved in Pass 2)
+        for (auto& field : variant->fields) {
+            TaggedUnionSymbol::VariantField vf;
+            vf.name = field.name;
+            vf.type = nullptr;  // resolved by TypeResolver
+            info.fields.push_back(std::move(vf));
+        }
+
+        tuSym->variants.push_back(std::move(info));
+    }
 }
 
 } // namespace mingus

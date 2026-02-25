@@ -93,7 +93,7 @@ bool IRGenerator::isPointerKind(TypeSymbol* t) {
 
 bool IRGenerator::isUserStructKind(TypeSymbol* t) {
     if (!t) return false;
-    return t->is<StructSymbol>() || t->is<ClassSymbol>();
+    return t->is<StructSymbol>() || t->is<ClassSymbol>() || t->is<TaggedUnionSymbol>();
 }
 
 bool IRGenerator::isEnumKind(TypeSymbol* t) {
@@ -340,6 +340,15 @@ llvm::Type* IRGenerator::mapType(TypeSymbol* type) {
         return structTy;
     }
 
+    // Tagged union types -> cached LLVM StructType { i32, [N x i8] }
+    if (type->is<TaggedUnionSymbol>()) {
+        auto sit = structTypeCache_.find(type);
+        if (sit != structTypeCache_.end()) return sit->second;
+        auto* structTy = llvm::StructType::create(context_, type->getName());
+        structTypeCache_[type] = structTy;
+        return structTy;
+    }
+
     // Struct/Class types -> cached LLVM StructType
     if (type->is<StructSymbol>() || type->is<ClassSymbol>()) {
         auto sit = structTypeCache_.find(type);
@@ -378,7 +387,7 @@ llvm::Type* IRGenerator::mapType(TypeSymbol* type) {
 llvm::Type* IRGenerator::mapParamType(TypeSymbol* type, bool isReference) {
     if (isReference) return llvm::PointerType::getUnqual(context_);
     if (!type) return llvm::Type::getInt32Ty(context_);
-    if (type->is<ClassSymbol>() || type->is<StructSymbol>()) {
+    if (type->is<ClassSymbol>() || type->is<StructSymbol>() || type->is<TaggedUnionSymbol>()) {
         return llvm::PointerType::getUnqual(context_);
     }
     // String object passed by pointer (like structs)
@@ -544,7 +553,7 @@ llvm::AllocaInst* IRGenerator::createEntryBlockAlloca(
 //================================================================================
 
 void IRGenerator::declareStructTypes(ProgramNode& program) {
-    // First pass: create opaque struct types
+    // First pass: create opaque struct types (including tagged unions)
     for (auto& mod : program.modules) {
         if (!mod->resolvedModule) continue;
         auto allSyms = mod->resolvedModule->getAllSymbols();
@@ -553,6 +562,12 @@ void IRGenerator::declareStructTypes(ProgramNode& program) {
                 declareStructTypeForSymbol(structSym);
             } else if (auto* classSym = sym->as<ClassSymbol>()) {
                 declareClassTypeForSymbol(classSym);
+            } else if (auto* tuSym = sym->as<TaggedUnionSymbol>()) {
+                // Create opaque StructType for tagged union
+                if (structTypeCache_.find(tuSym) == structTypeCache_.end()) {
+                    auto* structTy = llvm::StructType::create(context_, tuSym->getName());
+                    structTypeCache_[tuSym] = structTy;
+                }
             }
         }
     }
@@ -561,6 +576,31 @@ void IRGenerator::declareStructTypes(ProgramNode& program) {
     for (auto& [typeSym, structTy] : structTypeCache_) {
         if (!structTy->isOpaque()) continue;
         if (typeSym->is<OpaqueTypeSymbol>()) continue;
+
+        // Tagged union: { i32 tag, [maxPayloadSize x i8] }
+        if (auto* tuSym = typeSym->as<TaggedUnionSymbol>()) {
+            size_t maxPayloadSize = 0;
+            for (auto& variant : tuSym->variants) {
+                size_t variantSize = 0;
+                for (auto& field : variant.fields) {
+                    if (!field.type) continue;
+                    auto* fieldTy = mapType(field.type);
+                    if (!fieldTy) continue;
+                    variantSize += module_->getDataLayout().getTypeAllocSize(fieldTy);
+                }
+                if (variantSize > maxPayloadSize) maxPayloadSize = variantSize;
+            }
+            auto* tagTy = llvm::Type::getInt32Ty(context_);
+            if (maxPayloadSize > 0) {
+                auto* payloadTy = llvm::ArrayType::get(
+                    llvm::Type::getInt8Ty(context_), maxPayloadSize);
+                structTy->setBody({ tagTy, payloadTy });
+            } else {
+                // Tag-only (all variants empty, like a plain enum)
+                structTy->setBody({ tagTy });
+            }
+            continue;
+        }
 
         std::vector<llvm::Type*> fieldTypes;
 
@@ -1000,6 +1040,11 @@ llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
 
     // MemberAccessExpression -> GEP to field
     if (auto* mem = expr.as<MemberAccessExpression>()) {
+        // Tagged union variant: not an lvalue (constructed by value)
+        if (mem->isTaggedUnionVariant) return nullptr;
+        // Enum access: not an lvalue (constant)
+        if (mem->isEnumAccess) return nullptr;
+
         llvm::Value* objPtr = nullptr;
         if (mem->isArrow) {
             mem->object->accept(*this);
@@ -2429,6 +2474,10 @@ void IRGenerator::visit(ExternUnionDeclaration& node) {
     // No-op: extern union types are declared in declareStructTypes Phase A
 }
 
+void IRGenerator::visit(TaggedUnionDeclaration& node) {
+    // No-op: tagged union types are declared in declareStructTypes Phase A
+}
+
 void IRGenerator::visit(ClassDeclaration& node) {
     auto* prevClassSym = currentClassSym_;
     currentClassSym_ = node.resolvedClass.get();
@@ -2964,9 +3013,10 @@ void IRGenerator::visit(VariableDeclaration& node) {
         builder_.CreateStore(llvm::ConstantAggregateZero::get(varTy), alloca);
     }
 
-    // Zero-init ALL structs (prevents undef propagation — universal zero-init invariant)
+    // Zero-init ALL structs and tagged unions (prevents undef propagation)
     if (varSym->getType() && (varSym->getType()->is<StructSymbol>() ||
-                               varSym->getType()->is<ClassSymbol>())) {
+                               varSym->getType()->is<ClassSymbol>() ||
+                               varSym->getType()->is<TaggedUnionSymbol>())) {
         builder_.CreateStore(llvm::Constant::getNullValue(varTy), alloca);
     }
 
@@ -3332,6 +3382,20 @@ void IRGenerator::visit(QualifiedNameExpression& node) {
         return;
     }
 
+    // Tagged union empty variant construction (e.g. Option.None)
+    if (node.isTaggedUnionVariant && node.resolvedTaggedUnion) {
+        auto* tuTy = mapType(node.resolvedTaggedUnion);
+        auto* alloca = createEntryBlockAlloca(currentFunction_, tuTy, "variant.tmp");
+        builder_.CreateStore(llvm::Constant::getNullValue(tuTy), alloca);
+        // Store tag
+        auto* tagPtr = builder_.CreateStructGEP(tuTy, alloca, 0, "variant.tag.ptr");
+        builder_.CreateStore(
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), node.resolvedVariantTag),
+            tagPtr);
+        lastValue_ = builder_.CreateLoad(tuTy, alloca, "variant.val");
+        return;
+    }
+
     // Fallback: try scope-based resolution
     if (node.resolvedSymbol) {
         if (auto* enumSym = node.resolvedSymbol->as<EnumSymbol>()) {
@@ -3378,6 +3442,19 @@ void IRGenerator::visit(MemberAccessExpression& node) {
             }
             lastValue_ = llvm::ConstantInt::get(enumTy, node.resolvedEnumValue);
         }
+        return;
+    }
+
+    // Tagged union empty variant construction (e.g. Option.None)
+    if (node.isTaggedUnionVariant && node.resolvedTaggedUnion) {
+        auto* tuTy = mapType(node.resolvedTaggedUnion);
+        auto* alloca = createEntryBlockAlloca(currentFunction_, tuTy, "variant.tmp");
+        builder_.CreateStore(llvm::Constant::getNullValue(tuTy), alloca);
+        auto* tagPtr = builder_.CreateStructGEP(tuTy, alloca, 0, "variant.tag.ptr");
+        builder_.CreateStore(
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), node.resolvedVariantTag),
+            tagPtr);
+        lastValue_ = builder_.CreateLoad(tuTy, alloca, "variant.val");
         return;
     }
 
@@ -4066,6 +4143,69 @@ void IRGenerator::visit(CallExpression& node) {
     // V2: use resolvedCallee for direct calls
     if (node.resolvedCallee) {
         calleeFuncSym = node.resolvedCallee.get();
+    }
+
+    // Tagged union variant constructor: Result.Ok(42), Option.Some(v)
+    {
+        TaggedUnionSymbol* tuSym = nullptr;
+        const TaggedUnionSymbol::VariantInfo* variant = nullptr;
+        int variantTag = -1;
+        std::shared_ptr<TaggedUnionSymbol> tuSymShared;
+
+        if (auto* qnameCallee = node.callee->as<QualifiedNameExpression>()) {
+            if (qnameCallee->isTaggedUnionVariant && qnameCallee->resolvedTaggedUnion) {
+                tuSym = qnameCallee->resolvedTaggedUnion.get();
+                tuSymShared = qnameCallee->resolvedTaggedUnion;
+                variant = tuSym->findVariant(qnameCallee->parts.back());
+                variantTag = qnameCallee->resolvedVariantTag;
+            }
+        } else if (auto* memCallee = node.callee->as<MemberAccessExpression>()) {
+            if (memCallee->isTaggedUnionVariant && memCallee->resolvedTaggedUnion) {
+                tuSym = memCallee->resolvedTaggedUnion.get();
+                tuSymShared = memCallee->resolvedTaggedUnion;
+                variant = tuSym->findVariant(memCallee->memberName);
+                variantTag = memCallee->resolvedVariantTag;
+            }
+        }
+
+        if (variant && !variant->fields.empty()) {
+            auto* tuTy = mapType(tuSymShared);
+
+            // Alloca and zero-init
+            auto* alloca = createEntryBlockAlloca(currentFunction_, tuTy, "variant.tmp");
+            builder_.CreateStore(llvm::Constant::getNullValue(tuTy), alloca);
+
+            // Store tag
+            auto* tagPtr = builder_.CreateStructGEP(tuTy, alloca, 0, "variant.tag.ptr");
+            builder_.CreateStore(
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(context_), variantTag),
+                tagPtr);
+
+            // Build variant payload struct type from field types
+            std::vector<llvm::Type*> payloadFieldTypes;
+            for (auto& field : variant->fields) {
+                payloadFieldTypes.push_back(mapType(field.type));
+            }
+            auto* payloadStructTy = llvm::StructType::get(context_, payloadFieldTypes);
+
+            // Get payload pointer (element 1 of the tagged union)
+            auto* payloadPtr = builder_.CreateStructGEP(tuTy, alloca, 1, "variant.payload.ptr");
+
+            // Store each argument into the payload struct fields
+            if (node.arguments) {
+                for (size_t i = 0; i < node.arguments->expressions.size() && i < variant->fields.size(); i++) {
+                    node.arguments->expressions[i]->accept(*this);
+                    if (lastValue_) {
+                        auto* fieldPtr = builder_.CreateStructGEP(
+                            payloadStructTy, payloadPtr, (unsigned)i, "variant.field.ptr");
+                        builder_.CreateStore(lastValue_, fieldPtr);
+                    }
+                }
+            }
+
+            lastValue_ = builder_.CreateLoad(tuTy, alloca, "variant.val");
+            return;
+        }
     }
 
     // Method call: callee is MemberAccessExpression
@@ -5212,26 +5352,53 @@ void IRGenerator::visit(MatchExpression& node) {
         auto* pattern = arm.pattern.get();
 
         if (auto* litPat = pattern->as<LiteralPattern>()) {
-            litPat->value->accept(*this);
-            llvm::Value* patVal = lastValue_;
-            if (!patVal) {
-                builder_.CreateBr(nextTestBB);
-                if (nextTestBB != mergeBB) builder_.SetInsertPoint(nextTestBB);
-                continue;
-            }
-            llvm::Value* cond;
-            if (isFloatingKind(subjectType)) {
-                cond = builder_.CreateFCmpOEQ(subjectVal, patVal, "match.cmp");
-            } else {
-                if (subjectVal->getType() != patVal->getType() &&
-                    subjectVal->getType()->isIntegerTy() && patVal->getType()->isIntegerTy()) {
-                    patVal = isUnsignedKind(subjectType)
-                        ? builder_.CreateZExtOrTrunc(patVal, subjectVal->getType())
-                        : builder_.CreateSExtOrTrunc(patVal, subjectVal->getType());
+            // Tagged union empty variant matching (e.g. Option.None in LiteralPattern)
+            if (auto* qname = litPat->value ? litPat->value->as<QualifiedNameExpression>() : nullptr) {
+                if (qname->isTaggedUnionVariant) {
+                    // Compare only the tag field, not the whole struct
+                    auto* subjectTy = subjectVal->getType();
+                    auto* subjectAlloca = createEntryBlockAlloca(currentFunction_, subjectTy, "match.tu.tmp");
+                    builder_.CreateStore(subjectVal, subjectAlloca);
+                    auto* tagPtr = builder_.CreateStructGEP(subjectTy, subjectAlloca, 0, "match.tu.tag.ptr");
+                    auto* tagVal = builder_.CreateLoad(llvm::Type::getInt32Ty(context_), tagPtr, "match.tu.tag");
+                    auto* expectedTag = llvm::ConstantInt::get(
+                        llvm::Type::getInt32Ty(context_), qname->resolvedVariantTag);
+                    auto* cond = builder_.CreateICmpEQ(tagVal, expectedTag, "match.tu.cmp");
+                    builder_.CreateCondBr(cond, armBodyBB, nextTestBB);
+                } else {
+                    // Regular enum qualified name
+                    litPat->value->accept(*this);
+                    llvm::Value* patVal = lastValue_;
+                    if (!patVal) {
+                        builder_.CreateBr(nextTestBB);
+                        if (nextTestBB != mergeBB) builder_.SetInsertPoint(nextTestBB);
+                        continue;
+                    }
+                    auto* cond = builder_.CreateICmpEQ(subjectVal, patVal, "match.cmp");
+                    builder_.CreateCondBr(cond, armBodyBB, nextTestBB);
                 }
-                cond = builder_.CreateICmpEQ(subjectVal, patVal, "match.cmp");
+            } else {
+                litPat->value->accept(*this);
+                llvm::Value* patVal = lastValue_;
+                if (!patVal) {
+                    builder_.CreateBr(nextTestBB);
+                    if (nextTestBB != mergeBB) builder_.SetInsertPoint(nextTestBB);
+                    continue;
+                }
+                llvm::Value* cond;
+                if (isFloatingKind(subjectType)) {
+                    cond = builder_.CreateFCmpOEQ(subjectVal, patVal, "match.cmp");
+                } else {
+                    if (subjectVal->getType() != patVal->getType() &&
+                        subjectVal->getType()->isIntegerTy() && patVal->getType()->isIntegerTy()) {
+                        patVal = isUnsignedKind(subjectType)
+                            ? builder_.CreateZExtOrTrunc(patVal, subjectVal->getType())
+                            : builder_.CreateSExtOrTrunc(patVal, subjectVal->getType());
+                    }
+                    cond = builder_.CreateICmpEQ(subjectVal, patVal, "match.cmp");
+                }
+                builder_.CreateCondBr(cond, armBodyBB, nextTestBB);
             }
-            builder_.CreateCondBr(cond, armBodyBB, nextTestBB);
 
         } else if (pattern->is<WildcardPattern>()) {
             builder_.CreateBr(armBodyBB);
@@ -5270,6 +5437,65 @@ void IRGenerator::visit(MatchExpression& node) {
             llvm::Value* le = builder_.CreateICmpSLE(subjectVal, highVal, "range.le");
             llvm::Value* inRange = builder_.CreateAnd(ge, le, "range.in");
             builder_.CreateCondBr(inRange, armBodyBB, nextTestBB);
+
+        } else if (auto* varPat = pattern->as<VariantPattern>()) {
+            // Tagged union variant matching with field destructuring
+            // Store subject to alloca for GEP access
+            auto* subjectTy = subjectVal->getType();
+            auto* subjectAlloca = createEntryBlockAlloca(currentFunction_, subjectTy, "match.subject");
+            builder_.CreateStore(subjectVal, subjectAlloca);
+
+            // Extract tag (field 0) and compare
+            auto* tagPtr = builder_.CreateStructGEP(subjectTy, subjectAlloca, 0, "variant.tag.ptr");
+            auto* tagVal = builder_.CreateLoad(llvm::Type::getInt32Ty(context_), tagPtr, "variant.tag");
+            auto* expectedTag = llvm::ConstantInt::get(
+                llvm::Type::getInt32Ty(context_), varPat->resolvedVariantIndex);
+            auto* cond = builder_.CreateICmpEQ(tagVal, expectedTag, "variant.match");
+
+            // Create extract block for field bindings
+            auto* extractBB = llvm::BasicBlock::Create(context_, "variant.extract", currentFunction_);
+            builder_.CreateCondBr(cond, extractBB, nextTestBB);
+            builder_.SetInsertPoint(extractBB);
+
+            // Extract payload fields and bind to variables
+            if (varPat->resolvedUnion && varPat->resolvedVariantIndex >= 0) {
+                auto* tuSym = varPat->resolvedUnion.get();
+                if (varPat->resolvedVariantIndex < (int)tuSym->variants.size()) {
+                    auto& variant = tuSym->variants[varPat->resolvedVariantIndex];
+
+                    // Build payload struct type
+                    std::vector<llvm::Type*> payloadFieldTypes;
+                    for (auto& field : variant.fields) {
+                        payloadFieldTypes.push_back(mapType(field.type));
+                    }
+                    auto* payloadStructTy = llvm::StructType::get(context_, payloadFieldTypes);
+
+                    // Get payload pointer (element 1)
+                    auto* payloadPtr = builder_.CreateStructGEP(
+                        subjectTy, subjectAlloca, 1, "variant.payload.ptr");
+
+                    // Extract each field and bind to pattern variables
+                    for (size_t fi = 0; fi < varPat->fieldPatterns.size() && fi < variant.fields.size(); fi++) {
+                        auto& fp = varPat->fieldPatterns[fi];
+                        if (!fp) continue;
+
+                        auto* fieldPtr = builder_.CreateStructGEP(
+                            payloadStructTy, payloadPtr, (unsigned)fi, "variant.field.ptr");
+                        auto* fieldVal = builder_.CreateLoad(
+                            payloadFieldTypes[fi], fieldPtr, "variant.field");
+
+                        if (auto* idFP = fp->as<IdentifierPattern>()) {
+                            auto* bindAlloca = createEntryBlockAlloca(
+                                currentFunction_, payloadFieldTypes[fi], idFP->name);
+                            builder_.CreateStore(fieldVal, bindAlloca);
+                            if (idFP->resolvedSymbol) {
+                                namedValues_[idFP->resolvedSymbol.get()] = bindAlloca;
+                            }
+                        }
+                    }
+                }
+            }
+            builder_.CreateBr(armBodyBB);
 
         } else {
             builder_.CreateBr(armBodyBB);

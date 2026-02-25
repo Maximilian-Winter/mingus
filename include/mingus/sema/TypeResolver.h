@@ -58,6 +58,7 @@ public:
     void visit(ExternStructDeclaration& node) override;
     void visit(UnionDeclaration& node) override;
     void visit(ExternUnionDeclaration& node) override;
+    void visit(TaggedUnionDeclaration& node) override;
 
     // Statements (recurse)
     void visit(ExpressionStatement& node) override;
