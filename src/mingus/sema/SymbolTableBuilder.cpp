@@ -129,6 +129,13 @@ void SymbolTableBuilder::preRegisterType(ClassDeclaration& node) {
     classSym->accessLevel = node.accessModifier;
     classSym->isAbstract = node.isAbstract;
     classSym->baseClassNames = node.baseClasses;
+    // Generic type parameters
+    for (auto& tp : node.typeParameters) {
+        classSym->typeParameterNames.push_back(tp);
+    }
+    if (!node.typeParameters.empty()) {
+        classSym->genericASTNode = &node;
+    }
     symbolTable_.defineSymbol(classSym);
     symbolTable_.registerType(node.name, classSym);
     node.resolvedClass = classSym;
@@ -137,6 +144,13 @@ void SymbolTableBuilder::preRegisterType(ClassDeclaration& node) {
 void SymbolTableBuilder::preRegisterType(StructDeclaration& node) {
     auto structSym = std::make_shared<StructSymbol>(node.name);
     structSym->accessLevel = node.accessModifier;
+    // Generic type parameters
+    for (auto& tp : node.typeParameters) {
+        structSym->typeParameterNames.push_back(tp);
+    }
+    if (!node.typeParameters.empty()) {
+        structSym->genericASTNode = &node;
+    }
     symbolTable_.defineSymbol(structSym);
     symbolTable_.registerType(node.name, structSym);
     node.resolvedStruct = structSym;
@@ -145,6 +159,13 @@ void SymbolTableBuilder::preRegisterType(StructDeclaration& node) {
 void SymbolTableBuilder::preRegisterType(InterfaceDeclaration& node) {
     auto ifaceSym = std::make_shared<InterfaceSymbol>(node.name);
     ifaceSym->accessLevel = node.accessModifier;
+    // Generic type parameters
+    for (auto& tp : node.typeParameters) {
+        ifaceSym->typeParameterNames.push_back(tp);
+    }
+    if (!node.typeParameters.empty()) {
+        ifaceSym->genericASTNode = &node;
+    }
     symbolTable_.defineSymbol(ifaceSym);
     symbolTable_.registerType(node.name, ifaceSym);
     node.resolvedInterface = ifaceSym;
@@ -310,6 +331,10 @@ void SymbolTableBuilder::visit(FunctionDeclaration& node) {
         funcSym->typeParameterNames.push_back(tp);
     }
     if (funcSym->isGenericTemplate()) {
+        funcSym->genericASTNode = &node;
+    }
+    // Methods inside generic classes need AST ref for monomorphized body emission
+    if (currentClass_ && currentClass_->isGenericTemplate() && !funcSym->isGenericTemplate()) {
         funcSym->genericASTNode = &node;
     }
 
@@ -532,6 +557,25 @@ void SymbolTableBuilder::visit(StructDeclaration& node) {
     inTypeScope_ = true;
     currentClass_ = nullptr;
 
+    // Register TypeParameterSymbol for generic structs
+    if (structSym->isGenericTemplate()) {
+        for (auto& tpName : structSym->typeParameterNames) {
+            auto tpSym = std::make_shared<TypeParameterSymbol>(tpName);
+            symbolTable_.defineSymbol(tpSym);
+        }
+        // Set astScopeNode on field types so TypeResolver finds TypeParameterSymbol
+        for (auto& field : node.fields) {
+            if (field && field->type) field->type->astScopeNode = structSym;
+        }
+        // Set astScopeNode on method param/return types
+        for (auto& method : node.methods) {
+            for (auto& param : method->parameters) {
+                if (param && param->type) param->type->astScopeNode = structSym;
+            }
+            if (method->returnType) method->returnType->astScopeNode = structSym;
+        }
+    }
+
     // Fields
     int fieldIndex = 0;
     for (auto& field : node.fields) {
@@ -612,6 +656,31 @@ void SymbolTableBuilder::visit(ClassDeclaration& node) {
     auto savedClass = currentClass_;
     inTypeScope_ = true;
     currentClass_ = classSym;
+
+    // Register TypeParameterSymbol for generic classes
+    if (classSym->isGenericTemplate()) {
+        for (auto& tpName : classSym->typeParameterNames) {
+            auto tpSym = std::make_shared<TypeParameterSymbol>(tpName);
+            symbolTable_.defineSymbol(tpSym);
+        }
+        // Set astScopeNode on field types
+        for (auto& field : node.fields) {
+            if (field && field->type) field->type->astScopeNode = classSym;
+        }
+        // Set astScopeNode on constructor param types
+        for (auto& ctor : node.constructors) {
+            for (auto& param : ctor->parameters) {
+                if (param && param->type) param->type->astScopeNode = classSym;
+            }
+        }
+        // Set astScopeNode on method param/return types
+        for (auto& method : node.methods) {
+            for (auto& param : method->parameters) {
+                if (param && param->type) param->type->astScopeNode = classSym;
+            }
+            if (method->returnType) method->returnType->astScopeNode = classSym;
+        }
+    }
 
     // Fields
     int fieldIndex = 0;
@@ -696,6 +765,21 @@ void SymbolTableBuilder::visit(InterfaceDeclaration& node) {
     symbolTable_.pushScope(ifaceSym);
     auto savedInType = inTypeScope_;
     inTypeScope_ = true;
+
+    // Register TypeParameterSymbol for generic interfaces
+    if (ifaceSym->isGenericTemplate()) {
+        for (auto& tpName : ifaceSym->typeParameterNames) {
+            auto tpSym = std::make_shared<TypeParameterSymbol>(tpName);
+            symbolTable_.defineSymbol(tpSym);
+        }
+        // Set astScopeNode on method param/return types so TypeResolver finds TypeParameterSymbol
+        for (auto& method : node.methods) {
+            for (auto& param : method->parameters) {
+                if (param && param->type) param->type->astScopeNode = ifaceSym;
+            }
+            if (method->returnType) method->returnType->astScopeNode = ifaceSym;
+        }
+    }
 
     for (auto& method : node.methods) {
         if (method) {

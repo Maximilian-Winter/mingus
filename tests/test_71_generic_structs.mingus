@@ -1,0 +1,56 @@
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    struct Pair<T, U> {
+        T first;
+        U second;
+    }
+
+    class Box<T> {
+        T value;
+
+        constructor(T val) {
+            this.value = val;
+        }
+
+        func get() => T {
+            return this.value;
+        }
+
+        func set(T val) => void {
+            this.value = val;
+        }
+    }
+
+    func main() => void {
+        printf("=== Test 1: Generic struct ===\n");
+        Pair<int, double> p;
+        p.first = 42;
+        p.second = 3.14;
+        printf("Pair<int,double> = (%d, %.2f)\n", p.first, p.second);
+
+        printf("=== Test 2: Different instantiation ===\n");
+        Pair<double, int> q;
+        q.first = 2.71;
+        q.second = 100;
+        printf("Pair<double,int> = (%.2f, %d)\n", q.first, q.second);
+
+        printf("=== Test 3: Generic class ===\n");
+        Box<int>* bi = new Box<int>(42);
+        printf("Box<int>.get() = %d\n", bi->get());
+        bi->set(100);
+        printf("Box<int> after set = %d\n", bi->get());
+        delete bi;
+
+        printf("=== Test 4: Different class instantiation ===\n");
+        Box<double>* bd = new Box<double>(3.14);
+        printf("Box<double>.get() = %.2f\n", bd->get());
+        delete bd;
+
+        printf("=== Test 5: Struct via turbofish ===\n");
+        var r = Pair::<int, int>();
+        r.first = 10;
+        r.second = 20;
+        printf("Pair<int,int> sum = %d\n", r.first + r.second);
+    }
+}

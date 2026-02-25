@@ -147,6 +147,12 @@ public:
   virtual void enterReturnType(MingusParser::ReturnTypeContext * /*ctx*/) override { }
   virtual void exitReturnType(MingusParser::ReturnTypeContext * /*ctx*/) override { }
 
+  virtual void enterTypeParameterList(MingusParser::TypeParameterListContext * /*ctx*/) override { }
+  virtual void exitTypeParameterList(MingusParser::TypeParameterListContext * /*ctx*/) override { }
+
+  virtual void enterTypeArgumentList(MingusParser::TypeArgumentListContext * /*ctx*/) override { }
+  virtual void exitTypeArgumentList(MingusParser::TypeArgumentListContext * /*ctx*/) override { }
+
   virtual void enterDefinitionParameters(MingusParser::DefinitionParametersContext * /*ctx*/) override { }
   virtual void exitDefinitionParameters(MingusParser::DefinitionParametersContext * /*ctx*/) override { }
 

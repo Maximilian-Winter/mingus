@@ -61,10 +61,91 @@ TypeSymbolPtr TypeResolver::resolveTypeNode(TypeNode* typeNode) {
         return prim->resolvedType;
     }
 
-    // NamedTypeNode → scope lookup
+    // NamedTypeNode → scope lookup + optional generic instantiation
     if (auto* named = typeNode->as<NamedTypeNode>()) {
         auto* scope = named->astScopeNode ? named->astScopeNode.get() : nullptr;
-        named->resolvedType = resolveNamedType(named->qualifiedName, scope, named->debugInfo);
+        auto baseType = resolveNamedType(named->qualifiedName, scope, named->debugInfo);
+
+        // Handle generic type arguments: Pair<int, double>, Box<int>
+        if (!named->typeArguments.empty()) {
+            // First resolve all type arguments
+            std::vector<TypeSymbolPtr> resolvedArgs;
+            for (auto& ta : named->typeArguments) {
+                auto resolved = resolveTypeNode(ta);
+                if (!resolved || resolved->is<ErrorTypeSymbol>()) {
+                    named->resolvedType = symbolTable_.getErrorType();
+                    return named->resolvedType;
+                }
+                resolvedArgs.push_back(resolved);
+            }
+
+            // Generic struct instantiation
+            if (auto* structTmpl = baseType->as<StructSymbol>()) {
+                if (!structTmpl->isGenericTemplate()) {
+                    errors_.error("'" + structTmpl->getName() + "' is not a generic struct",
+                        named->debugInfo);
+                    named->resolvedType = symbolTable_.getErrorType();
+                    return named->resolvedType;
+                }
+                if (resolvedArgs.size() != structTmpl->typeParameterNames.size()) {
+                    errors_.error("expected " + std::to_string(structTmpl->typeParameterNames.size())
+                        + " type argument(s), got " + std::to_string(resolvedArgs.size()),
+                        named->debugInfo);
+                    named->resolvedType = symbolTable_.getErrorType();
+                    return named->resolvedType;
+                }
+                named->resolvedType = symbolTable_.getOrCreateStructMonomorphization(
+                    structTmpl, resolvedArgs);
+                return named->resolvedType;
+            }
+
+            // Generic class instantiation
+            if (auto* classTmpl = baseType->as<ClassSymbol>()) {
+                if (!classTmpl->isGenericTemplate()) {
+                    errors_.error("'" + classTmpl->getName() + "' is not a generic class",
+                        named->debugInfo);
+                    named->resolvedType = symbolTable_.getErrorType();
+                    return named->resolvedType;
+                }
+                if (resolvedArgs.size() != classTmpl->typeParameterNames.size()) {
+                    errors_.error("expected " + std::to_string(classTmpl->typeParameterNames.size())
+                        + " type argument(s), got " + std::to_string(resolvedArgs.size()),
+                        named->debugInfo);
+                    named->resolvedType = symbolTable_.getErrorType();
+                    return named->resolvedType;
+                }
+                named->resolvedType = symbolTable_.getOrCreateClassMonomorphization(
+                    classTmpl, resolvedArgs);
+                return named->resolvedType;
+            }
+
+            // Generic interface instantiation
+            if (auto* ifaceTmpl = baseType->as<InterfaceSymbol>()) {
+                if (!ifaceTmpl->isGenericTemplate()) {
+                    errors_.error("'" + ifaceTmpl->getName() + "' is not generic",
+                        named->debugInfo);
+                    named->resolvedType = symbolTable_.getErrorType();
+                    return named->resolvedType;
+                }
+                if (resolvedArgs.size() != ifaceTmpl->typeParameterNames.size()) {
+                    errors_.error("expected " + std::to_string(ifaceTmpl->typeParameterNames.size())
+                        + " type argument(s), got " + std::to_string(resolvedArgs.size()),
+                        named->debugInfo);
+                    named->resolvedType = symbolTable_.getErrorType();
+                    return named->resolvedType;
+                }
+                named->resolvedType = symbolTable_.getOrCreateInterfaceMonomorphization(
+                    ifaceTmpl, resolvedArgs);
+                return named->resolvedType;
+            }
+
+            errors_.error("type '" + baseType->getName() + "' does not accept type arguments",
+                named->debugInfo);
+            named->resolvedType = symbolTable_.getErrorType();
+            return named->resolvedType;
+        }
+
+        named->resolvedType = baseType;
         return named->resolvedType;
     }
 
@@ -483,6 +564,50 @@ void TypeResolver::visit(ClassDeclaration& node) {
     // Operators
     for (auto& op : node.operators) {
         if (op) op->accept(*this);
+    }
+
+    // Resolve generic interface type arguments in inheritance
+    // e.g., class IntStore : Getter<int>, Setter<int> — replace template with mono
+    auto classSym = node.resolvedClass;
+    if (classSym && !node.baseClassTypeArgs.empty()) {
+        size_t ifaceIdx = 0;
+        for (size_t i = 0; i < node.baseClasses.size(); i++) {
+            auto baseSym = symbolTable_.resolveType(node.baseClasses[i]);
+            if (!baseSym) continue;
+
+            if (baseSym->is<InterfaceSymbol>()) {
+                auto* ifaceSym = baseSym->as<InterfaceSymbol>();
+                if (ifaceSym->isGenericTemplate() &&
+                    i < node.baseClassTypeArgs.size() &&
+                    !node.baseClassTypeArgs[i].empty())
+                {
+                    // Resolve type arguments
+                    std::vector<TypeSymbolPtr> typeArgs;
+                    for (auto& ta : node.baseClassTypeArgs[i]) {
+                        auto resolved = resolveTypeNode(ta);
+                        if (!resolved || resolved->is<ErrorTypeSymbol>()) {
+                            errors_.error("failed to resolve type argument", ta->debugInfo);
+                            return;
+                        }
+                        typeArgs.push_back(resolved);
+                    }
+                    // Validate arity
+                    if (typeArgs.size() != ifaceSym->typeParameterNames.size()) {
+                        errors_.error("expected " + std::to_string(ifaceSym->typeParameterNames.size())
+                            + " type argument(s) for '" + ifaceSym->getName() + "'",
+                            node.debugInfo);
+                        return;
+                    }
+                    // Replace template with monomorphized version
+                    auto monoIface = symbolTable_.getOrCreateInterfaceMonomorphization(
+                        ifaceSym, typeArgs);
+                    if (ifaceIdx < classSym->implementedInterfaces.size()) {
+                        classSym->implementedInterfaces[ifaceIdx] = monoIface;
+                    }
+                }
+                ifaceIdx++;
+            }
+        }
     }
 }
 

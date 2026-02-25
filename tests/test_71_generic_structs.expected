@@ -1,0 +1,11 @@
+=== Test 1: Generic struct ===
+Pair<int,double> = (42, 3.14)
+=== Test 2: Different instantiation ===
+Pair<double,int> = (2.71, 100)
+=== Test 3: Generic class ===
+Box<int>.get() = 42
+Box<int> after set = 100
+=== Test 4: Different class instantiation ===
+Box<double>.get() = 3.14
+=== Test 5: Struct via turbofish ===
+Pair<int,int> sum = 30

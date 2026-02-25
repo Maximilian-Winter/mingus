@@ -174,7 +174,7 @@ externVariableDeclaration
 
 classDeclaration
     : accessModifier? ( staticModifier | abstractModifier )?
-      DeclareClass Identifier ( ColonOperator inheritance )?
+      DeclareClass Identifier typeParameterList? ( ColonOperator inheritance )?
       ( classBlock | SemicolonSeparator )
     ;
 
@@ -224,7 +224,11 @@ overloadableOperator
     ;
 
 inheritance
-    : qualifiedName ( CommaSeparator qualifiedName )*
+    : inheritanceItem ( CommaSeparator inheritanceItem )*
+    ;
+
+inheritanceItem
+    : qualifiedName typeArgumentList?
     ;
 
 // ============================================================================
@@ -232,7 +236,7 @@ inheritance
 // ============================================================================
 
 interfaceDeclaration
-    : accessModifier? DeclareInterface Identifier
+    : accessModifier? DeclareInterface Identifier typeParameterList?
       ( interfaceBlock | SemicolonSeparator )
     ;
 
@@ -258,7 +262,7 @@ attribute
 
 structDeclaration
     : attribute* accessModifier?
-      DeclareStruct Identifier ( structBlock | SemicolonSeparator )
+      DeclareStruct Identifier typeParameterList? ( structBlock | SemicolonSeparator )
     ;
 
 structBlock
@@ -338,6 +342,10 @@ returnType
 
 typeParameterList
     : SmallerOperator Identifier (CommaSeparator Identifier)* GreaterOperator
+    ;
+
+typeArgumentList
+    : SmallerOperator typeIdentifier (CommaSeparator typeIdentifier)* GreaterOperator
     ;
 
 definitionParameters
@@ -815,10 +823,10 @@ tupleExpression
 
 typeIdentifier
     : DeclareConst primitiveType typeModifier*
-    | DeclareConst qualifiedName typeModifier*
-    | SharedKeyword qualifiedName typeModifier*
+    | DeclareConst qualifiedName typeArgumentList? typeModifier*
+    | SharedKeyword qualifiedName typeArgumentList? typeModifier*
     | primitiveType typeModifier*
-    | qualifiedName typeModifier*
+    | qualifiedName typeArgumentList? typeModifier*
     | tupleType typeModifier*
     | functionType typeModifier*
     ;

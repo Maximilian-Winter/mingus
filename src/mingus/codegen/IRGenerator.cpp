@@ -159,18 +159,31 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
 
     // Phase A: Forward declarations
     declareStructTypes(program);
+    declareMonomorphizedStructTypes();  // Generic struct/class LLVM types
     declareExternFunctions(program);
     declareExternGlobals(program);
     declareFunctions(program);
-    declareMonomorphizedFunctions();  // Generic instantiations
+    declareMonomorphizedFunctions();  // Generic function/method instantiations
+
+    // Declare constructors/destructors for monomorphized classes
+    for (auto& mono : symbolTable_.getAllClassMonomorphizations()) {
+        for (auto& ctor : mono->constructors) {
+            if (ctor) declareFunctionSymbol(ctor.get());
+        }
+        if (mono->destructor) {
+            declareFunctionSymbol(mono->destructor.get());
+        }
+    }
+
     declareVtables(program);
     declareItables(program);
 
     // Phase B: Function bodies (visitor-based)
     program.accept(*this);
 
-    // Phase C: Monomorphized generic function bodies
+    // Phase C: Monomorphized generic function/method bodies + class ctor/dtor
     emitMonomorphizedFunctions();
+    emitMonomorphizedClassBodies();
 
     // Finalize debug info
     if (debugMode_ && diBuilder_) {
@@ -622,8 +635,38 @@ void IRGenerator::emitMonomorphizedFunctions() {
 
         // Set up type substitution map
         currentTypeSubstitution_.clear();
-        for (size_t i = 0; i < tmpl->typeParameterNames.size(); i++) {
-            currentTypeSubstitution_[tmpl->typeParameterNames[i]] = mono->typeArguments[i];
+        // For methods of monomorphized classes: use the CLASS template's type params
+        // (the method itself has no typeParameterNames, only the class does)
+        auto* methodSym = mono->as<MethodSymbol>();
+        if (methodSym && methodSym->classOfThisMethod) {
+            auto* monoClass = dynamic_cast<ClassSymbol*>(methodSym->classOfThisMethod.get());
+            if (monoClass && monoClass->genericTemplate) {
+                auto* classTmpl = monoClass->genericTemplate;
+                for (size_t i = 0; i < classTmpl->typeParameterNames.size(); i++) {
+                    currentTypeSubstitution_[classTmpl->typeParameterNames[i]] = monoClass->typeArguments[i];
+                }
+            }
+        } else {
+            // Regular generic function: use function template's type params
+            for (size_t i = 0; i < tmpl->typeParameterNames.size(); i++) {
+                currentTypeSubstitution_[tmpl->typeParameterNames[i]] = mono->typeArguments[i];
+            }
+        }
+
+        // For methods of monomorphized classes: redirect template class → mono LLVM type
+        TypeSymbol* tmplClassToRestore = nullptr;
+        llvm::StructType* prevStructType = nullptr;
+        if (methodSym && methodSym->classOfThisMethod) {
+            auto* monoClass = dynamic_cast<ClassSymbol*>(methodSym->classOfThisMethod.get());
+            if (monoClass && monoClass->genericTemplate) {
+                tmplClassToRestore = monoClass->genericTemplate;
+                auto prevIt = structTypeCache_.find(tmplClassToRestore);
+                if (prevIt != structTypeCache_.end()) prevStructType = prevIt->second;
+                auto monoIt = structTypeCache_.find(monoClass);
+                if (monoIt != structTypeCache_.end()) {
+                    structTypeCache_[tmplClassToRestore] = monoIt->second;
+                }
+            }
         }
 
         // Entry block
@@ -640,8 +683,16 @@ void IRGenerator::emitMonomorphizedFunctions() {
 
         auto* astNode = tmpl->genericASTNode;
 
-        // Map parameters using monomorphized types
+        // Handle 'this' parameter for methods
+        // currentThisPtr_ must be the raw pointer arg (not an alloca) —
+        // visit(ThisExpression&) returns it directly and GEPs use it as the object ptr.
         unsigned argIdx = 0;
+        if (mono->hasThisParam) {
+            currentThisPtr_ = fn->getArg(0);
+            argIdx = 1;
+        }
+
+        // Map parameters using monomorphized types
         for (size_t i = 0; i < astNode->parameters.size(); i++) {
             auto& paramNode = astNode->parameters[i];
             auto* paramSym = paramNode->resolvedSymbol.get();
@@ -674,10 +725,205 @@ void IRGenerator::emitMonomorphizedFunctions() {
         }
 
         popRAIIScope();
+
+        // Restore structTypeCache_ redirect
+        if (tmplClassToRestore) {
+            if (prevStructType) {
+                structTypeCache_[tmplClassToRestore] = prevStructType;
+            } else {
+                structTypeCache_.erase(tmplClassToRestore);
+            }
+        }
+
         currentTypeSubstitution_.clear();
         namedValues_ = savedNamedValues;
         currentFunction_ = prevFunction;
         currentThisPtr_ = prevThisPtr;
+    }
+}
+
+//================================================================================
+// Generics: Declare and emit monomorphized struct/class types
+//================================================================================
+
+void IRGenerator::declareMonomorphizedStructTypes() {
+    // Create opaque LLVM types for monomorphized structs
+    for (auto& mono : symbolTable_.getAllStructMonomorphizations()) {
+        declareStructTypeForSymbol(mono.get());
+    }
+    // Create opaque LLVM types for monomorphized classes
+    for (auto& mono : symbolTable_.getAllClassMonomorphizations()) {
+        declareClassTypeForSymbol(mono.get());
+    }
+
+    // Set bodies for monomorphized structs
+    for (auto& mono : symbolTable_.getAllStructMonomorphizations()) {
+        auto it = structTypeCache_.find(mono.get());
+        if (it == structTypeCache_.end() || !it->second->isOpaque()) continue;
+        std::vector<llvm::Type*> fieldTypes;
+        for (auto& field : mono->fields) {
+            fieldTypes.push_back(mapType(field->getType()));
+        }
+        if (!fieldTypes.empty()) {
+            it->second->setBody(fieldTypes, mono->isPacked);
+        } else {
+            it->second->setBody({llvm::Type::getInt8Ty(context_)}, mono->isPacked);
+        }
+    }
+
+    // Set bodies for monomorphized classes
+    for (auto& mono : symbolTable_.getAllClassMonomorphizations()) {
+        auto it = structTypeCache_.find(mono.get());
+        if (it == structTypeCache_.end() || !it->second->isOpaque()) continue;
+        std::vector<llvm::Type*> fieldTypes;
+        if (mono->hasVtable()) {
+            fieldTypes.push_back(llvm::PointerType::getUnqual(context_));
+        }
+        for (auto& field : mono->allFields) {
+            fieldTypes.push_back(mapType(field->getType()));
+        }
+        if (!fieldTypes.empty()) {
+            it->second->setBody(fieldTypes);
+        } else {
+            it->second->setBody({llvm::Type::getInt8Ty(context_)});
+        }
+    }
+}
+
+void IRGenerator::emitMonomorphizedClassBodies() {
+    for (auto& mono : symbolTable_.getAllClassMonomorphizations()) {
+        auto* tmpl = mono->genericTemplate;
+        if (!tmpl || !tmpl->genericASTNode) continue;
+
+        // Set up type substitution
+        currentTypeSubstitution_.clear();
+        for (size_t i = 0; i < tmpl->typeParameterNames.size(); i++) {
+            currentTypeSubstitution_[tmpl->typeParameterNames[i]] = mono->typeArguments[i];
+        }
+
+        // Map template class → monomorphized LLVM type
+        auto monoIt = structTypeCache_.find(mono.get());
+        if (monoIt != structTypeCache_.end()) {
+            structTypeCache_[tmpl] = monoIt->second;
+        }
+
+        // Emit constructor bodies
+        auto* astNode = tmpl->genericASTNode;
+        for (size_t ci = 0; ci < mono->constructors.size() && ci < astNode->constructors.size(); ci++) {
+            auto* ctorSym = mono->constructors[ci].get();
+            auto ctorIt = functionCache_.find(ctorSym);
+            if (ctorIt == functionCache_.end()) continue;
+            llvm::Function* fn = ctorIt->second;
+
+            auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
+            builder_.SetInsertPoint(entryBB);
+
+            auto* prevFunction = currentFunction_;
+            auto* prevThisPtr = currentThisPtr_;
+            auto* prevClassSym = currentClassSym_;
+            currentFunction_ = fn;
+            currentClassSym_ = tmpl;  // Template class for field symbol resolution
+
+            auto savedNamedValues = namedValues_;
+            namedValues_.clear();
+
+            // 'this' parameter — must be raw arg, not alloca
+            // visit(ThisExpression&) returns currentThisPtr_ directly as the object ptr
+            currentThisPtr_ = fn->getArg(0);
+
+            // Store vtable pointer (uses mono class for vtable lookup)
+            if (mono->hasVtable()) {
+                storeVtablePtr(currentThisPtr_, mono.get());
+            }
+
+            // Map constructor parameters
+            auto& ctorAST = astNode->constructors[ci];
+            unsigned argIdx = 1;
+            for (size_t i = 0; i < ctorAST->parameters.size(); i++) {
+                auto& paramNode = ctorAST->parameters[i];
+                auto* paramSym = paramNode->resolvedSymbol.get();
+                llvm::Value* argVal = fn->getArg(argIdx++);
+
+                auto paramType = effectiveType(paramSym ? paramSym->getType() : nullptr);
+                llvm::Type* paramTy = paramType ? mapType(paramType.get()) : argVal->getType();
+
+                std::string pName = paramSym ? paramSym->getName() : paramNode->name;
+                auto* alloca = createEntryBlockAlloca(fn, paramTy, pName);
+                builder_.CreateStore(argVal, alloca);
+                if (paramSym) namedValues_[paramSym] = alloca;
+            }
+
+            pushRAIIScope();
+
+            // Visit constructor body statements
+            if (ctorAST->body) {
+                for (auto& stmt : ctorAST->body->statements) {
+                    stmt->accept(*this);
+                    if (builder_.GetInsertBlock()->getTerminator()) break;
+                }
+            }
+
+            if (!builder_.GetInsertBlock()->getTerminator()) {
+                emitScopeDestructors();
+                builder_.CreateRetVoid();
+            }
+
+            popRAIIScope();
+            namedValues_ = savedNamedValues;
+            currentFunction_ = prevFunction;
+            currentThisPtr_ = prevThisPtr;
+            currentClassSym_ = prevClassSym;
+        }
+
+        // Emit destructor body (auto-generated = empty body)
+        if (mono->destructor) {
+            auto dtorIt = functionCache_.find(mono->destructor.get());
+            if (dtorIt != functionCache_.end()) {
+                llvm::Function* fn = dtorIt->second;
+                auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
+                builder_.SetInsertPoint(entryBB);
+
+                auto* prevFunction = currentFunction_;
+                auto* prevClassSym = currentClassSym_;
+                currentFunction_ = fn;
+                currentClassSym_ = tmpl;  // Template class for field symbol resolution
+
+                // 'this' parameter — raw arg, not alloca (same as regular destructor)
+                llvm::Value* thisArg = fn->getArg(0);
+
+                // Visit explicit destructor body if present
+                if (astNode->destructor && astNode->destructor->body) {
+                    auto* prevThisPtr = currentThisPtr_;
+                    currentThisPtr_ = thisArg;
+                    auto savedNamedValues = namedValues_;
+                    namedValues_.clear();
+
+                    pushRAIIScope();
+                    for (auto& stmt : astNode->destructor->body->statements) {
+                        stmt->accept(*this);
+                        if (builder_.GetInsertBlock()->getTerminator()) break;
+                    }
+                    if (!builder_.GetInsertBlock()->getTerminator()) {
+                        emitScopeDestructors();
+                    }
+                    popRAIIScope();
+
+                    namedValues_ = savedNamedValues;
+                    currentThisPtr_ = prevThisPtr;
+                }
+
+                if (!builder_.GetInsertBlock()->getTerminator()) {
+                    builder_.CreateRetVoid();
+                }
+
+                currentFunction_ = prevFunction;
+                currentClassSym_ = prevClassSym;
+            }
+        }
+
+        // Cleanup structTypeCache_ redirect
+        structTypeCache_.erase(tmpl);
+        currentTypeSubstitution_.clear();
     }
 }
 
@@ -702,9 +948,13 @@ void IRGenerator::declareStructTypes(ProgramNode& program) {
         auto allSyms = mod->resolvedModule->getAllSymbols();
         for (auto& sym : allSyms) {
             if (auto* structSym = sym->as<StructSymbol>()) {
-                declareStructTypeForSymbol(structSym);
+                if (!structSym->isGenericTemplate()) {
+                    declareStructTypeForSymbol(structSym);
+                }
             } else if (auto* classSym = sym->as<ClassSymbol>()) {
-                declareClassTypeForSymbol(classSym);
+                if (!classSym->isGenericTemplate()) {
+                    declareClassTypeForSymbol(classSym);
+                }
             } else if (auto* tuSym = sym->as<TaggedUnionSymbol>()) {
                 // Create opaque StructType for tagged union
                 if (structTypeCache_.find(tuSym) == structTypeCache_.end()) {
@@ -820,6 +1070,7 @@ void IRGenerator::declareVtables(ProgramNode& program) {
             auto* classSym = sym->as<ClassSymbol>();
             if (!classSym || !classSym->hasVtable()) continue;
             if (classSym->isAbstract) continue;
+            if (classSym->isGenericTemplate()) continue;  // Skip: mono versions declared below
 
             auto* ptrTy = llvm::PointerType::getUnqual(context_);
             auto* vtableArrayTy = llvm::ArrayType::get(ptrTy, classSym->vtableSize);
@@ -846,6 +1097,36 @@ void IRGenerator::declareVtables(ProgramNode& program) {
             vtableCache_[classSym] = vtableGlobal;
         }
     }
+
+    // Monomorphized class vtables
+    for (auto& mono : symbolTable_.getAllClassMonomorphizations()) {
+        if (!mono->hasVtable()) continue;
+        if (mono->isAbstract) continue;
+
+        auto* ptrTyMono = llvm::PointerType::getUnqual(context_);
+        auto* vtableArrayTy = llvm::ArrayType::get(ptrTyMono, mono->vtableSize);
+
+        std::vector<llvm::Constant*> vtableEntries;
+        for (auto& methodSym : mono->vtable) {
+            if (methodSym && !methodSym->isAbstract) {
+                auto it = functionCache_.find(methodSym.get());
+                if (it != functionCache_.end()) {
+                    vtableEntries.push_back(it->second);
+                } else {
+                    vtableEntries.push_back(llvm::ConstantPointerNull::get(ptrTyMono));
+                }
+            } else {
+                vtableEntries.push_back(llvm::ConstantPointerNull::get(ptrTyMono));
+            }
+        }
+
+        auto* vtableInit = llvm::ConstantArray::get(vtableArrayTy, vtableEntries);
+        auto* vtableGlobal = new llvm::GlobalVariable(
+            *module_, vtableArrayTy, true,
+            llvm::GlobalValue::InternalLinkage,
+            vtableInit, mono->getName() + "_vtable");
+        vtableCache_[mono.get()] = vtableGlobal;
+    }
 }
 
 void IRGenerator::declareItables(ProgramNode& program) {
@@ -859,6 +1140,8 @@ void IRGenerator::declareItables(ProgramNode& program) {
             if (!classSym || classSym->isAbstract) continue;
 
             for (auto& ifaceSym : classSym->implementedInterfaces) {
+                // Skip generic template interfaces (only concrete/monomorphized)
+                if (ifaceSym->isGenericTemplate()) continue;
                 std::vector<llvm::Constant*> slots;
                 for (auto& ifaceMethod : ifaceSym->methods) {
                     // Find the class's implementation of this interface method
@@ -1040,6 +1323,7 @@ void IRGenerator::declareFunctions(ProgramNode& program) {
 
             // Type members (methods, ctor, dtor, operators)
             if (auto* classSym = sym->as<ClassSymbol>()) {
+                if (classSym->isGenericTemplate()) continue;  // Skip: handled by mono cache
                 // Methods
                 auto classSyms = classSym->getAllSymbols();
                 for (auto& mSym : classSyms) {
@@ -1073,6 +1357,7 @@ void IRGenerator::declareFunctions(ProgramNode& program) {
             }
 
             if (auto* structSym = sym->as<StructSymbol>()) {
+                if (structSym->isGenericTemplate()) continue;  // Skip: no methods to declare
                 auto structSyms = structSym->getAllSymbols();
                 for (auto& mSym : structSyms) {
                     if (auto* methodSym = mSym->as<FunctionSymbol>()) {
@@ -2607,6 +2892,8 @@ void IRGenerator::visit(EnumMemberNode& /*node*/) {}
 void IRGenerator::visit(EnumDeclaration& /*node*/) {}
 
 void IRGenerator::visit(StructDeclaration& node) {
+    if (node.resolvedStruct && node.resolvedStruct->isGenericTemplate()) return;
+
     auto* prevStructSym = currentStructSym_;
     currentStructSym_ = node.resolvedStruct.get();
 
@@ -2641,6 +2928,8 @@ void IRGenerator::visit(TaggedUnionDeclaration& node) {
 }
 
 void IRGenerator::visit(ClassDeclaration& node) {
+    if (node.resolvedClass && node.resolvedClass->isGenericTemplate()) return;
+
     auto* prevClassSym = currentClassSym_;
     currentClassSym_ = node.resolvedClass.get();
 
@@ -4740,8 +5029,9 @@ void IRGenerator::visit(CallExpression& node) {
                 }
             }
             else if (auto* structSym = ident->resolvedSymbol->as<StructSymbol>()) {
-                // Struct construction: zero-init
-                lastValue_ = llvm::Constant::getNullValue(mapType(structSym));
+                // Struct construction: zero-init (use resolvedType for generic mono structs)
+                auto* structLLVMTy = node.resolvedType ? mapType(node.resolvedType) : mapType(structSym);
+                lastValue_ = llvm::Constant::getNullValue(structLLVMTy);
                 return;
             }
             else if (auto* funcSym = ident->resolvedSymbol->as<FunctionSymbol>()) {

@@ -121,6 +121,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitInheritanceItem(MingusParser::InheritanceItemContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitInterfaceDeclaration(MingusParser::InterfaceDeclarationContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -190,6 +194,10 @@ public:
   }
 
   virtual std::any visitTypeParameterList(MingusParser::TypeParameterListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTypeArgumentList(MingusParser::TypeArgumentListContext *ctx) override {
     return visitChildren(ctx);
   }
 

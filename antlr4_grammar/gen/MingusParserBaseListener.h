@@ -96,6 +96,9 @@ public:
   virtual void enterInheritance(MingusParser::InheritanceContext * /*ctx*/) override { }
   virtual void exitInheritance(MingusParser::InheritanceContext * /*ctx*/) override { }
 
+  virtual void enterInheritanceItem(MingusParser::InheritanceItemContext * /*ctx*/) override { }
+  virtual void exitInheritanceItem(MingusParser::InheritanceItemContext * /*ctx*/) override { }
+
   virtual void enterInterfaceDeclaration(MingusParser::InterfaceDeclarationContext * /*ctx*/) override { }
   virtual void exitInterfaceDeclaration(MingusParser::InterfaceDeclarationContext * /*ctx*/) override { }
 
@@ -149,6 +152,9 @@ public:
 
   virtual void enterTypeParameterList(MingusParser::TypeParameterListContext * /*ctx*/) override { }
   virtual void exitTypeParameterList(MingusParser::TypeParameterListContext * /*ctx*/) override { }
+
+  virtual void enterTypeArgumentList(MingusParser::TypeArgumentListContext * /*ctx*/) override { }
+  virtual void exitTypeArgumentList(MingusParser::TypeArgumentListContext * /*ctx*/) override { }
 
   virtual void enterDefinitionParameters(MingusParser::DefinitionParametersContext * /*ctx*/) override { }
   virtual void exitDefinitionParameters(MingusParser::DefinitionParametersContext * /*ctx*/) override { }

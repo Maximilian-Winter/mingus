@@ -1194,36 +1194,42 @@ void TypeChecker::visit(CallExpression& node) {
                 if (funcTypeHolder) funcType = funcTypeHolder.get();
             }
 
-            // Generic function monomorphization
+            // Generic function monomorphization (turbofish or inferred)
             if (fSym->isGenericTemplate()) {
-                if (node.typeArguments.empty()) {
-                    errors_.error("generic function '" + fSym->getName()
-                                   + "' requires explicit type arguments (use ::<Type>)",
-                                   node.debugInfo);
-                    node.resolvedType = symbolTable_.getErrorType();
-                    return;
-                }
-                if (node.typeArguments.size() != fSym->typeParameterNames.size()) {
-                    errors_.error("generic function '" + fSym->getName()
-                                   + "' expects " + std::to_string(fSym->typeParameterNames.size())
-                                   + " type argument(s), got "
-                                   + std::to_string(node.typeArguments.size()),
-                                   node.debugInfo);
-                    node.resolvedType = symbolTable_.getErrorType();
-                    return;
-                }
-
-                // Collect resolved type arguments
                 std::vector<TypeSymbolPtr> typeArgs;
-                for (auto& ta : node.typeArguments) {
-                    if (!ta || !ta->resolvedType) {
+
+                if (node.typeArguments.empty()) {
+                    // Infer type arguments from call-site argument types
+                    typeArgs = inferGenericTypeArguments(fSym, node.arguments);
+                    if (typeArgs.empty()) {
+                        errors_.error("cannot infer type arguments for generic function '"
+                                       + fSym->getName()
+                                       + "'; use explicit syntax ::<Type>",
+                                       node.debugInfo);
                         node.resolvedType = symbolTable_.getErrorType();
                         return;
                     }
-                    typeArgs.push_back(ta->resolvedType);
+                } else {
+                    // Explicit turbofish: validate arity and collect
+                    if (node.typeArguments.size() != fSym->typeParameterNames.size()) {
+                        errors_.error("generic function '" + fSym->getName()
+                                       + "' expects " + std::to_string(fSym->typeParameterNames.size())
+                                       + " type argument(s), got "
+                                       + std::to_string(node.typeArguments.size()),
+                                       node.debugInfo);
+                        node.resolvedType = symbolTable_.getErrorType();
+                        return;
+                    }
+                    for (auto& ta : node.typeArguments) {
+                        if (!ta || !ta->resolvedType) {
+                            node.resolvedType = symbolTable_.getErrorType();
+                            return;
+                        }
+                        typeArgs.push_back(ta->resolvedType);
+                    }
                 }
 
-                // Get or create monomorphized function
+                // Monomorphize (shared path for both inferred and explicit)
                 auto monoFunc = symbolTable_.getOrCreateMonomorphization(fSym, typeArgs);
                 node.resolvedCallee = monoFunc;
                 funcSym = monoFunc;
@@ -1294,8 +1300,35 @@ void TypeChecker::visit(CallExpression& node) {
         funcType = calleeType->as<FunctionTypeSymbol>();
     }
 
-    // Struct construction: StructName() → zero-initialized struct value
+    // Struct construction: StructName() or StructName::<int, double>()
     if (!funcType && calleeType->is<StructSymbol>()) {
+        auto* structSym = calleeType->as<StructSymbol>();
+
+        // Generic struct: turbofish type args required
+        if (structSym && structSym->isGenericTemplate()) {
+            if (node.typeArguments.empty()) {
+                errors_.error("generic struct '" + structSym->getName()
+                    + "' requires type arguments (use ::<Type>)", node.debugInfo);
+                node.resolvedType = symbolTable_.getErrorType();
+                return;
+            }
+            if (node.typeArguments.size() != structSym->typeParameterNames.size()) {
+                errors_.error("expected " + std::to_string(structSym->typeParameterNames.size())
+                    + " type argument(s)", node.debugInfo);
+                node.resolvedType = symbolTable_.getErrorType();
+                return;
+            }
+            std::vector<TypeSymbolPtr> typeArgs;
+            for (auto& ta : node.typeArguments) {
+                if (!ta || !ta->resolvedType) { node.resolvedType = symbolTable_.getErrorType(); return; }
+                typeArgs.push_back(ta->resolvedType);
+            }
+            auto monoStruct = symbolTable_.getOrCreateStructMonomorphization(structSym, typeArgs);
+            node.resolvedType = monoStruct;
+            return;
+        }
+
+        // Non-generic struct
         node.resolvedType = std::dynamic_pointer_cast<TypeSymbol>(
             symbolTable_.resolveType(calleeType->getName()));
         return;
@@ -1304,6 +1337,29 @@ void TypeChecker::visit(CallExpression& node) {
     // Constructor call: callee is a type name
     if (!funcType && calleeType->is<ClassSymbol>()) {
         auto* classSym = calleeType->as<ClassSymbol>();
+
+        // Generic class: turbofish type args required
+        if (classSym && classSym->isGenericTemplate()) {
+            if (node.typeArguments.empty()) {
+                errors_.error("generic class '" + classSym->getName()
+                    + "' requires type arguments (use ::<Type>)", node.debugInfo);
+                node.resolvedType = symbolTable_.getErrorType();
+                return;
+            }
+            if (node.typeArguments.size() != classSym->typeParameterNames.size()) {
+                errors_.error("expected " + std::to_string(classSym->typeParameterNames.size())
+                    + " type argument(s)", node.debugInfo);
+                node.resolvedType = symbolTable_.getErrorType();
+                return;
+            }
+            std::vector<TypeSymbolPtr> typeArgs;
+            for (auto& ta : node.typeArguments) {
+                if (!ta || !ta->resolvedType) { node.resolvedType = symbolTable_.getErrorType(); return; }
+                typeArgs.push_back(ta->resolvedType);
+            }
+            auto monoClass = symbolTable_.getOrCreateClassMonomorphization(classSym, typeArgs);
+            classSym = monoClass.get();
+        }
         if (classSym && !classSym->constructors.empty()) {
             if (classSym->constructors.size() > 1) {
                 // Overload resolution among constructors
@@ -1752,6 +1808,124 @@ std::shared_ptr<FunctionSymbol> TypeChecker::resolveOverload(
     }
 
     return bestMatch;
+}
+
+// ============================================================================
+// Generic type argument inference
+// ============================================================================
+
+bool TypeChecker::matchTypePattern(
+    TypeSymbolPtr patternType, TypeSymbolPtr concreteType,
+    std::unordered_map<std::string, TypeSymbolPtr>& bindings)
+{
+    if (!patternType || !concreteType) return true;  // graceful skip
+
+    // Direct TypeParameterSymbol → bind or check consistency
+    if (auto* tp = patternType->as<TypeParameterSymbol>()) {
+        auto it = bindings.find(tp->getName());
+        if (it == bindings.end()) {
+            bindings[tp->getName()] = concreteType;
+            return true;
+        }
+        // Already bound — check consistency
+        if (it->second == concreteType) return true;
+        // Try numeric widening
+        auto wider = getWiderType(it->second.get(), concreteType.get());
+        if (wider && !wider->is<ErrorTypeSymbol>()) {
+            it->second = wider;  // widen to broader type
+            return true;
+        }
+        return false;  // conflict — non-numeric type mismatch
+    }
+
+    // Pointer<T> ↔ Pointer<concrete>
+    if (auto* ptrPat = patternType->as<PointerTypeSymbol>()) {
+        if (auto* ptrConc = concreteType->as<PointerTypeSymbol>()) {
+            return matchTypePattern(ptrPat->baseType, ptrConc->baseType, bindings);
+        }
+        return true;  // structural mismatch — skip, caught later by type checking
+    }
+
+    // Array<T> ↔ Array<concrete>
+    if (auto* arrPat = patternType->as<ArrayTypeSymbol>()) {
+        if (auto* arrConc = concreteType->as<ArrayTypeSymbol>()) {
+            return matchTypePattern(arrPat->elementType, arrConc->elementType, bindings);
+        }
+        return true;
+    }
+
+    // Tuple(T, U) ↔ Tuple(concrete, concrete)
+    if (auto* tupPat = patternType->as<TupleTypeSymbol>()) {
+        if (auto* tupConc = concreteType->as<TupleTypeSymbol>()) {
+            if (tupPat->elementTypes.size() == tupConc->elementTypes.size()) {
+                for (size_t i = 0; i < tupPat->elementTypes.size(); i++) {
+                    if (!matchTypePattern(tupPat->elementTypes[i],
+                                          tupConc->elementTypes[i], bindings))
+                        return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // FunctionType(T → U) ↔ FunctionType(concrete → concrete)
+    if (auto* fnPat = patternType->as<FunctionTypeSymbol>()) {
+        if (auto* fnConc = concreteType->as<FunctionTypeSymbol>()) {
+            if (fnPat->parameters.size() == fnConc->parameters.size()) {
+                for (size_t i = 0; i < fnPat->parameters.size(); i++) {
+                    if (!matchTypePattern(fnPat->parameters[i].type,
+                                          fnConc->parameters[i].type, bindings))
+                        return false;
+                }
+                if (!matchTypePattern(fnPat->returnType, fnConc->returnType, bindings))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    // ReferenceType
+    if (auto* refPat = patternType->as<ReferenceTypeSymbol>()) {
+        if (auto* refConc = concreteType->as<ReferenceTypeSymbol>()) {
+            return matchTypePattern(refPat->baseType, refConc->baseType, bindings);
+        }
+        return true;
+    }
+
+    return true;  // non-generic pattern (primitive, class, etc.) — nothing to extract
+}
+
+std::vector<TypeSymbolPtr> TypeChecker::inferGenericTypeArguments(
+    FunctionSymbol* tmpl, const std::shared_ptr<ArgumentsNode>& args)
+{
+    std::unordered_map<std::string, TypeSymbolPtr> bindings;
+
+    size_t argCount = args ? args->expressions.size() : 0;
+    size_t paramCount = tmpl->parameters.size();
+    size_t matchCount = std::min(argCount, paramCount);
+
+    for (size_t i = 0; i < matchCount; i++) {
+        auto argType = args->expressions[i]->resolvedType;
+        auto paramType = tmpl->parameters[i]->getType();
+        if (!argType || !paramType) continue;
+        if (argType->is<ErrorTypeSymbol>()) continue;
+
+        if (!matchTypePattern(paramType, argType, bindings)) {
+            return {};  // inference failed — conflicting type bindings
+        }
+    }
+
+    // Build result in declaration order — all type params must be bound
+    std::vector<TypeSymbolPtr> result;
+    for (auto& tpName : tmpl->typeParameterNames) {
+        auto it = bindings.find(tpName);
+        if (it == bindings.end()) {
+            return {};  // not all type params inferrable from arguments
+        }
+        result.push_back(it->second);
+    }
+
+    return result;
 }
 
 } // namespace mingus

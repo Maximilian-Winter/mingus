@@ -540,6 +540,15 @@ std::any ASTGenerator::visitTypeIdentifier(
         auto named = std::make_shared<NamedTypeNode>();
         named->debugInfo = makeDebugInfo(ctx);
         named->qualifiedName = parseQualifiedName(ctx->qualifiedName());
+
+        // Parse type arguments: Pair<int, double>, Box<int>
+        if (ctx->typeArgumentList()) {
+            for (auto* typeIdCtx : ctx->typeArgumentList()->typeIdentifier()) {
+                auto typeArg = anyToNode<TypeNode>(visitTypeIdentifier(typeIdCtx));
+                if (typeArg) named->typeArguments.push_back(typeArg);
+            }
+        }
+
         baseType = named;
 
     } else if (ctx->tupleType()) {
@@ -788,12 +797,29 @@ std::any ASTGenerator::visitClassDeclaration(
     cls->isStatic = ctx->staticModifier() != nullptr;
     cls->isAbstract = ctx->abstractModifier() != nullptr;
 
-    // Base classes / interfaces
+    // Generic type parameters: class Box<T> { ... }
+    if (ctx->typeParameterList()) {
+        for (auto* id : ctx->typeParameterList()->Identifier()) {
+            cls->typeParameters.push_back(id->getText());
+        }
+    }
+
+    // Base classes / interfaces (with optional type arguments for generics)
     if (ctx->inheritance()) {
-        for (auto* qnameCtx : ctx->inheritance()->qualifiedName()) {
-            auto parts = parseQualifiedName(qnameCtx);
+        for (auto* itemCtx : ctx->inheritance()->inheritanceItem()) {
+            auto parts = parseQualifiedName(itemCtx->qualifiedName());
             // Store the simple name; sema resolves to ClassSymbol/InterfaceSymbol
             if (!parts.empty()) cls->baseClasses.push_back(parts.back());
+
+            // Parse type arguments: Getter<int>, Comparable<double>
+            std::vector<std::shared_ptr<TypeNode>> typeArgs;
+            if (itemCtx->typeArgumentList()) {
+                for (auto* typeIdCtx : itemCtx->typeArgumentList()->typeIdentifier()) {
+                    auto typeArg = anyToNode<TypeNode>(visitTypeIdentifier(typeIdCtx));
+                    if (typeArg) typeArgs.push_back(typeArg);
+                }
+            }
+            cls->baseClassTypeArgs.push_back(std::move(typeArgs));
         }
     }
 
@@ -871,6 +897,13 @@ std::any ASTGenerator::visitInterfaceDeclaration(
     iface->name = ctx->Identifier()->getText();
     iface->accessModifier = parseAccessModifier(ctx->accessModifier());
 
+    // Generic type parameters: interface Getter<T> { ... }
+    if (ctx->typeParameterList()) {
+        for (auto* id : ctx->typeParameterList()->Identifier()) {
+            iface->typeParameters.push_back(id->getText());
+        }
+    }
+
     if (ctx->interfaceBlock()) {
         for (auto* memberCtx : ctx->interfaceBlock()->interfaceMember()) {
             if (memberCtx->functionDeclaration()) {
@@ -893,6 +926,13 @@ std::any ASTGenerator::visitStructDeclaration(
     strct->accessModifier = parseAccessModifier(ctx->accessModifier());
     if (!ctx->attribute().empty()) {
         parseLayoutAttributes(ctx->attribute(), strct->isPacked, strct->alignment);
+    }
+
+    // Generic type parameters: struct Pair<T, U> { ... }
+    if (ctx->typeParameterList()) {
+        for (auto* id : ctx->typeParameterList()->Identifier()) {
+            strct->typeParameters.push_back(id->getText());
+        }
     }
 
     if (ctx->structBlock()) {

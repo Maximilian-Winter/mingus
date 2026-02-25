@@ -141,6 +141,18 @@ private:
     // Score how well argument types match parameter types (lower = better, -1 = no match)
     int scoreOverloadMatch(FunctionSymbol* func,
                            const std::shared_ptr<ArgumentsNode>& args);
+
+    // Generic type argument inference from call-site argument types
+    // Returns inferred type args in declaration order, or empty vector on failure
+    std::vector<TypeSymbolPtr> inferGenericTypeArguments(
+        FunctionSymbol* tmpl,
+        const std::shared_ptr<ArgumentsNode>& args);
+
+    // Recursive pattern-matching: extract TypeParameterSymbol bindings
+    bool matchTypePattern(
+        TypeSymbolPtr patternType,
+        TypeSymbolPtr concreteType,
+        std::unordered_map<std::string, TypeSymbolPtr>& bindings);
 };
 
 } // namespace mingus

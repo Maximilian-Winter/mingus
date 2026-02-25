@@ -1,0 +1,15 @@
+=== Test 1: Basic inference ===
+identity(42) = 42
+identity(3.14) = 3.14
+=== Test 2: Two-arg same type ===
+max(10, 20) = 20
+max(2.71, 3.14) = 3.14
+=== Test 3: Inference with add ===
+add(15, 27) = 42
+add(1.5, 2.5) = 4.0
+=== Test 4: Multi-type-param inference ===
+first(42, 3.14) = 42
+=== Test 5: Turbofish still works ===
+max::<int>(5, 3) = 5
+=== Test 6: Reuse cached monomorphization ===
+max(100, 50) = 100

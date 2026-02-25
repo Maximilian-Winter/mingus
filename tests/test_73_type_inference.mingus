@@ -1,0 +1,56 @@
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    // Generic identity function
+    func identity<T>(T value) => T {
+        return value;
+    }
+
+    // Generic max function
+    func max<T>(T a, T b) => T {
+        if (a > b) { return a; }
+        return b;
+    }
+
+    // Generic add function
+    func add<T>(T a, T b) => T {
+        return a + b;
+    }
+
+    // Generic with two type params (returns first)
+    func first<T, U>(T a, U b) => T {
+        return a;
+    }
+
+    func main() => void {
+        printf("=== Test 1: Basic inference ===\n");
+        int a = identity(42);
+        printf("identity(42) = %d\n", a);
+        double b = identity(3.14);
+        printf("identity(3.14) = %.2f\n", b);
+
+        printf("=== Test 2: Two-arg same type ===\n");
+        int m1 = max(10, 20);
+        printf("max(10, 20) = %d\n", m1);
+        double m2 = max(2.71, 3.14);
+        printf("max(2.71, 3.14) = %.2f\n", m2);
+
+        printf("=== Test 3: Inference with add ===\n");
+        int s1 = add(15, 27);
+        printf("add(15, 27) = %d\n", s1);
+        double s2 = add(1.5, 2.5);
+        printf("add(1.5, 2.5) = %.1f\n", s2);
+
+        printf("=== Test 4: Multi-type-param inference ===\n");
+        int f1 = first(42, 3.14);
+        printf("first(42, 3.14) = %d\n", f1);
+
+        printf("=== Test 5: Turbofish still works ===\n");
+        int m3 = max::<int>(5, 3);
+        printf("max::<int>(5, 3) = %d\n", m3);
+
+        printf("=== Test 6: Reuse cached monomorphization ===\n");
+        int m4 = max(100, 50);
+        printf("max(100, 50) = %d\n", m4);
+    }
+}

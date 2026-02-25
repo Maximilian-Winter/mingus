@@ -584,4 +584,232 @@ TypeSymbolPtr SymbolTable::substituteType(
     return type;
 }
 
+// ============================================================================
+// Generics — Struct monomorphization
+// ============================================================================
+
+std::shared_ptr<StructSymbol> SymbolTable::getOrCreateStructMonomorphization(
+    StructSymbol* tmpl, const std::vector<TypeSymbolPtr>& typeArgs)
+{
+    // Build cache key
+    std::string key = "struct:" + tmpl->getName();
+    for (auto& ta : typeArgs) key += "$" + ta->getInterningKey();
+
+    auto it = structMonoCache_.find(key);
+    if (it != structMonoCache_.end()) return it->second;
+
+    // Build substitution map
+    std::unordered_map<std::string, TypeSymbolPtr> subst;
+    for (size_t i = 0; i < tmpl->typeParameterNames.size(); i++) {
+        subst[tmpl->typeParameterNames[i]] = typeArgs[i];
+    }
+
+    // Build mangled name: Pair$G_int_double
+    std::string monoName = tmpl->getName() + "$G";
+    for (auto& ta : typeArgs) monoName += "_" + ta->getName();
+
+    auto mono = std::make_shared<StructSymbol>(monoName);
+    mono->genericTemplate = tmpl;
+    mono->typeArguments = typeArgs;
+    mono->genericASTNode = tmpl->genericASTNode;
+    mono->isPacked = tmpl->isPacked;
+    mono->alignment = tmpl->alignment;
+
+    // Substitute field types and add to scope for resolve()
+    for (auto& origField : tmpl->fields) {
+        auto newField = std::make_shared<VariableSymbol>(
+            origField->getName(), substituteType(origField->getType(), subst));
+        newField->fieldIndex = origField->fieldIndex;
+        mono->fields.push_back(newField);
+        mono->define(newField);
+    }
+
+    registerType(monoName, mono);
+    structMonoCache_[key] = mono;
+    return mono;
+}
+
+std::vector<std::shared_ptr<StructSymbol>> SymbolTable::getAllStructMonomorphizations() const {
+    std::vector<std::shared_ptr<StructSymbol>> result;
+    result.reserve(structMonoCache_.size());
+    for (auto& kv : structMonoCache_) result.push_back(kv.second);
+    return result;
+}
+
+// ============================================================================
+// Generics — Class monomorphization
+// ============================================================================
+
+std::shared_ptr<ClassSymbol> SymbolTable::getOrCreateClassMonomorphization(
+    ClassSymbol* tmpl, const std::vector<TypeSymbolPtr>& typeArgs)
+{
+    std::string key = "class:" + tmpl->getName();
+    for (auto& ta : typeArgs) key += "$" + ta->getInterningKey();
+
+    auto it = classMonoCache_.find(key);
+    if (it != classMonoCache_.end()) return it->second;
+
+    std::unordered_map<std::string, TypeSymbolPtr> subst;
+    for (size_t i = 0; i < tmpl->typeParameterNames.size(); i++) {
+        subst[tmpl->typeParameterNames[i]] = typeArgs[i];
+    }
+
+    std::string monoName = tmpl->getName() + "$G";
+    for (auto& ta : typeArgs) monoName += "_" + ta->getName();
+
+    auto mono = std::make_shared<ClassSymbol>(monoName, tmpl->getEnclosingScope());
+    mono->genericTemplate = tmpl;
+    mono->typeArguments = typeArgs;
+    mono->genericASTNode = tmpl->genericASTNode;
+    mono->isAbstract = tmpl->isAbstract;
+
+    // Set symbolScope_ so getQualifiedName() can walk Module_Class_member
+    mono->setSymbolScope(tmpl->getSymbolScope());
+
+    // Substitute fields
+    for (auto& origField : tmpl->fields) {
+        auto newField = std::make_shared<VariableSymbol>(
+            origField->getName(), substituteType(origField->getType(), subst));
+        newField->fieldIndex = origField->fieldIndex;
+        mono->fields.push_back(newField);
+        mono->allFields.push_back(newField);
+        mono->define(newField);
+    }
+
+    // Monomorphize constructors
+    for (auto& origCtor : tmpl->constructors) {
+        auto monoCtor = std::make_shared<ConstructorSymbol>(monoName);
+        monoCtor->isMethod = true;
+        monoCtor->hasThisParam = true;
+        monoCtor->setSymbolScope(mono);  // For getQualifiedName() → "Module_Class_constructor"
+        for (auto& origParam : origCtor->parameters) {
+            auto newParam = std::make_shared<VariableSymbol>(
+                origParam->getName(), substituteType(origParam->getType(), subst));
+            newParam->isReference = origParam->isReference;
+            monoCtor->parameters.push_back(newParam);
+        }
+        mono->constructors.push_back(monoCtor);
+    }
+
+    // Monomorphize destructor
+    if (tmpl->destructor) {
+        auto monoDtor = std::make_shared<DestructorSymbol>(monoName);
+        monoDtor->isMethod = true;
+        monoDtor->hasThisParam = true;
+        monoDtor->setSymbolScope(mono);  // For getQualifiedName() → "Module_Class_destructor"
+        mono->destructor = monoDtor;
+    }
+
+    // Monomorphize methods — also add to function mono cache for body emission
+    for (auto& sym : tmpl->getAllSymbols()) {
+        auto* origMethod = sym->as<FunctionSymbol>();
+        if (!origMethod || !origMethod->isMethod) continue;
+        if (origMethod->is<ConstructorSymbol>() || origMethod->is<DestructorSymbol>()) continue;
+
+        auto monoMethod = std::make_shared<MethodSymbol>(origMethod->getName());
+        monoMethod->genericTemplate = origMethod;
+        monoMethod->typeArguments = typeArgs;
+        monoMethod->classOfThisMethod = mono;
+        monoMethod->isMethod = true;
+        monoMethod->hasThisParam = true;
+        monoMethod->returnType = substituteType(origMethod->returnType, subst);
+        monoMethod->genericASTNode = origMethod->genericASTNode;
+        for (auto& origParam : origMethod->parameters) {
+            auto newParam = std::make_shared<VariableSymbol>(
+                origParam->getName(), substituteType(origParam->getType(), subst));
+            newParam->isReference = origParam->isReference;
+            monoMethod->parameters.push_back(newParam);
+        }
+        mono->define(monoMethod);
+
+        // Add to function monomorphization cache for body emission
+        std::string methodKey = origMethod->getQualifiedName();
+        for (auto& ta : typeArgs) methodKey += "$" + ta->getInterningKey();
+        monomorphizationCache_[methodKey] = monoMethod;
+    }
+
+    // Build vtable (slot 0 = destructor, then methods)
+    mono->vtable.clear();
+    if (mono->destructor) mono->vtable.push_back(mono->destructor);
+    for (auto& sym : mono->getAllSymbols()) {
+        auto* m = sym->as<FunctionSymbol>();
+        if (m && m->isMethod && !m->is<ConstructorSymbol>() && !m->is<DestructorSymbol>()) {
+            m->vtableIndex = static_cast<int>(mono->vtable.size());
+            mono->vtable.push_back(std::dynamic_pointer_cast<FunctionSymbol>(sym));
+        }
+    }
+    mono->vtableSize = static_cast<int>(mono->vtable.size());
+
+    registerType(monoName, mono);
+    classMonoCache_[key] = mono;
+    return mono;
+}
+
+std::vector<std::shared_ptr<ClassSymbol>> SymbolTable::getAllClassMonomorphizations() const {
+    std::vector<std::shared_ptr<ClassSymbol>> result;
+    result.reserve(classMonoCache_.size());
+    for (auto& kv : classMonoCache_) result.push_back(kv.second);
+    return result;
+}
+
+//================================================================================
+// Interface generic monomorphization
+//================================================================================
+
+std::shared_ptr<InterfaceSymbol> SymbolTable::getOrCreateInterfaceMonomorphization(
+    InterfaceSymbol* tmpl, const std::vector<TypeSymbolPtr>& typeArgs)
+{
+    // Build cache key
+    std::string key = "iface:" + tmpl->getName();
+    for (auto& ta : typeArgs) key += "$" + ta->getInterningKey();
+
+    auto it = interfaceMonoCache_.find(key);
+    if (it != interfaceMonoCache_.end()) return it->second;
+
+    // Build substitution map
+    std::unordered_map<std::string, TypeSymbolPtr> subst;
+    for (size_t i = 0; i < tmpl->typeParameterNames.size(); i++) {
+        subst[tmpl->typeParameterNames[i]] = typeArgs[i];
+    }
+
+    // Mangled name: Getter$G_int
+    std::string monoName = tmpl->getName() + "$G";
+    for (auto& ta : typeArgs) monoName += "_" + ta->getName();
+
+    auto mono = std::make_shared<InterfaceSymbol>(monoName);
+    mono->genericTemplate = tmpl;
+    mono->typeArguments = typeArgs;
+    mono->genericASTNode = tmpl->genericASTNode;
+
+    // Substitute method signatures
+    for (size_t mi = 0; mi < tmpl->methods.size(); mi++) {
+        auto& origMethod = tmpl->methods[mi];
+        auto monoMethod = std::make_shared<FunctionSymbol>(origMethod->getName());
+        monoMethod->isMethod = true;
+        monoMethod->isAbstract = true;
+        monoMethod->hasThisParam = origMethod->hasThisParam;  // Preserve this-param flag
+        monoMethod->returnType = substituteType(origMethod->returnType, subst);
+        monoMethod->vtableIndex = origMethod->vtableIndex;  // Preserve slot index
+        for (auto& origParam : origMethod->parameters) {
+            auto newParam = std::make_shared<VariableSymbol>(
+                origParam->getName(), substituteType(origParam->getType(), subst));
+            newParam->isReference = origParam->isReference;
+            monoMethod->parameters.push_back(newParam);
+        }
+        mono->methods.push_back(monoMethod);
+        mono->define(monoMethod);  // Add to scope for resolve()
+    }
+
+    registerType(monoName, mono);
+    interfaceMonoCache_[key] = mono;
+    return mono;
+}
+
+std::vector<std::shared_ptr<InterfaceSymbol>> SymbolTable::getAllInterfaceMonomorphizations() const {
+    std::vector<std::shared_ptr<InterfaceSymbol>> result;
+    result.reserve(interfaceMonoCache_.size());
+    for (auto& kv : interfaceMonoCache_) result.push_back(kv.second);
+    return result;
+}
+
 } // namespace mingus

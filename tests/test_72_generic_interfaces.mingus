@@ -1,0 +1,61 @@
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    interface Getter<T> {
+        func get() => T;
+    }
+
+    interface Setter<T> {
+        func set(T val) => void;
+    }
+
+    class IntStore : Getter<int>, Setter<int> {
+        int value;
+        constructor(int v) { this.value = v; }
+        func get() => int { return this.value; }
+        func set(int val) => void { this.value = val; }
+    }
+
+    class DoubleStore : Getter<double> {
+        double value;
+        constructor(double v) { this.value = v; }
+        func get() => double { return this.value; }
+    }
+
+    func printInt(Getter<int>* g) => void {
+        printf("  Getter<int>.get() = %d\n", g->get());
+    }
+
+    func printDouble(Getter<double>* g) => void {
+        printf("  Getter<double>.get() = %.2f\n", g->get());
+    }
+
+    func main() => void {
+        printf("=== Test 1: Generic interface ===\n");
+        var is = new IntStore(42);
+        Getter<int>* gi = is;
+        printf("  gi->get() = %d\n", gi->get());
+
+        printf("=== Test 2: Different instantiation ===\n");
+        var ds = new DoubleStore(3.14);
+        Getter<double>* gd = ds;
+        printf("  gd->get() = %.2f\n", gd->get());
+
+        printf("=== Test 3: Interface parameter ===\n");
+        printInt(is);
+        printDouble(ds);
+
+        printf("=== Test 4: Multiple generic interfaces ===\n");
+        Setter<int>* si = is;
+        si->set(100);
+        printf("  After set(100): is->get() = %d\n", is->get());
+
+        printf("=== Test 5: Second object dispatch ===\n");
+        var is2 = new IntStore(7);
+        printInt(is2);
+
+        delete is;
+        delete ds;
+        delete is2;
+    }
+}

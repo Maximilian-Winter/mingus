@@ -72,6 +72,8 @@ public:
 
     virtual std::any visitInheritance(MingusParser::InheritanceContext *context) = 0;
 
+    virtual std::any visitInheritanceItem(MingusParser::InheritanceItemContext *context) = 0;
+
     virtual std::any visitInterfaceDeclaration(MingusParser::InterfaceDeclarationContext *context) = 0;
 
     virtual std::any visitInterfaceBlock(MingusParser::InterfaceBlockContext *context) = 0;
@@ -107,6 +109,8 @@ public:
     virtual std::any visitReturnType(MingusParser::ReturnTypeContext *context) = 0;
 
     virtual std::any visitTypeParameterList(MingusParser::TypeParameterListContext *context) = 0;
+
+    virtual std::any visitTypeArgumentList(MingusParser::TypeArgumentListContext *context) = 0;
 
     virtual std::any visitDefinitionParameters(MingusParser::DefinitionParametersContext *context) = 0;
 

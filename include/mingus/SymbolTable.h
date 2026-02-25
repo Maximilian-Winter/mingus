@@ -102,6 +102,22 @@ public:
     TypeSymbolPtr substituteType(TypeSymbolPtr type,
         const std::unordered_map<std::string, TypeSymbolPtr>& subst) const;
 
+    // Struct/class generic monomorphization
+    std::shared_ptr<StructSymbol> getOrCreateStructMonomorphization(
+        StructSymbol* genericTemplate,
+        const std::vector<TypeSymbolPtr>& typeArgs);
+    std::shared_ptr<ClassSymbol> getOrCreateClassMonomorphization(
+        ClassSymbol* genericTemplate,
+        const std::vector<TypeSymbolPtr>& typeArgs);
+    std::vector<std::shared_ptr<StructSymbol>> getAllStructMonomorphizations() const;
+    std::vector<std::shared_ptr<ClassSymbol>> getAllClassMonomorphizations() const;
+
+    // Interface generic monomorphization
+    std::shared_ptr<InterfaceSymbol> getOrCreateInterfaceMonomorphization(
+        InterfaceSymbol* genericTemplate,
+        const std::vector<TypeSymbolPtr>& typeArgs);
+    std::vector<std::shared_ptr<InterfaceSymbol>> getAllInterfaceMonomorphizations() const;
+
 private:
     std::shared_ptr<GlobalScope> rootScope_;
     ScopePtr currentScope_;
@@ -132,6 +148,11 @@ private:
 
     // Monomorphization cache: key -> specialized FunctionSymbol
     std::unordered_map<std::string, std::shared_ptr<FunctionSymbol>> monomorphizationCache_;
+
+    // Struct/class/interface monomorphization caches
+    std::unordered_map<std::string, std::shared_ptr<StructSymbol>> structMonoCache_;
+    std::unordered_map<std::string, std::shared_ptr<ClassSymbol>> classMonoCache_;
+    std::unordered_map<std::string, std::shared_ptr<InterfaceSymbol>> interfaceMonoCache_;
 
     // Initialize primitive types
     void registerPrimitives();

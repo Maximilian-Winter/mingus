@@ -354,6 +354,8 @@ private:
     void declareFunctions(ProgramNode& program);
     void declareMonomorphizedFunctions();
     void emitMonomorphizedFunctions();
+    void declareMonomorphizedStructTypes();
+    void emitMonomorphizedClassBodies();
     void declareVtables(ProgramNode& program);
     void declareItables(ProgramNode& program);
 

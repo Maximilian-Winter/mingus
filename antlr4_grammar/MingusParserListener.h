@@ -145,6 +145,12 @@ public:
   virtual void enterReturnType(MingusParser::ReturnTypeContext *ctx) = 0;
   virtual void exitReturnType(MingusParser::ReturnTypeContext *ctx) = 0;
 
+  virtual void enterTypeParameterList(MingusParser::TypeParameterListContext *ctx) = 0;
+  virtual void exitTypeParameterList(MingusParser::TypeParameterListContext *ctx) = 0;
+
+  virtual void enterTypeArgumentList(MingusParser::TypeArgumentListContext *ctx) = 0;
+  virtual void exitTypeArgumentList(MingusParser::TypeArgumentListContext *ctx) = 0;
+
   virtual void enterDefinitionParameters(MingusParser::DefinitionParametersContext *ctx) = 0;
   virtual void exitDefinitionParameters(MingusParser::DefinitionParametersContext *ctx) = 0;
 

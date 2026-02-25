@@ -225,6 +225,13 @@ public:
     // ---- Interface implementation ----
     std::vector<std::shared_ptr<InterfaceSymbol>> implementedInterfaces;
 
+    // ---- Generics support ----
+    std::vector<std::string> typeParameterNames;       // Template: ["T"]
+    std::vector<TypeSymbolPtr> typeArguments;           // Instance: [int]
+    ClassSymbol* genericTemplate = nullptr;             // Instance → template backref
+    ClassDeclaration* genericASTNode = nullptr;         // Template → AST for re-emission
+    bool isGenericTemplate() const { return !typeParameterNames.empty() && typeArguments.empty(); }
+
     // Does this class need RAII cleanup?
     bool hasRAII() const { return destructor != nullptr; }
 
@@ -254,6 +261,13 @@ public:
     // Layout attributes (@packed, @align(N))
     bool isPacked = false;
     unsigned alignment = 0;  // 0 = default (natural alignment)
+
+    // ---- Generics support ----
+    std::vector<std::string> typeParameterNames;       // Template: ["T", "U"]
+    std::vector<TypeSymbolPtr> typeArguments;           // Instance: [int, double]
+    StructSymbol* genericTemplate = nullptr;            // Instance → template backref
+    StructDeclaration* genericASTNode = nullptr;        // Template → AST for re-emission
+    bool isGenericTemplate() const { return !typeParameterNames.empty() && typeArguments.empty(); }
 
     // Does any field require cleanup (closure-typed)?
     bool needsCleanup() const;
@@ -328,6 +342,13 @@ public:
 
     // Find a method by name
     std::shared_ptr<FunctionSymbol> findMethod(const std::string& name) const;
+
+    // ---- Generics support ----
+    std::vector<std::string> typeParameterNames;       // Template: ["T"]
+    std::vector<TypeSymbolPtr> typeArguments;           // Instance: [int]
+    InterfaceSymbol* genericTemplate = nullptr;         // Instance → template backref
+    InterfaceDeclaration* genericASTNode = nullptr;     // Template → AST for re-emission
+    bool isGenericTemplate() const { return !typeParameterNames.empty() && typeArguments.empty(); }
 };
 
 // ============================================================================

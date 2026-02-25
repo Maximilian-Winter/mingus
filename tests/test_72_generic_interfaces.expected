@@ -1,0 +1,11 @@
+=== Test 1: Generic interface ===
+  gi->get() = 42
+=== Test 2: Different instantiation ===
+  gd->get() = 3.14
+=== Test 3: Interface parameter ===
+  Getter<int>.get() = 42
+  Getter<double>.get() = 3.14
+=== Test 4: Multiple generic interfaces ===
+  After set(100): is->get() = 100
+=== Test 5: Second object dispatch ===
+  Getter<int>.get() = 7

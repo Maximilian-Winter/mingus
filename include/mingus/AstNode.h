@@ -124,6 +124,7 @@ class NamedTypeNode : public TypeNode {
 public:
     void accept(ASTVisitor& visitor) override;
     std::vector<std::string> qualifiedName;  // ["ModName", "TypeName"] or just ["TypeName"]
+    std::vector<std::shared_ptr<TypeNode>> typeArguments;  // Pair<int, double> → [int, double]
 };
 
 class PointerTypeNode : public TypeNode {

@@ -210,6 +210,10 @@ public:
     std::vector<std::shared_ptr<FunctionDeclaration>> methods;
     std::vector<std::shared_ptr<OperatorDeclaration>> operators;
 
+    // Generic type parameters (e.g., struct Pair<T, U>)
+    std::vector<std::string> typeParameters;
+    bool isGeneric() const { return !typeParameters.empty(); }
+
     // Layout attributes (@packed, @align(N))
     bool isPacked = false;
     unsigned alignment = 0;  // 0 = default (natural alignment)
@@ -300,6 +304,13 @@ public:
     bool isStatic = false;
     bool isAbstract = false;
     std::vector<std::string> baseClasses;  // unresolved names from parse
+    // Type arguments for each base class/interface (parallel to baseClasses)
+    // baseClassTypeArgs[i] = type args for baseClasses[i]; empty if non-generic
+    std::vector<std::vector<std::shared_ptr<TypeNode>>> baseClassTypeArgs;
+
+    // Generic type parameters (e.g., class Box<T>)
+    std::vector<std::string> typeParameters;
+    bool isGeneric() const { return !typeParameters.empty(); }
 
     std::vector<std::shared_ptr<VariableDeclaration>> fields;
     std::vector<std::shared_ptr<FunctionDeclaration>> methods;
@@ -324,6 +335,10 @@ public:
     std::string name;
     AccessModifier accessModifier = AccessModifier::Public;
     std::vector<std::shared_ptr<FunctionDeclaration>> methods;  // abstract only
+
+    // Generic type parameters (e.g., interface Getter<T>)
+    std::vector<std::string> typeParameters;
+    bool isGeneric() const { return !typeParameters.empty(); }
 
     // Resolved in Pass 1
     std::shared_ptr<InterfaceSymbol> resolvedInterface;

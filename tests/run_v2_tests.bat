@@ -104,6 +104,9 @@ call :run_test test_67_tagged_unions Test67_main "Tagged Unions"
 call :run_test test_68_layout_platform Test_main "Layout Annotations + Platform Types"
 call :run_test test_69_calling_conv_const Test_main "Calling Conv + Const"
 call :run_test test_70_generics Test_main "Generic Functions"
+call :run_test test_71_generic_structs Test_main "Generic Structs/Classes"
+call :run_test test_72_generic_interfaces Test_main "Generic Interfaces"
+call :run_test test_73_type_inference Test_main "Type Inference"
 
 echo.
 echo ============================================================
