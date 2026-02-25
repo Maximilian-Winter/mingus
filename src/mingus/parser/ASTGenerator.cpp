@@ -1035,6 +1035,13 @@ std::any ASTGenerator::visitFunctionDeclaration(
     fn->isStatic   = ctx->staticModifier()   != nullptr;
     fn->isAbstract = ctx->abstractModifier() != nullptr;
 
+    // Generic type parameters: func foo<T, U>(...)
+    if (ctx->typeParameterList()) {
+        for (auto* id : ctx->typeParameterList()->Identifier()) {
+            fn->typeParameters.push_back(id->getText());
+        }
+    }
+
     // Parameters
     if (ctx->definitionParameters() &&
         ctx->definitionParameters()->parameterList()) {
@@ -2186,7 +2193,33 @@ std::any ASTGenerator::visitPostfixExpression(
         visitPrimaryExpression(ctx->primaryExpression()));
 
     for (auto* opCtx : ctx->postfixOperation()) {
-        if (opCtx->callArguments()) {
+        if (opCtx->TurbofishOperator()) {
+            // Generic function call with turbofish: foo::<int, double>(args)
+            auto call = std::make_shared<CallExpression>();
+            call->debugInfo = makeDebugInfo(opCtx);
+            call->callee = result;
+
+            // Parse type arguments
+            for (auto* typeIdCtx : opCtx->typeIdentifier()) {
+                auto typeArg = anyToNode<TypeNode>(visitTypeIdentifier(typeIdCtx));
+                if (typeArg) call->typeArguments.push_back(typeArg);
+            }
+
+            // Parse call arguments
+            auto argsNode = std::make_shared<ArgumentsNode>();
+            argsNode->debugInfo = makeDebugInfo(opCtx);
+            if (opCtx->callArguments() && opCtx->callArguments()->argumentList()) {
+                for (auto* argExpr :
+                     opCtx->callArguments()->argumentList()->expression()) {
+                    auto arg = anyToNode<ExpressionBaseNode>(
+                        visitExpression(argExpr));
+                    if (arg) argsNode->expressions.push_back(arg);
+                }
+            }
+            call->arguments = argsNode;
+            result = call;
+
+        } else if (opCtx->callArguments()) {
             // Function call: callee(args)
             auto argsNode = std::make_shared<ArgumentsNode>();
             argsNode->debugInfo = makeDebugInfo(opCtx);

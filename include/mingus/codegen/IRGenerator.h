@@ -208,6 +208,12 @@ private:
     // Global variables (module-level, extern, static locals)
     std::unordered_map<Symbol*, llvm::GlobalVariable*> globalVariableCache_;
 
+    // Generics: type substitution map (active during monomorphized function emission)
+    std::unordered_map<std::string, TypeSymbolPtr> currentTypeSubstitution_;
+
+    // Apply type parameter substitution (returns input unchanged if no substitution active)
+    TypeSymbolPtr effectiveType(TypeSymbolPtr type);
+
     //==========================================================================
     // Loop context (for break/continue, supports labeled loops)
     //==========================================================================
@@ -346,6 +352,8 @@ private:
     void declareExternFunctions(ProgramNode& program);
     void declareExternGlobals(ProgramNode& program);
     void declareFunctions(ProgramNode& program);
+    void declareMonomorphizedFunctions();
+    void emitMonomorphizedFunctions();
     void declareVtables(ProgramNode& program);
     void declareItables(ProgramNode& program);
 

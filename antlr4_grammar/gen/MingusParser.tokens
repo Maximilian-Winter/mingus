@@ -122,6 +122,7 @@ CURLY_R=121
 TEXT=122
 BACKSLASH_PAREN=123
 ESCAPE_SEQUENCE=124
+TurbofishOperator=125
 'module'=1
 'class'=2
 'struct'=3

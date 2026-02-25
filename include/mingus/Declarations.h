@@ -74,6 +74,10 @@ public:
     std::shared_ptr<TypeNode> returnType;
     std::shared_ptr<BlockStatementNode> body;  // nullptr if abstract
 
+    // Generic type parameters (e.g., ["T", "U"] for func foo<T, U>)
+    std::vector<std::string> typeParameters;
+    bool isGeneric() const { return !typeParameters.empty(); }
+
     // Resolved in Pass 1
     std::shared_ptr<FunctionSymbol> resolvedFunction;
 };

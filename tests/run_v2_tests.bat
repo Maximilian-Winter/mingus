@@ -103,6 +103,7 @@ call :run_test test_66_define_constants Test66_main "Define Constants"
 call :run_test test_67_tagged_unions Test67_main "Tagged Unions"
 call :run_test test_68_layout_platform Test_main "Layout Annotations + Platform Types"
 call :run_test test_69_calling_conv_const Test_main "Calling Conv + Const"
+call :run_test test_70_generics Test_main "Generic Functions"
 
 echo.
 echo ============================================================

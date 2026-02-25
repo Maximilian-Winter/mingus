@@ -1,0 +1,52 @@
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    // Generic identity function
+    func identity<T>(T value) => T {
+        return value;
+    }
+
+    // Generic max function
+    func max<T>(T a, T b) => T {
+        if (a > b) { return a; }
+        return b;
+    }
+
+    // Generic add function
+    func add<T>(T a, T b) => T {
+        return a + b;
+    }
+
+    // Generic with multiple type parameters
+    func makePair<T, U>(T first, U second) => (T, U) {
+        return (first, second);
+    }
+
+    func main() => void {
+        printf("=== Test 1: Generic identity ===\n");
+        int a = identity::<int>(42);
+        printf("identity<int>(42) = %d\n", a);
+        double b = identity::<double>(3.14);
+        printf("identity<double>(3.14) = %.2f\n", b);
+
+        printf("=== Test 2: Generic max ===\n");
+        int m1 = max::<int>(10, 20);
+        printf("max<int>(10, 20) = %d\n", m1);
+        double m2 = max::<double>(2.71, 3.14);
+        printf("max<double>(2.71, 3.14) = %.2f\n", m2);
+
+        printf("=== Test 3: Generic add ===\n");
+        int s1 = add::<int>(15, 27);
+        printf("add<int>(15, 27) = %d\n", s1);
+        double s2 = add::<double>(1.5, 2.5);
+        printf("add<double>(1.5, 2.5) = %.1f\n", s2);
+
+        printf("=== Test 4: Multiple type params ===\n");
+        var (x, y) = makePair::<int, double>(42, 3.14);
+        printf("makePair<int,double> = (%d, %.2f)\n", x, y);
+
+        printf("=== Test 5: Reuse same instantiation ===\n");
+        int m3 = max::<int>(5, 3);
+        printf("max<int>(5, 3) = %d (cached)\n", m3);
+    }
+}

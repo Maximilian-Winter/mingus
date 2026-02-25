@@ -106,6 +106,8 @@ public:
 
     virtual std::any visitReturnType(MingusParser::ReturnTypeContext *context) = 0;
 
+    virtual std::any visitTypeParameterList(MingusParser::TypeParameterListContext *context) = 0;
+
     virtual std::any visitDefinitionParameters(MingusParser::DefinitionParametersContext *context) = 0;
 
     virtual std::any visitParameterList(MingusParser::ParameterListContext *context) = 0;

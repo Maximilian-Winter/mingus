@@ -619,6 +619,11 @@ void SemanticValidator::visit(TupleDestructuringDeclaration& node) {
 void SemanticValidator::visit(FunctionDeclaration& node) {
     if (!node.body) return;
 
+    // Skip generic template bodies — validated on monomorphized instances only
+    if (node.resolvedFunction && node.resolvedFunction->isGenericTemplate()) {
+        return;
+    }
+
     auto savedScope = currentScope_;
     auto savedReturnType = currentReturnType_;
     auto savedAssigned = definitelyAssigned_;

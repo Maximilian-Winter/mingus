@@ -239,4 +239,19 @@ public:
     std::string getInterningKey() const override;
 };
 
+// ============================================================================
+// TypeParameterSymbol — Generic type parameter (T, U, etc.)
+//
+// Placeholder type used during generic function template registration.
+// During monomorphization, substituted with the concrete type.
+// ============================================================================
+
+class TypeParameterSymbol : public TypeSymbol {
+public:
+    explicit TypeParameterSymbol(const std::string& name);
+
+    std::string getTypeDescription() const override;
+    std::string getInterningKey() const override;
+};
+
 } // namespace mingus

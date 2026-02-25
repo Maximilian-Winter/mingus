@@ -1,0 +1,13 @@
+=== Test 1: Generic identity ===
+identity<int>(42) = 42
+identity<double>(3.14) = 3.14
+=== Test 2: Generic max ===
+max<int>(10, 20) = 20
+max<double>(2.71, 3.14) = 3.14
+=== Test 3: Generic add ===
+add<int>(15, 27) = 42
+add<double>(1.5, 2.5) = 4.0
+=== Test 4: Multiple type params ===
+makePair<int,double> = (42, 3.14)
+=== Test 5: Reuse same instantiation ===
+max<int>(5, 3) = 5 (cached)

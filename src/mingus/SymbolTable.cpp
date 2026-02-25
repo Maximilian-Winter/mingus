@@ -284,6 +284,9 @@ bool SymbolTable::isCompatible(TypeSymbol* from, TypeSymbol* to) const {
     // 2. ErrorType → always compatible (prevents cascading errors)
     if (from->is<ErrorTypeSymbol>() || to->is<ErrorTypeSymbol>()) return true;
 
+    // 2b. TypeParameterSymbol → compatible with anything (deferred to monomorphization)
+    if (from->is<TypeParameterSymbol>() || to->is<TypeParameterSymbol>()) return true;
+
     // 3. Null → pointer or function type
     if (from->is<NullTypeSymbol>()) {
         return to->is<PointerTypeSymbol>() || to->is<FunctionTypeSymbol>();
@@ -440,6 +443,145 @@ bool SymbolTable::isCompatible(TypeSymbol* from, TypeSymbol* to) const {
 
 const std::unordered_map<std::string, TypeSymbolPtr>& SymbolTable::getAllTypes() const {
     return types_;
+}
+
+// ============================================================================
+// Generics — Monomorphization cache
+// ============================================================================
+
+static std::string buildMonoKey(FunctionSymbol* tmpl,
+                                 const std::vector<TypeSymbolPtr>& typeArgs) {
+    std::string key = tmpl->getQualifiedName();
+    for (auto& ta : typeArgs) {
+        key += "$" + ta->getInterningKey();
+    }
+    return key;
+}
+
+std::shared_ptr<FunctionSymbol> SymbolTable::getOrCreateMonomorphization(
+    FunctionSymbol* tmpl, const std::vector<TypeSymbolPtr>& typeArgs)
+{
+    auto key = buildMonoKey(tmpl, typeArgs);
+    auto it = monomorphizationCache_.find(key);
+    if (it != monomorphizationCache_.end()) return it->second;
+
+    // Build type substitution map
+    std::unordered_map<std::string, TypeSymbolPtr> subst;
+    for (size_t i = 0; i < tmpl->typeParameterNames.size(); i++) {
+        subst[tmpl->typeParameterNames[i]] = typeArgs[i];
+    }
+
+    // Create specialized FunctionSymbol
+    auto mono = std::make_shared<FunctionSymbol>(tmpl->getName());
+    mono->genericTemplate = tmpl;
+    mono->typeArguments = typeArgs;
+    mono->genericASTNode = tmpl->genericASTNode;
+
+    // Substitute parameter types
+    for (auto& origParam : tmpl->parameters) {
+        auto newParam = std::make_shared<VariableSymbol>(
+            origParam->getName(), substituteType(origParam->getType(), subst));
+        newParam->isReference = origParam->isReference;
+        mono->parameters.push_back(newParam);
+    }
+
+    // Substitute return type
+    mono->returnType = substituteType(tmpl->returnType, subst);
+
+    // Copy other properties
+    mono->isMethod = tmpl->isMethod;
+    mono->isStatic = tmpl->isStatic;
+    mono->hasThisParam = tmpl->hasThisParam;
+    mono->isVariadic = tmpl->isVariadic;
+
+    monomorphizationCache_[key] = mono;
+    return mono;
+}
+
+bool SymbolTable::hasMonomorphization(
+    FunctionSymbol* tmpl, const std::vector<TypeSymbolPtr>& typeArgs) const
+{
+    auto key = buildMonoKey(tmpl, typeArgs);
+    return monomorphizationCache_.find(key) != monomorphizationCache_.end();
+}
+
+std::vector<std::shared_ptr<FunctionSymbol>> SymbolTable::getAllMonomorphizations() const {
+    std::vector<std::shared_ptr<FunctionSymbol>> result;
+    result.reserve(monomorphizationCache_.size());
+    for (auto& kv : monomorphizationCache_) {
+        result.push_back(kv.second);
+    }
+    return result;
+}
+
+TypeSymbolPtr SymbolTable::substituteType(
+    TypeSymbolPtr type,
+    const std::unordered_map<std::string, TypeSymbolPtr>& subst) const
+{
+    if (!type) return nullptr;
+
+    // Direct substitution: T → concrete type
+    if (auto* tp = type->as<TypeParameterSymbol>()) {
+        auto it = subst.find(tp->getName());
+        if (it != subst.end()) return it->second;
+        return type;
+    }
+
+    // Recursive substitution for compound types
+    if (auto* ptr = type->as<PointerTypeSymbol>()) {
+        auto newBase = substituteType(ptr->baseType, subst);
+        if (newBase == ptr->baseType) return type;
+        if (ptr->isShared) {
+            // Need to cast away const for the non-const factory method
+            return const_cast<SymbolTable*>(this)->getSharedPointerType(newBase);
+        }
+        if (ptr->isConst) {
+            return const_cast<SymbolTable*>(this)->getConstPointerType(newBase);
+        }
+        return const_cast<SymbolTable*>(this)->getPointerType(newBase);
+    }
+
+    if (auto* arr = type->as<ArrayTypeSymbol>()) {
+        auto newElem = substituteType(arr->elementType, subst);
+        if (newElem == arr->elementType) return type;
+        return const_cast<SymbolTable*>(this)->getArrayType(newElem, arr->arraySize);
+    }
+
+    if (auto* tup = type->as<TupleTypeSymbol>()) {
+        std::vector<TypeSymbolPtr> newElems;
+        bool changed = false;
+        for (auto& e : tup->elementTypes) {
+            auto ne = substituteType(e, subst);
+            newElems.push_back(ne);
+            if (ne != e) changed = true;
+        }
+        if (!changed) return type;
+        return const_cast<SymbolTable*>(this)->getTupleType(std::move(newElems));
+    }
+
+    if (auto* fn = type->as<FunctionTypeSymbol>()) {
+        std::vector<FunctionTypeSymbol::ParameterInfo> newParams;
+        bool changed = false;
+        for (auto& p : fn->parameters) {
+            auto nt = substituteType(p.type, subst);
+            newParams.push_back({nt, p.name, p.isReference});
+            if (nt != p.type) changed = true;
+        }
+        auto newRet = substituteType(fn->returnType, subst);
+        if (newRet != fn->returnType) changed = true;
+        if (!changed) return type;
+        return const_cast<SymbolTable*>(this)->getFunctionType(
+            std::move(newParams), newRet, fn->isVariadic);
+    }
+
+    if (auto* ref = type->as<ReferenceTypeSymbol>()) {
+        auto newBase = substituteType(ref->baseType, subst);
+        if (newBase == ref->baseType) return type;
+        return const_cast<SymbolTable*>(this)->getReferenceType(newBase);
+    }
+
+    // Primitive, class, struct, enum, etc. — no substitution needed
+    return type;
 }
 
 } // namespace mingus

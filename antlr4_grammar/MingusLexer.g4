@@ -185,6 +185,7 @@ DotOperator:            '.';
 Ellipsis:               '...';
 DotDotOperator:         '..';
 QuestionMarkOperator:   '?';
+TurbofishOperator:      '::<';
 ColonOperator:          ':';
 SemicolonSeparator:     ';';
 CommaSeparator:         ',';

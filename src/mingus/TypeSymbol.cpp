@@ -308,4 +308,22 @@ std::string OpaqueTypeSymbol::getInterningKey() const {
     return "opaque:" + getName();
 }
 
+// ============================================================================
+// TypeParameterSymbol
+// ============================================================================
+
+TypeParameterSymbol::TypeParameterSymbol(const std::string& name)
+    : TypeSymbol(name, /*isPrimaryType=*/false)
+{
+    sizeInBytes = 0;  // placeholder — no known size until monomorphized
+}
+
+std::string TypeParameterSymbol::getTypeDescription() const {
+    return getName();
+}
+
+std::string TypeParameterSymbol::getInterningKey() const {
+    return "typeparam:" + getName();
+}
+
 } // namespace mingus

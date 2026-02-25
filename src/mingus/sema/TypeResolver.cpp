@@ -719,6 +719,10 @@ void TypeResolver::visit(IndexExpression& node) {
 
 void TypeResolver::visit(CallExpression& node) {
     if (node.callee) node.callee->accept(*this);
+    // Resolve turbofish type arguments: foo::<int, double>(args)
+    for (auto& typeArg : node.typeArguments) {
+        if (typeArg) resolveTypeNode(typeArg);
+    }
     if (node.arguments) {
         for (auto& arg : node.arguments->expressions) {
             if (arg) arg->accept(*this);

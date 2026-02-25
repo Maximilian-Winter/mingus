@@ -326,13 +326,18 @@ enumMember
 
 functionDeclaration
     : accessModifier? ( staticModifier | abstractModifier )?
-      DeclareFunction Identifier definitionParameters ArrowOperator returnType
+      DeclareFunction Identifier typeParameterList?
+      definitionParameters ArrowOperator returnType
       ( block | ArrowOperator expression SemicolonSeparator | SemicolonSeparator )
     ;
 
 returnType
     : typeIdentifier
     | tupleType
+    ;
+
+typeParameterList
+    : SmallerOperator Identifier (CommaSeparator Identifier)* GreaterOperator
     ;
 
 definitionParameters
@@ -757,7 +762,8 @@ arrayLiteral
     ;
 
 postfixOperation
-    : callArguments
+    : TurbofishOperator typeIdentifier (CommaSeparator typeIdentifier)* GreaterOperator callArguments
+    | callArguments
     | elementAccess
     | memberAccess
     | incrementDecrementOperator

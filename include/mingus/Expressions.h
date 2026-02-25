@@ -214,6 +214,9 @@ public:
     std::shared_ptr<ExpressionBaseNode> callee;
     std::shared_ptr<ArgumentsNode> arguments;
 
+    // Turbofish type arguments: foo::<int, double>(args)
+    std::vector<std::shared_ptr<TypeNode>> typeArguments;
+
     // Sema-resolved: direct function call target (null for indirect/closure calls)
     std::shared_ptr<FunctionSymbol> resolvedCallee;
 };

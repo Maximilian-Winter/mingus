@@ -122,6 +122,14 @@ public:
     // Virtual dispatch index (-1 = not virtual)
     int vtableIndex = -1;
 
+    // ---- Generics support ----
+    std::vector<std::string> typeParameterNames;       // Template: ["T", "U"]
+    std::vector<TypeSymbolPtr> typeArguments;           // Instance: [int, double]
+    FunctionSymbol* genericTemplate = nullptr;          // Instance → template backref
+    FunctionDeclaration* genericASTNode = nullptr;      // Template → AST for re-emission
+
+    bool isGenericTemplate() const { return !typeParameterNames.empty(); }
+
     // Build the corresponding FunctionTypeSymbol for this function
     // (used when storing a function reference in a variable)
     std::shared_ptr<FunctionTypeSymbol> buildFunctionType() const;

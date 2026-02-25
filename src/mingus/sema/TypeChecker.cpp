@@ -290,6 +290,10 @@ void TypeChecker::visit(TupleDestructuringDeclaration& node) {
 // ============================================================================
 
 void TypeChecker::visit(FunctionDeclaration& node) {
+    // Skip generic template bodies — checked only on monomorphized instances
+    if (node.resolvedFunction && node.resolvedFunction->isGenericTemplate()) {
+        return;
+    }
     if (node.body && node.resolvedFunction) {
         auto savedClass = currentClass_;
         // If this is a method, currentClass_ is already set
@@ -1191,6 +1195,44 @@ void TypeChecker::visit(CallExpression& node) {
             if (!funcSym) {
                 funcSym = std::dynamic_pointer_cast<FunctionSymbol>(node.callee->resolvedSymbol);
                 funcTypeHolder = fSym->buildFunctionType();
+                if (funcTypeHolder) funcType = funcTypeHolder.get();
+            }
+
+            // Generic function monomorphization
+            if (fSym->isGenericTemplate()) {
+                if (node.typeArguments.empty()) {
+                    errors_.error("generic function '" + fSym->getName()
+                                   + "' requires explicit type arguments (use ::<Type>)",
+                                   node.debugInfo);
+                    node.resolvedType = symbolTable_.getErrorType();
+                    return;
+                }
+                if (node.typeArguments.size() != fSym->typeParameterNames.size()) {
+                    errors_.error("generic function '" + fSym->getName()
+                                   + "' expects " + std::to_string(fSym->typeParameterNames.size())
+                                   + " type argument(s), got "
+                                   + std::to_string(node.typeArguments.size()),
+                                   node.debugInfo);
+                    node.resolvedType = symbolTable_.getErrorType();
+                    return;
+                }
+
+                // Collect resolved type arguments
+                std::vector<TypeSymbolPtr> typeArgs;
+                for (auto& ta : node.typeArguments) {
+                    if (!ta || !ta->resolvedType) {
+                        node.resolvedType = symbolTable_.getErrorType();
+                        return;
+                    }
+                    typeArgs.push_back(ta->resolvedType);
+                }
+
+                // Get or create monomorphized function
+                auto monoFunc = symbolTable_.getOrCreateMonomorphization(fSym, typeArgs);
+                node.resolvedCallee = monoFunc;
+                funcSym = monoFunc;
+                fSym = monoFunc.get();
+                funcTypeHolder = monoFunc->buildFunctionType();
                 if (funcTypeHolder) funcType = funcTypeHolder.get();
             }
         }

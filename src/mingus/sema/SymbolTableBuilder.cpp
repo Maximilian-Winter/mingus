@@ -304,6 +304,15 @@ void SymbolTableBuilder::visit(FunctionDeclaration& node) {
     funcSym->isMethod = inTypeScope_;
     funcSym->hasThisParam = inTypeScope_ && !node.isStatic;
     funcSym->accessLevel = node.accessModifier;
+
+    // Generic type parameters
+    for (auto& tp : node.typeParameters) {
+        funcSym->typeParameterNames.push_back(tp);
+    }
+    if (funcSym->isGenericTemplate()) {
+        funcSym->genericASTNode = &node;
+    }
+
     symbolTable_.defineSymbol(funcSym);
     node.resolvedFunction = funcSym;
 
@@ -311,6 +320,14 @@ void SymbolTableBuilder::visit(FunctionDeclaration& node) {
         // FunctionSymbol IS the scope — push it
         symbolTable_.pushScope(funcSym);
         node.body->astScopeNode = funcSym;  // body shares function scope
+
+        // Register type parameter symbols in function scope
+        if (funcSym->isGenericTemplate()) {
+            for (auto& tpName : funcSym->typeParameterNames) {
+                auto tpSym = std::make_shared<TypeParameterSymbol>(tpName);
+                symbolTable_.defineSymbol(tpSym);
+            }
+        }
 
         createParameterSymbols(node.parameters, funcSym);
         visitStatements(node.body->statements);

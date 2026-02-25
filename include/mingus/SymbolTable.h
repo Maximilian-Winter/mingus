@@ -90,6 +90,18 @@ public:
     // ---- Raw access to type registry (for diagnostics/tests) ----
     const std::unordered_map<std::string, TypeSymbolPtr>& getAllTypes() const;
 
+    // ---- Generics monomorphization ----
+    std::shared_ptr<FunctionSymbol> getOrCreateMonomorphization(
+        FunctionSymbol* genericTemplate,
+        const std::vector<TypeSymbolPtr>& typeArgs);
+    bool hasMonomorphization(FunctionSymbol* genericTemplate,
+                              const std::vector<TypeSymbolPtr>& typeArgs) const;
+    std::vector<std::shared_ptr<FunctionSymbol>> getAllMonomorphizations() const;
+
+    // Type substitution for monomorphization (replaces TypeParameterSymbol)
+    TypeSymbolPtr substituteType(TypeSymbolPtr type,
+        const std::unordered_map<std::string, TypeSymbolPtr>& subst) const;
+
 private:
     std::shared_ptr<GlobalScope> rootScope_;
     ScopePtr currentScope_;
@@ -117,6 +129,9 @@ private:
 
     // Scope stack for push/pop during construction
     std::vector<ScopePtr> scopeStack_;
+
+    // Monomorphization cache: key -> specialized FunctionSymbol
+    std::unordered_map<std::string, std::shared_ptr<FunctionSymbol>> monomorphizationCache_;
 
     // Initialize primitive types
     void registerPrimitives();

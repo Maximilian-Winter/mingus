@@ -162,11 +162,15 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     declareExternFunctions(program);
     declareExternGlobals(program);
     declareFunctions(program);
+    declareMonomorphizedFunctions();  // Generic instantiations
     declareVtables(program);
     declareItables(program);
 
     // Phase B: Function bodies (visitor-based)
     program.accept(*this);
+
+    // Phase C: Monomorphized generic function bodies
+    emitMonomorphizedFunctions();
 
     // Finalize debug info
     if (debugMode_ && diBuilder_) {
@@ -279,6 +283,16 @@ llvm::StructType* IRGenerator::getFatPtrType() {
 
 llvm::Type* IRGenerator::mapType(TypeSymbol* type) {
     if (!type) return llvm::Type::getVoidTy(context_);
+
+    // Generic type parameter substitution
+    if (auto* tp = type->as<TypeParameterSymbol>()) {
+        auto it = currentTypeSubstitution_.find(tp->getName());
+        if (it != currentTypeSubstitution_.end()) {
+            return mapType(it->second.get());
+        }
+        // Unsubstituted type param — should not happen in codegen
+        return llvm::Type::getInt32Ty(context_);  // fallback
+    }
 
     // Primitives
     if (auto* prim = type->as<PrimitiveTypeSymbol>()) {
@@ -529,6 +543,15 @@ std::string IRGenerator::mangleName(Symbol* sym) {
 
     // Method or module-level function
     if (auto* func = sym->as<FunctionSymbol>()) {
+        // Monomorphized generic function: Template_max$G_i for max<int>
+        if (func->genericTemplate && !func->typeArguments.empty()) {
+            std::string name = func->genericTemplate->getQualifiedName() + "$G";
+            for (auto& ta : func->typeArguments) {
+                name += "_" + mangleTypeTag(ta.get());
+            }
+            return name;
+        }
+
         std::string name = func->getQualifiedName();
         // Overloaded functions: append parameter type signatures for uniqueness
         if (func->hasOverloads) {
@@ -543,6 +566,119 @@ std::string IRGenerator::mangleName(Symbol* sym) {
     }
 
     return sym->getName();
+}
+
+//================================================================================
+// Generics: Type parameter substitution
+//================================================================================
+
+TypeSymbolPtr IRGenerator::effectiveType(TypeSymbolPtr type) {
+    if (!type || currentTypeSubstitution_.empty()) return type;
+
+    // Direct substitution: T → concrete type
+    if (auto* tp = type->as<TypeParameterSymbol>()) {
+        auto it = currentTypeSubstitution_.find(tp->getName());
+        if (it != currentTypeSubstitution_.end()) return it->second;
+    }
+
+    // Compound types: pointer<T>, array<T>, etc.
+    if (auto* ptr = type->as<PointerTypeSymbol>()) {
+        auto newBase = effectiveType(ptr->baseType);
+        if (newBase != ptr->baseType) {
+            if (ptr->isConst) return symbolTable_.getConstPointerType(newBase);
+            if (ptr->isShared) return symbolTable_.getSharedPointerType(newBase);
+            return symbolTable_.getPointerType(newBase);
+        }
+    }
+
+    if (auto* arr = type->as<ArrayTypeSymbol>()) {
+        auto newElem = effectiveType(arr->elementType);
+        if (newElem != arr->elementType) {
+            return symbolTable_.getArrayType(newElem, arr->arraySize);
+        }
+    }
+
+    return type;
+}
+
+//================================================================================
+// Generics: Declare and emit monomorphized functions
+//================================================================================
+
+void IRGenerator::declareMonomorphizedFunctions() {
+    for (auto& mono : symbolTable_.getAllMonomorphizations()) {
+        declareFunctionSymbol(mono.get());
+    }
+}
+
+void IRGenerator::emitMonomorphizedFunctions() {
+    for (auto& mono : symbolTable_.getAllMonomorphizations()) {
+        auto* tmpl = mono->genericTemplate;
+        if (!tmpl || !tmpl->genericASTNode || !tmpl->genericASTNode->body) continue;
+
+        auto it = functionCache_.find(mono.get());
+        if (it == functionCache_.end()) continue;
+        llvm::Function* fn = it->second;
+
+        // Set up type substitution map
+        currentTypeSubstitution_.clear();
+        for (size_t i = 0; i < tmpl->typeParameterNames.size(); i++) {
+            currentTypeSubstitution_[tmpl->typeParameterNames[i]] = mono->typeArguments[i];
+        }
+
+        // Entry block
+        auto* entryBB = llvm::BasicBlock::Create(context_, "entry", fn);
+        builder_.SetInsertPoint(entryBB);
+
+        auto* prevFunction = currentFunction_;
+        auto* prevThisPtr = currentThisPtr_;
+        currentFunction_ = fn;
+        currentThisPtr_ = nullptr;
+
+        auto savedNamedValues = namedValues_;
+        namedValues_.clear();
+
+        auto* astNode = tmpl->genericASTNode;
+
+        // Map parameters using monomorphized types
+        unsigned argIdx = 0;
+        for (size_t i = 0; i < astNode->parameters.size(); i++) {
+            auto& paramNode = astNode->parameters[i];
+            auto* paramSym = paramNode->resolvedSymbol.get();
+            llvm::Value* argVal = fn->getArg(argIdx++);
+
+            // Use substituted type for alloca
+            auto paramType = effectiveType(paramSym ? paramSym->getType() : nullptr);
+            llvm::Type* paramTy = paramType ? mapType(paramType.get()) : argVal->getType();
+
+            std::string pName = paramSym ? paramSym->getName() : paramNode->name;
+            auto* alloca = createEntryBlockAlloca(fn, paramTy, pName);
+            builder_.CreateStore(argVal, alloca);
+            if (paramSym) namedValues_[paramSym] = alloca;
+        }
+
+        pushRAIIScope();
+
+        for (auto& stmt : astNode->body->statements) {
+            stmt->accept(*this);
+            if (builder_.GetInsertBlock()->getTerminator()) break;
+        }
+
+        if (!builder_.GetInsertBlock()->getTerminator()) {
+            emitScopeDestructors();
+            if (fn->getReturnType()->isVoidTy()) {
+                builder_.CreateRetVoid();
+            } else {
+                builder_.CreateRet(llvm::UndefValue::get(fn->getReturnType()));
+            }
+        }
+
+        popRAIIScope();
+        currentTypeSubstitution_.clear();
+        namedValues_ = savedNamedValues;
+        currentFunction_ = prevFunction;
+        currentThisPtr_ = prevThisPtr;
+    }
 }
 
 //================================================================================
@@ -894,9 +1030,10 @@ void IRGenerator::declareFunctions(ProgramNode& program) {
         if (!mod->resolvedModule) continue;
         auto allSyms = mod->resolvedModule->getAllSymbols();
         for (auto& sym : allSyms) {
-            // Module-level functions
+            // Module-level functions (skip generic templates — they're instantiated)
             if (auto* funcSym = sym->as<FunctionSymbol>()) {
-                if (!funcSym->isExtern && !funcSym->isAbstract) {
+                if (!funcSym->isExtern && !funcSym->isAbstract
+                    && !funcSym->isGenericTemplate()) {
                     declareFunctionSymbol(funcSym);
                 }
             }
@@ -3613,9 +3750,9 @@ void IRGenerator::visit(BinaryExpression& node) {
     }
 
     TypeSymbol* leftType = node.left->resolvedType ?
-        node.left->resolvedType->as<TypeSymbol>() : nullptr;
+        effectiveType(node.left->resolvedType)->as<TypeSymbol>() : nullptr;
     TypeSymbol* rightType = node.right->resolvedType ?
-        node.right->resolvedType->as<TypeSymbol>() : nullptr;
+        effectiveType(node.right->resolvedType)->as<TypeSymbol>() : nullptr;
 
     // String object operations
     {
@@ -3861,7 +3998,7 @@ void IRGenerator::visit(ArrayLiteralExpression& node) {
 
 void IRGenerator::visit(UnaryExpression& node) {
     TypeSymbol* operandType = node.operand->resolvedType ?
-        node.operand->resolvedType->as<TypeSymbol>() : nullptr;
+        effectiveType(node.operand->resolvedType)->as<TypeSymbol>() : nullptr;
 
     if (node.op == UnaryOp::AddressOf) {
         lastValue_ = emitLValue(*node.operand);
