@@ -69,6 +69,7 @@ public:
     // Intern compound types (get-or-create)
     std::shared_ptr<PointerTypeSymbol> getPointerType(TypeSymbolPtr baseType);
     std::shared_ptr<PointerTypeSymbol> getSharedPointerType(TypeSymbolPtr baseType);
+    std::shared_ptr<PointerTypeSymbol> getConstPointerType(TypeSymbolPtr baseType);
     std::shared_ptr<ArrayTypeSymbol> getArrayType(TypeSymbolPtr elementType, int size);
     std::shared_ptr<TupleTypeSymbol> getTupleType(std::vector<TypeSymbolPtr> elementTypes);
     std::shared_ptr<FunctionTypeSymbol> getFunctionType(

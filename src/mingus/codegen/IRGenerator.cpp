@@ -818,6 +818,18 @@ void IRGenerator::declareExternFunctions(ProgramNode& program) {
             if (!fn) {
                 fn = llvm::Function::Create(fnTy,
                     llvm::Function::ExternalLinkage, funcSym->getName(), module_.get());
+
+                // Set calling convention from attribute
+                switch (funcSym->callingConvention) {
+                    case CallingConvention::StdCall:
+                        fn->setCallingConv(llvm::CallingConv::X86_StdCall);
+                        break;
+                    case CallingConvention::FastCall:
+                        fn->setCallingConv(llvm::CallingConv::X86_FastCall);
+                        break;
+                    default:  // CDecl — LLVM default
+                        break;
+                }
             }
             functionCache_[funcSym] = fn;
         }
@@ -1164,7 +1176,11 @@ llvm::Value* IRGenerator::emitLValue(ExpressionBaseNode& expr) {
                 }
                 llvm::Type* elemTy = baseType ? mapType(baseType)
                                               : llvm::Type::getInt8Ty(context_);
-                return builder_.CreateGEP(elemTy, arrPtr, indexVal, "elem_ptr");
+                // Pointer variables: emitLValue returns the alloca storing the ptr.
+                // Must load the pointer value before GEP into pointed-to memory.
+                auto* ptrVal = builder_.CreateLoad(
+                    llvm::PointerType::getUnqual(context_), arrPtr, "ptr.load");
+                return builder_.CreateGEP(elemTy, ptrVal, indexVal, "elem_ptr");
             }
         }
     }
@@ -4749,7 +4765,9 @@ void IRGenerator::visit(CallExpression& node) {
                     if (ty->isIntegerTy() && ty->getIntegerBitWidth() < 32) {
                         TypeSymbol* argType = arg->resolvedType ?
                             arg->resolvedType->as<TypeSymbol>() : nullptr;
-                        lastValue_ = isUnsignedKind(argType)
+                        // Booleans (i1) and unsigned types use zext; signed types use sext
+                        bool useZext = isUnsignedKind(argType) || isBoolKind(argType);
+                        lastValue_ = useZext
                             ? builder_.CreateZExt(lastValue_,
                                 llvm::Type::getInt32Ty(context_), "vararg.promote")
                             : builder_.CreateSExt(lastValue_,

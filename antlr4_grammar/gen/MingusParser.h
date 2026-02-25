@@ -1,5 +1,5 @@
 
-// Generated from antlr4_grammar/MingusParser.g4 by ANTLR 4.13.2
+// Generated from MingusParser.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -459,6 +459,8 @@ public:
     antlr4::tree::TerminalNode *ArrowOperator();
     ReturnTypeContext *returnType();
     antlr4::tree::TerminalNode *SemicolonSeparator();
+    std::vector<AttributeContext *> attribute();
+    AttributeContext* attribute(size_t i);
     ParameterListContext *parameterList();
     antlr4::tree::TerminalNode *CommaSeparator();
     antlr4::tree::TerminalNode *Ellipsis();
@@ -2596,11 +2598,12 @@ public:
   public:
     TypeIdentifierContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *SharedKeyword();
-    QualifiedNameContext *qualifiedName();
+    antlr4::tree::TerminalNode *DeclareConst();
+    PrimitiveTypeContext *primitiveType();
     std::vector<TypeModifierContext *> typeModifier();
     TypeModifierContext* typeModifier(size_t i);
-    PrimitiveTypeContext *primitiveType();
+    QualifiedNameContext *qualifiedName();
+    antlr4::tree::TerminalNode *SharedKeyword();
     TupleTypeContext *tupleType();
     FunctionTypeContext *functionType();
 

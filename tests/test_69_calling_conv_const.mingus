@@ -1,0 +1,49 @@
+module Test {
+    extern func printf(string fmt, ...) => int;
+    extern func strlen(string s) => size_t;
+    extern func memcmp(const byte* a, const byte* b, size_t n) => int;
+
+    // @stdcall attribute accepted (no-op on x86_64 but validates syntax)
+    extern {
+        @stdcall
+        func stdcall_printf(string fmt, ...) => int;
+    }
+
+    func readConstPtr(const int* p) => int {
+        return p[0];
+    }
+
+    func testCallingConvSyntax() => void {
+        printf("=== Test 1: Calling convention syntax ===\n");
+        printf("calling convention attributes: OK\n");
+    }
+
+    func testConstPointer() => void {
+        printf("=== Test 2: Const pointer types ===\n");
+
+        int x = 42;
+        const int* p = &x;
+        int val = readConstPtr(p);
+        printf("const int* read: %d\n", val);
+
+        // Non-const to const pointer (widening, should work)
+        int* mp = &x;
+        const int* cp = mp;
+        printf("non-const to const: %d\n", cp[0]);
+    }
+
+    func testConstExternFunc() => void {
+        printf("=== Test 3: Extern with const params ===\n");
+        size_t len = strlen("hello world");
+        printf("strlen = %llu\n", len);
+
+        int result = memcmp("abc", "abd", 3);
+        printf("memcmp result < 0: %d\n", result < 0);
+    }
+
+    func main() => void {
+        testCallingConvSyntax();
+        testConstPointer();
+        testConstExternFunc();
+    }
+}

@@ -392,6 +392,15 @@ void SymbolTableBuilder::visit(ExternFunctionDeclaration& node) {
     auto funcSym = std::make_shared<FunctionSymbol>(node.name);
     funcSym->isExtern = true;
     funcSym->isVariadic = node.isVariadic;
+
+    // Map calling convention attribute
+    if (node.callingConvention == "stdcall") {
+        funcSym->callingConvention = CallingConvention::StdCall;
+    } else if (node.callingConvention == "fastcall") {
+        funcSym->callingConvention = CallingConvention::FastCall;
+    }
+    // CDecl is default
+
     symbolTable_.defineSymbol(funcSym);
     node.resolvedFunction = funcSym;
 

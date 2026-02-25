@@ -82,10 +82,12 @@ public:
 
 class PointerTypeSymbol : public TypeSymbol {
 public:
-    explicit PointerTypeSymbol(TypeSymbolPtr baseType, bool isShared = false);
+    explicit PointerTypeSymbol(TypeSymbolPtr baseType, bool isShared = false,
+                                bool isConst = false);
 
     TypeSymbolPtr baseType;
     bool isShared = false;  // true for shared T* (RC-managed)
+    bool isConst = false;   // true for const T* (pointee is immutable)
 
     std::string getTypeDescription() const override;
     std::string getInterningKey() const override;

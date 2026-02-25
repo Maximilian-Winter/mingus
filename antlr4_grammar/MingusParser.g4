@@ -134,7 +134,7 @@ externMember
     ;
 
 externFunctionDeclaration
-    : DeclareFunction Identifier
+    : attribute* DeclareFunction Identifier
       OpeningRoundBracket parameterList? ( CommaSeparator Ellipsis )? ClosingRoundBracket
       ArrowOperator returnType SemicolonSeparator
     ;
@@ -808,7 +808,9 @@ tupleExpression
 // ============================================================================
 
 typeIdentifier
-    : SharedKeyword qualifiedName typeModifier*
+    : DeclareConst primitiveType typeModifier*
+    | DeclareConst qualifiedName typeModifier*
+    | SharedKeyword qualifiedName typeModifier*
     | primitiveType typeModifier*
     | qualifiedName typeModifier*
     | tupleType typeModifier*

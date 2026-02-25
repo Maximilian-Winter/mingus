@@ -133,6 +133,7 @@ public:
     bool isReference = false;         // true for T&
     bool isRvalueReference = false;   // true for T&&
     bool isShared = false;            // true for shared T*
+    bool isConst = false;             // true for const T*
 };
 
 class ArrayTypeNode : public TypeNode {

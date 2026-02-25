@@ -127,6 +127,9 @@ public:
     std::shared_ptr<TypeNode> returnType;
     bool isVariadic = false;
 
+    // Calling convention attribute (@cdecl, @stdcall, @fastcall)
+    std::string callingConvention;  // empty = default (cdecl)
+
     // Resolved in Pass 1
     std::shared_ptr<FunctionSymbol> resolvedFunction;
 };

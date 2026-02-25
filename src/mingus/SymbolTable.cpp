@@ -175,6 +175,19 @@ std::shared_ptr<PointerTypeSymbol> SymbolTable::getSharedPointerType(TypeSymbolP
     return ptrType;
 }
 
+std::shared_ptr<PointerTypeSymbol> SymbolTable::getConstPointerType(TypeSymbolPtr baseType) {
+    auto key = "const " + baseType->getInterningKey() + "*";
+    auto it = types_.find(key);
+    if (it != types_.end()) {
+        return std::dynamic_pointer_cast<PointerTypeSymbol>(it->second);
+    }
+    auto ptrType = std::make_shared<PointerTypeSymbol>(std::move(baseType),
+                                                        /*isShared=*/false,
+                                                        /*isConst=*/true);
+    types_[key] = ptrType;
+    return ptrType;
+}
+
 std::shared_ptr<ArrayTypeSymbol> SymbolTable::getArrayType(
     TypeSymbolPtr elementType, int size)
 {
@@ -316,6 +329,28 @@ bool SymbolTable::isCompatible(TypeSymbol* from, TypeSymbol* to) const {
             if (to->is<StringObjectSymbol>()) return true;
     }
 
+    // 4c. string ↔ byte* / const byte* (string is effectively char*/byte* at LLVM level)
+    if (auto* fromPrim3 = from->as<PrimitiveTypeSymbol>()) {
+        if (fromPrim3->primitiveKind == PrimitiveKind::String) {
+            if (auto* toPtr = to->as<PointerTypeSymbol>()) {
+                if (auto* toBase = toPtr->baseType->as<PrimitiveTypeSymbol>()) {
+                    if (toBase->primitiveKind == PrimitiveKind::Byte) return true;
+                }
+            }
+        }
+    }
+    if (auto* toPrim3 = to->as<PrimitiveTypeSymbol>()) {
+        if (toPrim3->primitiveKind == PrimitiveKind::String) {
+            if (auto* fromPtr3 = from->as<PointerTypeSymbol>()) {
+                if (!fromPtr3->isConst) {  // byte* → string OK, const byte* → string rejected
+                    if (auto* fromBase = fromPtr3->baseType->as<PrimitiveTypeSymbol>()) {
+                        if (fromBase->primitiveKind == PrimitiveKind::Byte) return true;
+                    }
+                }
+            }
+        }
+    }
+
     // 5. Enum ↔ underlying (bidirectional, with widening)
     if (auto* fromEnum = from->as<EnumSymbol>()) {
         auto* underlying = fromEnum->underlyingType
@@ -328,6 +363,20 @@ bool SymbolTable::isCompatible(TypeSymbol* from, TypeSymbol* to) const {
             ? toEnum->underlyingType.get() : getIntType().get();
         if (underlying == from) return true;
         if (isCompatible(from, underlying)) return true;
+    }
+
+    // 5b. Const pointer safety
+    //     const T* → T* is REJECTED (cannot strip const)
+    //     T* → const T* is OK (widening — check base compatibility)
+    if (auto* fromPtr = from->as<PointerTypeSymbol>()) {
+        if (auto* toPtr = to->as<PointerTypeSymbol>()) {
+            if (fromPtr->isConst && !toPtr->isConst) {
+                return false;  // Cannot strip const
+            }
+            if (!fromPtr->isConst && toPtr->isConst) {
+                return isCompatible(fromPtr->baseType.get(), toPtr->baseType.get());
+            }
+        }
     }
 
     // 6. Interface upcast: Dog* → Drawable* if Dog implements Drawable

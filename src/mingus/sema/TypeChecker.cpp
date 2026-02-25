@@ -1025,6 +1025,18 @@ void TypeChecker::visit(AssignmentExpression& node) {
         }
     }
 
+    // Validate const pointer (cannot write through const T*)
+    if (auto* memAccess = node.target->as<MemberAccessExpression>()) {
+        if (memAccess->object && memAccess->object->resolvedType) {
+            if (auto* ptrType = memAccess->object->resolvedType->as<PointerTypeSymbol>()) {
+                if (ptrType->isConst) {
+                    errors_.error("cannot modify object through const pointer",
+                        node.debugInfo);
+                }
+            }
+        }
+    }
+
     // Check compatibility
     if (node.op == AssignOp::Assign) {
         checkAssignability(valueType.get(), targetType.get(),

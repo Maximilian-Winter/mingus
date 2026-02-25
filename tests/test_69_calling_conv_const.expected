@@ -1,0 +1,8 @@
+=== Test 1: Calling convention syntax ===
+calling convention attributes: OK
+=== Test 2: Const pointer types ===
+const int* read: 42
+non-const to const: 42
+=== Test 3: Extern with const params ===
+strlen = 11
+memcmp result < 0: 1

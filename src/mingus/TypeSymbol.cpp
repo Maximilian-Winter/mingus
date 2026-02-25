@@ -81,21 +81,32 @@ bool PrimitiveTypeSymbol::isUnsigned() const {
 // PointerTypeSymbol
 // ============================================================================
 
-PointerTypeSymbol::PointerTypeSymbol(TypeSymbolPtr baseType, bool isShared)
-    : TypeSymbol((isShared ? "shared " : "") + baseType->getName() + "*",
+PointerTypeSymbol::PointerTypeSymbol(TypeSymbolPtr baseType, bool isShared, bool isConst)
+    : TypeSymbol(std::string(isConst ? "const " : "") +
+                 std::string(isShared ? "shared " : "") +
+                 baseType->getName() + "*",
                  /*isPrimaryType=*/false)
     , baseType(std::move(baseType))
     , isShared(isShared)
+    , isConst(isConst)
 {
     sizeInBytes = 8;  // ptr-sized (64-bit)
 }
 
 std::string PointerTypeSymbol::getTypeDescription() const {
-    return (isShared ? "shared " : "") + baseType->getTypeDescription() + "*";
+    std::string desc;
+    if (isConst) desc += "const ";
+    if (isShared) desc += "shared ";
+    desc += baseType->getTypeDescription() + "*";
+    return desc;
 }
 
 std::string PointerTypeSymbol::getInterningKey() const {
-    return (isShared ? "shared " : "") + baseType->getInterningKey() + "*";
+    std::string key;
+    if (isConst) key += "const ";
+    if (isShared) key += "shared ";
+    key += baseType->getInterningKey() + "*";
+    return key;
 }
 
 // ============================================================================

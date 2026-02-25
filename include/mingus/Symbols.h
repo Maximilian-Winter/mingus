@@ -87,6 +87,13 @@ private:
 // They are also stored in the Parameters vector for ordered access.
 // ============================================================================
 
+// Calling convention for extern functions
+enum class CallingConvention {
+    CDecl,      // Default C calling convention
+    StdCall,    // Win32 (x86 __stdcall)
+    FastCall    // x86 __fastcall
+};
+
 class FunctionSymbol : public SymbolWithScope {
 public:
     explicit FunctionSymbol(const std::string& name);
@@ -105,6 +112,9 @@ public:
     bool isVirtual = false;
     bool isVariadic = false;
     bool hasThisParam = false;
+
+    // Calling convention (only meaningful for extern functions)
+    CallingConvention callingConvention = CallingConvention::CDecl;
 
     // Overload support: true if other functions share this name in the same scope
     bool hasOverloads = false;

@@ -1,5 +1,5 @@
 
-// Generated from antlr4_grammar/MingusLexer.g4 by ANTLR 4.13.2
+// Generated from MingusLexer.g4 by ANTLR 4.13.2
 
 
 #include "MingusLexer.h"

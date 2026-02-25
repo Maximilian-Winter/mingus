@@ -531,6 +531,7 @@ std::any ASTGenerator::visitTypeIdentifier(
 {
     std::shared_ptr<TypeNode> baseType;
     bool isSharedType = (ctx->SharedKeyword() != nullptr);
+    bool isConstType = (ctx->DeclareConst() != nullptr);
 
     if (ctx->primitiveType()) {
         baseType = anyToNode<TypeNode>(visitPrimitiveType(ctx->primitiveType()));
@@ -552,6 +553,7 @@ std::any ASTGenerator::visitTypeIdentifier(
 
     // Apply type modifiers: arrays, pointers, references
     bool sharedApplied = false;
+    bool constApplied = false;
     for (auto* modifier : ctx->typeModifier()) {
         if (modifier->arrayDimension()) {
             auto* arrCtx = modifier->arrayDimension();
@@ -576,6 +578,11 @@ std::any ASTGenerator::visitTypeIdentifier(
             if (isSharedType && !sharedApplied) {
                 ptrType->isShared = true;
                 sharedApplied = true;
+            }
+            // Apply 'const' to the first pointer modifier: const int*
+            if (isConstType && !constApplied) {
+                ptrType->isConst = true;
+                constApplied = true;
             }
             baseType = ptrType;
 
@@ -1150,6 +1157,14 @@ std::any ASTGenerator::visitExternFunctionDeclaration(
     auto ext = std::make_shared<ExternFunctionDeclaration>();
     ext->debugInfo = makeDebugInfo(ctx);
     ext->name = ctx->Identifier()->getText();
+
+    // Parse calling convention from attributes (@cdecl, @stdcall, @fastcall)
+    for (auto* attr : ctx->attribute()) {
+        std::string name = attr->Identifier()->getText();
+        if (name == "cdecl" || name == "stdcall" || name == "fastcall") {
+            ext->callingConvention = name;
+        }
+    }
 
     if (ctx->parameterList()) {
         for (auto* paramCtx : ctx->parameterList()->parameter()) {

@@ -77,6 +77,8 @@ TypeSymbolPtr TypeResolver::resolveTypeNode(TypeNode* typeNode) {
             ptr->resolvedType = symbolTable_.getReferenceType(baseType);
         } else if (ptr->isShared) {
             ptr->resolvedType = symbolTable_.getSharedPointerType(baseType);
+        } else if (ptr->isConst) {
+            ptr->resolvedType = symbolTable_.getConstPointerType(baseType);
         } else {
             ptr->resolvedType = symbolTable_.getPointerType(baseType);
         }
