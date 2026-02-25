@@ -3492,7 +3492,16 @@ void IRGenerator::visit(IdentifierExpression& node) {
     // Variable symbol -> load from alloca (locals and params)
     auto it = namedValues_.find(node.resolvedSymbol.get());
     if (it != namedValues_.end()) {
-        llvm::Type* loadTy = mapType(node.resolvedType);
+        // Use resolvedType if available, fall back to symbol type
+        // (template bodies have null resolvedType because TypeChecker skips them;
+        //  symbol type is TypeParameterSymbol which mapType substitutes via currentTypeSubstitution_)
+        TypeSymbolPtr typeForLoad = node.resolvedType;
+        if (!typeForLoad) {
+            if (auto* varSym = node.resolvedSymbol->as<VariableSymbol>()) {
+                typeForLoad = varSym->getType();
+            }
+        }
+        llvm::Type* loadTy = mapType(typeForLoad);
         if (loadTy->isVoidTy()) {
             lastValue_ = nullptr;
             return;
@@ -4737,8 +4746,9 @@ void IRGenerator::visit(CallExpression& node) {
             }
             else if (auto* funcSym = ident->resolvedSymbol->as<FunctionSymbol>()) {
                 // Regular function call — extract FunctionSymbol directly
-                calleeFuncSym = funcSym;
-                auto it = functionCache_.find(funcSym);
+                // Don't overwrite calleeFuncSym if already set (e.g., from monomorphized resolvedCallee)
+                if (!calleeFuncSym) calleeFuncSym = funcSym;
+                auto it = functionCache_.find(calleeFuncSym);
                 if (it != functionCache_.end()) {
                     calleeFn = it->second;
                 }

@@ -290,10 +290,6 @@ void TypeChecker::visit(TupleDestructuringDeclaration& node) {
 // ============================================================================
 
 void TypeChecker::visit(FunctionDeclaration& node) {
-    // Skip generic template bodies — checked only on monomorphized instances
-    if (node.resolvedFunction && node.resolvedFunction->isGenericTemplate()) {
-        return;
-    }
     if (node.body && node.resolvedFunction) {
         auto savedClass = currentClass_;
         // If this is a method, currentClass_ is already set
