@@ -1,0 +1,143 @@
+// Example 14: SQLite3 with Auto-Generated Bindings
+//
+// Demonstrates importing the full auto-generated SQLite3 bindings produced by
+// mingus_bind_gen.py. Unlike example_13 (which uses curated inline bindings),
+// this example imports all 291 functions, 20 structs, 15 opaque types, and
+// 398 constants from SQLite3.mingus — proving the binding generator's output
+// compiles and works end-to-end.
+//
+// Scenario: sensor temperature readings with aggregate queries.
+//
+// Build: see build_sqlite3_auto_bindings.bat
+
+module SQLite3AutoBind
+{
+    // Import full auto-generated bindings from SQLite3.mingus
+    import SQLite3;
+
+    // C standard library (not part of SQLite3 bindings)
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func main() => int
+    {
+        puts("=== Mingus SQLite3 — Auto-Generated Bindings ===");
+        puts("");
+
+        // --- Open in-memory database ---
+        sqlite3* db = null;
+        var rc = sqlite3_open(":memory:", &db);
+        if (rc != SQLITE_OK)
+        {
+            printf("Failed to open database: %s\n", sqlite3_errmsg(db));
+            return 1;
+        }
+        puts("Database opened (in-memory).");
+
+        // --- Create table via prepared statement ---
+        sqlite3_stmt* stmt = null;
+        rc = sqlite3_prepare_v2(db,
+            "CREATE TABLE readings (id INTEGER PRIMARY KEY, sensor_id INTEGER, temp_c REAL)",
+            -1, &stmt, null);
+        if (rc != SQLITE_OK)
+        {
+            printf("Error: %s\n", sqlite3_errmsg(db));
+            return 1;
+        }
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        puts("Table 'readings' created.");
+        puts("");
+
+        // --- Insert sensor readings using bind_int and bind_double ---
+        rc = sqlite3_prepare_v2(db,
+            "INSERT INTO readings (sensor_id, temp_c) VALUES (?, ?)",
+            -1, &stmt, null);
+        if (rc != SQLITE_OK)
+        {
+            printf("Error: %s\n", sqlite3_errmsg(db));
+            return 1;
+        }
+
+        // Sensor 1: 22.5 C
+        sqlite3_bind_int(stmt, 1, 1);
+        sqlite3_bind_double(stmt, 2, 22.5);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+
+        // Sensor 2: 18.3 C
+        sqlite3_bind_int(stmt, 1, 2);
+        sqlite3_bind_double(stmt, 2, 18.3);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+
+        // Sensor 1: 23.1 C
+        sqlite3_bind_int(stmt, 1, 1);
+        sqlite3_bind_double(stmt, 2, 23.1);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+
+        // Sensor 3: 25.7 C
+        sqlite3_bind_int(stmt, 1, 3);
+        sqlite3_bind_double(stmt, 2, 25.7);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+
+        // Sensor 2: 19.0 C
+        sqlite3_bind_int(stmt, 1, 2);
+        sqlite3_bind_double(stmt, 2, 19.0);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+
+        sqlite3_finalize(stmt);
+        printf("Inserted 5 sensor readings.\n");
+        puts("");
+
+        // --- Query all readings ---
+        puts("All readings:");
+        rc = sqlite3_prepare_v2(db,
+            "SELECT id, sensor_id, temp_c FROM readings ORDER BY id",
+            -1, &stmt, null);
+        if (rc != SQLITE_OK)
+        {
+            printf("Error: %s\n", sqlite3_errmsg(db));
+            return 1;
+        }
+
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            var id     = sqlite3_column_int(stmt, 0);
+            var sensor = sqlite3_column_int(stmt, 1);
+            var temp   = sqlite3_column_double(stmt, 2);
+            printf("  id=%d  sensor=%d  temp=%.1f C\n", id, sensor, temp);
+        }
+        sqlite3_finalize(stmt);
+        puts("");
+
+        // --- Aggregate query: average temperature per sensor ---
+        puts("Average temperature per sensor:");
+        rc = sqlite3_prepare_v2(db,
+            "SELECT sensor_id, AVG(temp_c), COUNT(*) FROM readings GROUP BY sensor_id ORDER BY sensor_id",
+            -1, &stmt, null);
+        if (rc != SQLITE_OK)
+        {
+            printf("Error: %s\n", sqlite3_errmsg(db));
+            return 1;
+        }
+
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            var sensor = sqlite3_column_int(stmt, 0);
+            var avg    = sqlite3_column_double(stmt, 1);
+            var n      = sqlite3_column_int(stmt, 2);
+            printf("  sensor %d: avg=%.2f C (%d readings)\n", sensor, avg, n);
+        }
+        sqlite3_finalize(stmt);
+
+        // --- Cleanup ---
+        sqlite3_close(db);
+        puts("");
+        puts("Done.");
+        return 0;
+    }
+}
