@@ -351,6 +351,7 @@ private:
     void declareStructTypes(ProgramNode& program);
     void declareExternFunctions(ProgramNode& program);
     void declareExternGlobals(ProgramNode& program);
+    void declareModuleGlobals(ProgramNode& program);
     void declareFunctions(ProgramNode& program);
     void declareMonomorphizedFunctions();
     void emitMonomorphizedFunctions();

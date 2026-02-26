@@ -162,6 +162,7 @@ std::unique_ptr<llvm::Module> IRGenerator::generate(ProgramNode& program) {
     declareMonomorphizedStructTypes();  // Generic struct/class LLVM types
     declareExternFunctions(program);
     declareExternGlobals(program);
+    declareModuleGlobals(program);
     declareFunctions(program);
     declareMonomorphizedFunctions();  // Generic function/method instantiations
 
@@ -1271,6 +1272,45 @@ void IRGenerator::declareExternGlobals(ProgramNode& program) {
                 llvm::GlobalValue::ExternalLinkage,
                 nullptr,  // no initializer (resolved by linker)
                 varSym->getName());
+            globalVariableCache_[varSym] = gv;
+        }
+    }
+}
+
+void IRGenerator::declareModuleGlobals(ProgramNode& program) {
+    // Pre-create LLVM GlobalVariable objects for ALL module-level non-extern
+    // variable declarations across all modules.  This ensures globals from
+    // imported modules are available before Phase B processes function bodies
+    // in the main module (which is visited first).
+    for (auto& mod : program.modules) {
+        if (!mod->resolvedModule) continue;
+
+        for (auto& decl : mod->declarations) {
+            auto* varDecl = decl->as<VariableDeclaration>();
+            if (!varDecl) continue;
+            auto* varSym = varDecl->resolvedVariable.get();
+            if (!varSym) continue;
+            if (varSym->role != VariableRole::Global) continue;
+            if (varSym->isExtern) continue;  // handled by declareExternGlobals
+            if (globalVariableCache_.count(varSym)) continue;
+
+            llvm::Type* varTy = mapType(varSym->getType());
+            if (varTy->isVoidTy()) continue;
+
+            // Evaluate constant initializer (or zero-init)
+            llvm::Constant* init = nullptr;
+            if (varDecl->initializer) {
+                init = emitConstantInitializer(varDecl->initializer.get(), varTy);
+            }
+            if (!init) {
+                init = llvm::Constant::getNullValue(varTy);
+            }
+
+            auto* gv = new llvm::GlobalVariable(
+                *module_, varTy, varDecl->isConst,
+                llvm::GlobalValue::InternalLinkage,
+                init,
+                mod->name + "_" + varDecl->name);
             globalVariableCache_[varSym] = gv;
         }
     }
@@ -3401,6 +3441,9 @@ void IRGenerator::visit(VariableDeclaration& node) {
 
     // === MODULE-LEVEL GLOBAL VARIABLE ===
     if (varSym->role == VariableRole::Global) {
+        // Already declared in Phase A (declareModuleGlobals)?
+        if (globalVariableCache_.count(varSym)) return;
+
         // Evaluate constant initializer (or zero-init)
         llvm::Constant* init = nullptr;
         if (node.initializer) {
