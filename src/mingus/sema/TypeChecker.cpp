@@ -804,6 +804,50 @@ void TypeChecker::visit(MemberAccessExpression& node) {
         }
     }
 
+    // TypeParameter member access: look up in constraint interfaces
+    // When T has bounds like <T: Printable + HasSize>, resolve methods from those interfaces
+    if (auto* tpSym = objType->as<TypeParameterSymbol>()) {
+        // Check function-level type parameter constraints
+        if (currentFunction_) {
+            for (size_t i = 0; i < currentFunction_->typeParameterNames.size(); i++) {
+                if (currentFunction_->typeParameterNames[i] == tpSym->getName()) {
+                    if (i < currentFunction_->typeParameterConstraints.size()) {
+                        for (auto& iface : currentFunction_->typeParameterConstraints[i]) {
+                            auto method = iface->findMethod(node.memberName);
+                            if (method) {
+                                node.resolvedSymbol = method;
+                                node.resolvedType = getSymbolType(method);
+                                return;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        // Check class-level type parameter constraints
+        if (currentClass_) {
+            auto* classSym = currentClass_->as<ClassSymbol>();
+            if (classSym) {
+                for (size_t i = 0; i < classSym->typeParameterNames.size(); i++) {
+                    if (classSym->typeParameterNames[i] == tpSym->getName()) {
+                        if (i < classSym->typeParameterConstraints.size()) {
+                            for (auto& iface : classSym->typeParameterConstraints[i]) {
+                                auto method = iface->findMethod(node.memberName);
+                                if (method) {
+                                    node.resolvedSymbol = method;
+                                    node.resolvedType = getSymbolType(method);
+                                    return;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     errors_.error("no member '" + node.memberName + "' in type '"
         + objType->getTypeDescription() + "'", node.debugInfo);
     node.resolvedType = symbolTable_.getErrorType();
@@ -1227,6 +1271,14 @@ void TypeChecker::visit(CallExpression& node) {
                         }
                         typeArgs.push_back(ta->resolvedType);
                     }
+                }
+
+                // Validate constraint bounds before monomorphization
+                if (!validateConstraints(fSym->typeParameterNames,
+                                         fSym->typeParameterConstraints,
+                                         typeArgs, node.debugInfo)) {
+                    node.resolvedType = symbolTable_.getErrorType();
+                    return;
                 }
 
                 // Monomorphize (shared path for both inferred and explicit)
@@ -1926,6 +1978,61 @@ std::vector<TypeSymbolPtr> TypeChecker::inferGenericTypeArguments(
     }
 
     return result;
+}
+
+// ============================================================================
+// Constraint bounds validation
+// ============================================================================
+
+bool TypeChecker::satisfiesConstraint(
+    TypeSymbolPtr concreteType,
+    const std::shared_ptr<InterfaceSymbol>& constraintIface)
+{
+    if (!concreteType || !constraintIface) return true;
+
+    // Check class → implementedInterfaces
+    if (auto* cls = concreteType->as<ClassSymbol>()) {
+        for (auto& iface : cls->implementedInterfaces) {
+            if (iface.get() == constraintIface.get()) return true;
+            // Check monomorphized from same template with same type args
+            if (iface->genericTemplate && constraintIface->genericTemplate &&
+                iface->genericTemplate == constraintIface->genericTemplate &&
+                iface->typeArguments == constraintIface->typeArguments)
+                return true;
+        }
+        return false;
+    }
+
+    // Check pointer → recurse on base type
+    if (auto* ptr = concreteType->as<PointerTypeSymbol>()) {
+        return satisfiesConstraint(ptr->baseType, constraintIface);
+    }
+
+    // Primitives, structs, enums don't implement interfaces
+    return false;
+}
+
+bool TypeChecker::validateConstraints(
+    const std::vector<std::string>& typeParamNames,
+    const std::vector<std::vector<std::shared_ptr<InterfaceSymbol>>>& constraints,
+    const std::vector<TypeSymbolPtr>& typeArgs,
+    const std::shared_ptr<DebugInfo>& loc)
+{
+    if (constraints.empty()) return true;
+
+    for (size_t i = 0; i < typeParamNames.size() && i < typeArgs.size(); i++) {
+        if (i >= constraints.size()) break;
+        for (auto& constraintIface : constraints[i]) {
+            if (!satisfiesConstraint(typeArgs[i], constraintIface)) {
+                errors_.error("type '" + typeArgs[i]->getName()
+                    + "' does not satisfy constraint '"
+                    + constraintIface->getName() + "' for type parameter '"
+                    + typeParamNames[i] + "'", loc);
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 } // namespace mingus

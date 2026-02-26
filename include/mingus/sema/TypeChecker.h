@@ -153,6 +153,17 @@ private:
         TypeSymbolPtr patternType,
         TypeSymbolPtr concreteType,
         std::unordered_map<std::string, TypeSymbolPtr>& bindings);
+
+    // Check if a concrete type satisfies an interface constraint bound
+    bool satisfiesConstraint(TypeSymbolPtr concreteType,
+                             const std::shared_ptr<InterfaceSymbol>& constraintIface);
+
+    // Validate all constraint bounds for a set of type arguments
+    bool validateConstraints(
+        const std::vector<std::string>& typeParamNames,
+        const std::vector<std::vector<std::shared_ptr<InterfaceSymbol>>>& constraints,
+        const std::vector<TypeSymbolPtr>& typeArgs,
+        const std::shared_ptr<DebugInfo>& loc);
 };
 
 } // namespace mingus

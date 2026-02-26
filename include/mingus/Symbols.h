@@ -124,6 +124,7 @@ public:
 
     // ---- Generics support ----
     std::vector<std::string> typeParameterNames;       // Template: ["T", "U"]
+    std::vector<std::vector<std::shared_ptr<InterfaceSymbol>>> typeParameterConstraints; // Bounds
     std::vector<TypeSymbolPtr> typeArguments;           // Instance: [int, double]
     FunctionSymbol* genericTemplate = nullptr;          // Instance → template backref
     FunctionDeclaration* genericASTNode = nullptr;      // Template → AST for re-emission
@@ -227,6 +228,7 @@ public:
 
     // ---- Generics support ----
     std::vector<std::string> typeParameterNames;       // Template: ["T"]
+    std::vector<std::vector<std::shared_ptr<InterfaceSymbol>>> typeParameterConstraints; // Bounds
     std::vector<TypeSymbolPtr> typeArguments;           // Instance: [int]
     ClassSymbol* genericTemplate = nullptr;             // Instance → template backref
     ClassDeclaration* genericASTNode = nullptr;         // Template → AST for re-emission
@@ -264,6 +266,7 @@ public:
 
     // ---- Generics support ----
     std::vector<std::string> typeParameterNames;       // Template: ["T", "U"]
+    std::vector<std::vector<std::shared_ptr<InterfaceSymbol>>> typeParameterConstraints; // Bounds
     std::vector<TypeSymbolPtr> typeArguments;           // Instance: [int, double]
     StructSymbol* genericTemplate = nullptr;            // Instance → template backref
     StructDeclaration* genericASTNode = nullptr;        // Template → AST for re-emission
@@ -345,6 +348,7 @@ public:
 
     // ---- Generics support ----
     std::vector<std::string> typeParameterNames;       // Template: ["T"]
+    std::vector<std::vector<std::shared_ptr<InterfaceSymbol>>> typeParameterConstraints; // Bounds
     std::vector<TypeSymbolPtr> typeArguments;           // Instance: [int]
     InterfaceSymbol* genericTemplate = nullptr;         // Instance → template backref
     InterfaceDeclaration* genericASTNode = nullptr;     // Template → AST for re-emission

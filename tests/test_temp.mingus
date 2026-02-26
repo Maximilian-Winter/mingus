@@ -1,0 +1,1 @@
+module Test { extern func printf(string fmt, ...) =; interface Printable { func print() =; } func printIt<T: Printable>(T* obj) = { printf(\"hello\n\"); } func main() = { printf(\"test\n\"); } }  

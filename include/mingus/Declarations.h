@@ -76,6 +76,9 @@ public:
 
     // Generic type parameters (e.g., ["T", "U"] for func foo<T, U>)
     std::vector<std::string> typeParameters;
+    // Constraint bounds per type parameter (parallel to typeParameters)
+    // typeParameterConstraints[i] = constraint type nodes for typeParameters[i]
+    std::vector<std::vector<std::shared_ptr<TypeNode>>> typeParameterConstraints;
     bool isGeneric() const { return !typeParameters.empty(); }
 
     // Resolved in Pass 1
@@ -212,6 +215,7 @@ public:
 
     // Generic type parameters (e.g., struct Pair<T, U>)
     std::vector<std::string> typeParameters;
+    std::vector<std::vector<std::shared_ptr<TypeNode>>> typeParameterConstraints;
     bool isGeneric() const { return !typeParameters.empty(); }
 
     // Layout attributes (@packed, @align(N))
@@ -310,6 +314,7 @@ public:
 
     // Generic type parameters (e.g., class Box<T>)
     std::vector<std::string> typeParameters;
+    std::vector<std::vector<std::shared_ptr<TypeNode>>> typeParameterConstraints;
     bool isGeneric() const { return !typeParameters.empty(); }
 
     std::vector<std::shared_ptr<VariableDeclaration>> fields;
@@ -338,6 +343,7 @@ public:
 
     // Generic type parameters (e.g., interface Getter<T>)
     std::vector<std::string> typeParameters;
+    std::vector<std::vector<std::shared_ptr<TypeNode>>> typeParameterConstraints;
     bool isGeneric() const { return !typeParameters.empty(); }
 
     // Resolved in Pass 1

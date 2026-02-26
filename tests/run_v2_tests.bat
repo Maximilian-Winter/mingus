@@ -107,6 +107,7 @@ call :run_test test_70_generics Test_main "Generic Functions"
 call :run_test test_71_generic_structs Test_main "Generic Structs/Classes"
 call :run_test test_72_generic_interfaces Test_main "Generic Interfaces"
 call :run_test test_73_type_inference Test_main "Type Inference"
+call :run_test test_74_constraint_bounds Test_main "Constraint Bounds"
 
 echo.
 echo ============================================================

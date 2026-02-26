@@ -153,6 +153,12 @@ public:
   virtual void enterTypeParameterList(MingusParser::TypeParameterListContext * /*ctx*/) override { }
   virtual void exitTypeParameterList(MingusParser::TypeParameterListContext * /*ctx*/) override { }
 
+  virtual void enterTypeParameter(MingusParser::TypeParameterContext * /*ctx*/) override { }
+  virtual void exitTypeParameter(MingusParser::TypeParameterContext * /*ctx*/) override { }
+
+  virtual void enterTypeParameterBound(MingusParser::TypeParameterBoundContext * /*ctx*/) override { }
+  virtual void exitTypeParameterBound(MingusParser::TypeParameterBoundContext * /*ctx*/) override { }
+
   virtual void enterTypeArgumentList(MingusParser::TypeArgumentListContext * /*ctx*/) override { }
   virtual void exitTypeArgumentList(MingusParser::TypeArgumentListContext * /*ctx*/) override { }
 

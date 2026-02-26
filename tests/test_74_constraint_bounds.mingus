@@ -1,0 +1,68 @@
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    interface Printable {
+        func print() => void;
+    }
+
+    interface HasSize {
+        func size() => int;
+    }
+
+    class Message : Printable {
+        string text;
+        constructor(string t) { this.text = t; }
+        func print() => void { printf("%s", this.text); }
+    }
+
+    class Container : Printable, HasSize {
+        int count;
+        constructor(int n) { this.count = n; }
+        func print() => void { printf("Container(%d)", this.count); }
+        func size() => int { return this.count; }
+    }
+
+    // Single constraint
+    func printIt<T: Printable>(T* obj) => void {
+        obj->print();
+    }
+
+    // Multiple constraints
+    func printWithSize<T: Printable + HasSize>(T* obj) => void {
+        printf("[size=%d] ", obj->size());
+        obj->print();
+    }
+
+    // Unconstrained + constrained
+    func wrapPrint<T, U: Printable>(T value, U* printer) => void {
+        printf("wrap(%d): ", value);
+        printer->print();
+    }
+
+    func main() => void {
+        printf("=== Test 1: Single constraint ===\n");
+        var msg = new Message("hello");
+        printIt(msg);
+        printf("\n");
+
+        printf("=== Test 2: Multiple constraints ===\n");
+        var c = new Container(5);
+        printWithSize(c);
+        printf("\n");
+
+        printf("=== Test 3: Single constraint with different type ===\n");
+        printIt(c);
+        printf("\n");
+
+        printf("=== Test 4: Mixed constrained and unconstrained ===\n");
+        wrapPrint(42, msg);
+        printf("\n");
+
+        printf("=== Test 5: Turbofish with constraint ===\n");
+        printIt::<Container>(c);
+        printf("\n");
+
+        delete msg;
+        delete c;
+    }
+}

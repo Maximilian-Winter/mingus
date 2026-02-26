@@ -4958,15 +4958,31 @@ void IRGenerator::visit(CallExpression& node) {
                 }
             }
 
-            // Find the method
-            TypeSymbol* objType = memAccess->object->resolvedType ?
-                memAccess->object->resolvedType->as<TypeSymbol>() : nullptr;
+            // Find the method — apply effectiveType for monomorphized generics
+            // so T* resolves to the concrete type (e.g. Container*)
+            auto effectiveObjType = effectiveType(memAccess->object->resolvedType);
+            TypeSymbol* objType = effectiveObjType ?
+                effectiveObjType.get() : nullptr;
             if (auto* ptrTy = objType ? objType->as<PointerTypeSymbol>() : nullptr) {
                 // Shared pointer: adjust thisPtr from rcPtr to objPtr
                 if (ptrTy->isShared && thisPtr) {
                     thisPtr = emitSharedObjPtr(thisPtr);
                 }
                 objType = ptrTy->baseType ? ptrTy->baseType->as<TypeSymbol>() : nullptr;
+            }
+
+            // For monomorphized generics: re-resolve method on effective (concrete) type
+            // TypeChecker sets calleeFuncSym to the interface method for constrained
+            // type params; we need the concrete class method for codegen
+            if (calleeFuncSym && !currentTypeSubstitution_.empty() && objType) {
+                auto* classScope = dynamic_cast<Scope*>(objType);
+                if (classScope) {
+                    auto resolvedMethod = classScope->resolve(memAccess->memberName);
+                    if (resolvedMethod) {
+                        auto* method = resolvedMethod->as<FunctionSymbol>();
+                        if (method) calleeFuncSym = method;
+                    }
+                }
             }
 
             if (calleeFuncSym) {

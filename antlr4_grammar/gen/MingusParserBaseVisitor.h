@@ -197,6 +197,14 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitTypeParameter(MingusParser::TypeParameterContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTypeParameterBound(MingusParser::TypeParameterBoundContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitTypeArgumentList(MingusParser::TypeArgumentListContext *ctx) override {
     return visitChildren(ctx);
   }

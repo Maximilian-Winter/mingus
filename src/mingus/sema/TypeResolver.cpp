@@ -41,6 +41,29 @@ TypeSymbolPtr TypeResolver::resolveTypeNode(TypeNode* typeNode) {
     // Already resolved?
     if (typeNode->resolvedType) return typeNode->resolvedType;
 
+    // Propagate astScopeNode to child type nodes so TypeParameter lookup
+    // works through nested types (e.g. T* → PointerTypeNode wraps NamedTypeNode("T"))
+    if (typeNode->astScopeNode) {
+        if (auto* ptr = typeNode->as<PointerTypeNode>()) {
+            if (ptr->baseType && !ptr->baseType->astScopeNode)
+                ptr->baseType->astScopeNode = typeNode->astScopeNode;
+        } else if (auto* arr = typeNode->as<ArrayTypeNode>()) {
+            if (arr->elementType && !arr->elementType->astScopeNode)
+                arr->elementType->astScopeNode = typeNode->astScopeNode;
+        } else if (auto* tup = typeNode->as<TupleTypeNode>()) {
+            for (auto& et : tup->elementTypes)
+                if (et && !et->astScopeNode) et->astScopeNode = typeNode->astScopeNode;
+        } else if (auto* ft = typeNode->as<FunctionTypeNode>()) {
+            for (auto& pt : ft->parameterTypes)
+                if (pt && !pt->astScopeNode) pt->astScopeNode = typeNode->astScopeNode;
+            if (ft->returnType && !ft->returnType->astScopeNode)
+                ft->returnType->astScopeNode = typeNode->astScopeNode;
+        } else if (auto* named = typeNode->as<NamedTypeNode>()) {
+            for (auto& ta : named->typeArguments)
+                if (ta && !ta->astScopeNode) ta->astScopeNode = typeNode->astScopeNode;
+        }
+    }
+
     // PrimitiveTypeNode → PrimitiveTypeSymbol
     if (auto* prim = typeNode->as<PrimitiveTypeNode>()) {
         switch (prim->kind) {
@@ -437,6 +460,28 @@ void TypeResolver::visit(FunctionDeclaration& node) {
     // Resolve return type
     resolveReturnType(node.returnType, funcSym);
 
+    // Resolve constraint bounds for generic functions
+    if (funcSym->isGenericTemplate() && !node.typeParameterConstraints.empty()) {
+        funcSym->typeParameterConstraints.resize(funcSym->typeParameterNames.size());
+        for (size_t i = 0; i < node.typeParameterConstraints.size() && i < funcSym->typeParameterNames.size(); i++) {
+            for (auto& constraintTypeNode : node.typeParameterConstraints[i]) {
+                constraintTypeNode->astScopeNode = funcSym;
+                auto resolved = resolveTypeNode(constraintTypeNode);
+                if (!resolved || resolved->is<ErrorTypeSymbol>()) {
+                    errors_.error("unresolved constraint type", constraintTypeNode->debugInfo);
+                    continue;
+                }
+                auto ifaceSym = std::dynamic_pointer_cast<InterfaceSymbol>(resolved);
+                if (!ifaceSym) {
+                    errors_.error("constraint '" + resolved->getName()
+                        + "' is not an interface", constraintTypeNode->debugInfo);
+                    continue;
+                }
+                funcSym->typeParameterConstraints[i].push_back(ifaceSym);
+            }
+        }
+    }
+
     // Walk body for nested declarations
     if (node.body) {
         node.body->accept(*this);
@@ -516,6 +561,29 @@ void TypeResolver::visit(EnumDeclaration& node) {
 void TypeResolver::visit(StructDeclaration& node) {
     if (!node.resolvedStruct) return;
 
+    // Resolve constraint bounds for generic structs
+    auto structSym = node.resolvedStruct;
+    if (structSym->isGenericTemplate() && !node.typeParameterConstraints.empty()) {
+        structSym->typeParameterConstraints.resize(structSym->typeParameterNames.size());
+        for (size_t i = 0; i < node.typeParameterConstraints.size() && i < structSym->typeParameterNames.size(); i++) {
+            for (auto& constraintTypeNode : node.typeParameterConstraints[i]) {
+                constraintTypeNode->astScopeNode = structSym;
+                auto resolved = resolveTypeNode(constraintTypeNode);
+                if (!resolved || resolved->is<ErrorTypeSymbol>()) {
+                    errors_.error("unresolved constraint type", constraintTypeNode->debugInfo);
+                    continue;
+                }
+                auto ifaceSym = std::dynamic_pointer_cast<InterfaceSymbol>(resolved);
+                if (!ifaceSym) {
+                    errors_.error("constraint '" + resolved->getName()
+                        + "' is not an interface", constraintTypeNode->debugInfo);
+                    continue;
+                }
+                structSym->typeParameterConstraints[i].push_back(ifaceSym);
+            }
+        }
+    }
+
     // Resolve field types
     for (auto& field : node.fields) {
         if (field) field->accept(*this);
@@ -534,6 +602,29 @@ void TypeResolver::visit(StructDeclaration& node) {
 
 void TypeResolver::visit(ClassDeclaration& node) {
     if (!node.resolvedClass) return;
+
+    // Resolve constraint bounds for generic classes
+    auto classSym = node.resolvedClass;
+    if (classSym->isGenericTemplate() && !node.typeParameterConstraints.empty()) {
+        classSym->typeParameterConstraints.resize(classSym->typeParameterNames.size());
+        for (size_t i = 0; i < node.typeParameterConstraints.size() && i < classSym->typeParameterNames.size(); i++) {
+            for (auto& constraintTypeNode : node.typeParameterConstraints[i]) {
+                constraintTypeNode->astScopeNode = classSym;
+                auto resolved = resolveTypeNode(constraintTypeNode);
+                if (!resolved || resolved->is<ErrorTypeSymbol>()) {
+                    errors_.error("unresolved constraint type", constraintTypeNode->debugInfo);
+                    continue;
+                }
+                auto ifaceSym = std::dynamic_pointer_cast<InterfaceSymbol>(resolved);
+                if (!ifaceSym) {
+                    errors_.error("constraint '" + resolved->getName()
+                        + "' is not an interface", constraintTypeNode->debugInfo);
+                    continue;
+                }
+                classSym->typeParameterConstraints[i].push_back(ifaceSym);
+            }
+        }
+    }
 
     // Resolve field types
     for (auto& field : node.fields) {
@@ -568,7 +659,6 @@ void TypeResolver::visit(ClassDeclaration& node) {
 
     // Resolve generic interface type arguments in inheritance
     // e.g., class IntStore : Getter<int>, Setter<int> — replace template with mono
-    auto classSym = node.resolvedClass;
     if (classSym && !node.baseClassTypeArgs.empty()) {
         size_t ifaceIdx = 0;
         for (size_t i = 0; i < node.baseClasses.size(); i++) {
@@ -613,6 +703,29 @@ void TypeResolver::visit(ClassDeclaration& node) {
 
 void TypeResolver::visit(InterfaceDeclaration& node) {
     if (!node.resolvedInterface) return;
+
+    // Resolve constraint bounds for generic interfaces
+    auto ifaceSym = node.resolvedInterface;
+    if (ifaceSym->isGenericTemplate() && !node.typeParameterConstraints.empty()) {
+        ifaceSym->typeParameterConstraints.resize(ifaceSym->typeParameterNames.size());
+        for (size_t i = 0; i < node.typeParameterConstraints.size() && i < ifaceSym->typeParameterNames.size(); i++) {
+            for (auto& constraintTypeNode : node.typeParameterConstraints[i]) {
+                constraintTypeNode->astScopeNode = ifaceSym;
+                auto resolved = resolveTypeNode(constraintTypeNode);
+                if (!resolved || resolved->is<ErrorTypeSymbol>()) {
+                    errors_.error("unresolved constraint type", constraintTypeNode->debugInfo);
+                    continue;
+                }
+                auto resolvedIface = std::dynamic_pointer_cast<InterfaceSymbol>(resolved);
+                if (!resolvedIface) {
+                    errors_.error("constraint '" + resolved->getName()
+                        + "' is not an interface", constraintTypeNode->debugInfo);
+                    continue;
+                }
+                ifaceSym->typeParameterConstraints[i].push_back(resolvedIface);
+            }
+        }
+    }
 
     // Resolve method signatures (abstract — no bodies)
     for (auto& method : node.methods) {

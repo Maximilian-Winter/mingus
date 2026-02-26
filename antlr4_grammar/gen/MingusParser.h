@@ -65,37 +65,37 @@ public:
     RuleUnionMember = 36, RuleTaggedUnionDeclaration = 37, RuleTaggedUnionVariant = 38, 
     RuleTaggedUnionField = 39, RuleEnumDeclaration = 40, RuleEnumMember = 41, 
     RuleFunctionDeclaration = 42, RuleReturnType = 43, RuleTypeParameterList = 44, 
-    RuleTypeArgumentList = 45, RuleDefinitionParameters = 46, RuleParameterList = 47, 
-    RuleParameter = 48, RuleVariableDeclaration = 49, RuleConstVariableDeclaration = 50, 
-    RuleTypedVariableDeclaration = 51, RuleInferredVariableDeclaration = 52, 
-    RuleTupleDestructuring = 53, RuleTupleDestructureElement = 54, RuleStatement = 55, 
-    RuleBlock = 56, RuleExprStatement = 57, RuleRawBlock = 58, RuleIfStatement = 59, 
-    RuleElseIfClause = 60, RuleElseClause = 61, RuleSwitchStatement = 62, 
-    RuleSwitchCase = 63, RuleSwitchDefault = 64, RuleMatchStatement = 65, 
-    RuleMatchExpression = 66, RuleMatchArm = 67, RuleMatchBody = 68, RulePattern = 69, 
-    RuleGuardedPattern = 70, RuleBasePattern = 71, RuleLiteralPattern = 72, 
-    RuleRangePattern = 73, RuleWildcardPattern = 74, RuleBindingPattern = 75, 
-    RuleTuplePattern = 76, RuleVariantPatternField = 77, RuleForStatement = 78, 
-    RuleForInitializer = 79, RuleLocalVarInitializer = 80, RuleLocalVarDeclaration = 81, 
-    RuleForIterator = 82, RuleWhileStatement = 83, RuleDoWhileStatement = 84, 
-    RuleReturnStatement = 85, RuleLabeledStatement = 86, RuleBreakStatement = 87, 
-    RuleContinueStatement = 88, RuleDeleteStatement = 89, RuleExpression = 90, 
-    RuleAssignment = 91, RuleAssignmentOperator = 92, RuleLambdaExpression = 93, 
-    RuleCaptureList = 94, RuleCaptureDefault = 95, RuleCaptureItem = 96, 
-    RuleLambdaParameterList = 97, RuleLambdaParameter = 98, RulePipe = 99, 
-    RulePipeTarget = 100, RuleTernary = 101, RuleLogicOr = 102, RuleLogicAnd = 103, 
-    RuleBitwiseOr = 104, RuleBitwiseXor = 105, RuleBitwiseAnd = 106, RuleEquality = 107, 
-    RuleRelational = 108, RuleShift = 109, RuleAdditive = 110, RuleMultiplicative = 111, 
-    RuleCastExpression = 112, RuleUnaryExpression = 113, RulePostfixExpression = 114, 
-    RulePrimaryExpression = 115, RuleArrayLiteral = 116, RulePostfixOperation = 117, 
-    RuleNewExpression = 118, RuleCallArguments = 119, RuleArgumentList = 120, 
-    RuleElementAccess = 121, RuleMemberAccess = 122, RuleTupleExpression = 123, 
-    RuleTypeIdentifier = 124, RulePrimitiveType = 125, RuleFunctionType = 126, 
-    RuleTypeList = 127, RuleTupleType = 128, RuleTypeModifier = 129, RuleRvalueReferenceLevel = 130, 
-    RuleReferenceLevel = 131, RuleArrayDimension = 132, RulePointerLevel = 133, 
-    RuleAccessModifier = 134, RuleStaticModifier = 135, RuleAbstractModifier = 136, 
-    RuleQualifiedName = 137, RulePrefixOperator = 138, RuleIncrementDecrementOperator = 139, 
-    RuleTypeSizeOrAlign = 140, RuleString = 141, RuleStringPart = 142
+    RuleTypeParameter = 45, RuleTypeParameterBound = 46, RuleTypeArgumentList = 47, 
+    RuleDefinitionParameters = 48, RuleParameterList = 49, RuleParameter = 50, 
+    RuleVariableDeclaration = 51, RuleConstVariableDeclaration = 52, RuleTypedVariableDeclaration = 53, 
+    RuleInferredVariableDeclaration = 54, RuleTupleDestructuring = 55, RuleTupleDestructureElement = 56, 
+    RuleStatement = 57, RuleBlock = 58, RuleExprStatement = 59, RuleRawBlock = 60, 
+    RuleIfStatement = 61, RuleElseIfClause = 62, RuleElseClause = 63, RuleSwitchStatement = 64, 
+    RuleSwitchCase = 65, RuleSwitchDefault = 66, RuleMatchStatement = 67, 
+    RuleMatchExpression = 68, RuleMatchArm = 69, RuleMatchBody = 70, RulePattern = 71, 
+    RuleGuardedPattern = 72, RuleBasePattern = 73, RuleLiteralPattern = 74, 
+    RuleRangePattern = 75, RuleWildcardPattern = 76, RuleBindingPattern = 77, 
+    RuleTuplePattern = 78, RuleVariantPatternField = 79, RuleForStatement = 80, 
+    RuleForInitializer = 81, RuleLocalVarInitializer = 82, RuleLocalVarDeclaration = 83, 
+    RuleForIterator = 84, RuleWhileStatement = 85, RuleDoWhileStatement = 86, 
+    RuleReturnStatement = 87, RuleLabeledStatement = 88, RuleBreakStatement = 89, 
+    RuleContinueStatement = 90, RuleDeleteStatement = 91, RuleExpression = 92, 
+    RuleAssignment = 93, RuleAssignmentOperator = 94, RuleLambdaExpression = 95, 
+    RuleCaptureList = 96, RuleCaptureDefault = 97, RuleCaptureItem = 98, 
+    RuleLambdaParameterList = 99, RuleLambdaParameter = 100, RulePipe = 101, 
+    RulePipeTarget = 102, RuleTernary = 103, RuleLogicOr = 104, RuleLogicAnd = 105, 
+    RuleBitwiseOr = 106, RuleBitwiseXor = 107, RuleBitwiseAnd = 108, RuleEquality = 109, 
+    RuleRelational = 110, RuleShift = 111, RuleAdditive = 112, RuleMultiplicative = 113, 
+    RuleCastExpression = 114, RuleUnaryExpression = 115, RulePostfixExpression = 116, 
+    RulePrimaryExpression = 117, RuleArrayLiteral = 118, RulePostfixOperation = 119, 
+    RuleNewExpression = 120, RuleCallArguments = 121, RuleArgumentList = 122, 
+    RuleElementAccess = 123, RuleMemberAccess = 124, RuleTupleExpression = 125, 
+    RuleTypeIdentifier = 126, RulePrimitiveType = 127, RuleFunctionType = 128, 
+    RuleTypeList = 129, RuleTupleType = 130, RuleTypeModifier = 131, RuleRvalueReferenceLevel = 132, 
+    RuleReferenceLevel = 133, RuleArrayDimension = 134, RulePointerLevel = 135, 
+    RuleAccessModifier = 136, RuleStaticModifier = 137, RuleAbstractModifier = 138, 
+    RuleQualifiedName = 139, RulePrefixOperator = 140, RuleIncrementDecrementOperator = 141, 
+    RuleTypeSizeOrAlign = 142, RuleString = 143, RuleStringPart = 144
   };
 
   explicit MingusParser(antlr4::TokenStream *input);
@@ -160,6 +160,8 @@ public:
   class FunctionDeclarationContext;
   class ReturnTypeContext;
   class TypeParameterListContext;
+  class TypeParameterContext;
+  class TypeParameterBoundContext;
   class TypeArgumentListContext;
   class DefinitionParametersContext;
   class ParameterListContext;
@@ -1133,8 +1135,8 @@ public:
     TypeParameterListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode *SmallerOperator();
-    std::vector<antlr4::tree::TerminalNode *> Identifier();
-    antlr4::tree::TerminalNode* Identifier(size_t i);
+    std::vector<TypeParameterContext *> typeParameter();
+    TypeParameterContext* typeParameter(size_t i);
     antlr4::tree::TerminalNode *GreaterOperator();
     std::vector<antlr4::tree::TerminalNode *> CommaSeparator();
     antlr4::tree::TerminalNode* CommaSeparator(size_t i);
@@ -1147,6 +1149,42 @@ public:
   };
 
   TypeParameterListContext* typeParameterList();
+
+  class  TypeParameterContext : public antlr4::ParserRuleContext {
+  public:
+    TypeParameterContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *Identifier();
+    antlr4::tree::TerminalNode *ColonOperator();
+    std::vector<TypeParameterBoundContext *> typeParameterBound();
+    TypeParameterBoundContext* typeParameterBound(size_t i);
+    std::vector<antlr4::tree::TerminalNode *> PlusOperator();
+    antlr4::tree::TerminalNode* PlusOperator(size_t i);
+
+    virtual void enterRule(antlr4::tree::ParseTreeListener *listener) override;
+    virtual void exitRule(antlr4::tree::ParseTreeListener *listener) override;
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  TypeParameterContext* typeParameter();
+
+  class  TypeParameterBoundContext : public antlr4::ParserRuleContext {
+  public:
+    TypeParameterBoundContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    QualifiedNameContext *qualifiedName();
+    TypeArgumentListContext *typeArgumentList();
+
+    virtual void enterRule(antlr4::tree::ParseTreeListener *listener) override;
+    virtual void exitRule(antlr4::tree::ParseTreeListener *listener) override;
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+   
+  };
+
+  TypeParameterBoundContext* typeParameterBound();
 
   class  TypeArgumentListContext : public antlr4::ParserRuleContext {
   public:

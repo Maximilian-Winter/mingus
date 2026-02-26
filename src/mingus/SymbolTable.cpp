@@ -493,6 +493,7 @@ std::shared_ptr<FunctionSymbol> SymbolTable::getOrCreateMonomorphization(
     mono->isStatic = tmpl->isStatic;
     mono->hasThisParam = tmpl->hasThisParam;
     mono->isVariadic = tmpl->isVariadic;
+    mono->typeParameterConstraints = tmpl->typeParameterConstraints;
 
     monomorphizationCache_[key] = mono;
     return mono;
@@ -612,6 +613,7 @@ std::shared_ptr<StructSymbol> SymbolTable::getOrCreateStructMonomorphization(
     mono->genericTemplate = tmpl;
     mono->typeArguments = typeArgs;
     mono->genericASTNode = tmpl->genericASTNode;
+    mono->typeParameterConstraints = tmpl->typeParameterConstraints;
     mono->isPacked = tmpl->isPacked;
     mono->alignment = tmpl->alignment;
 
@@ -661,6 +663,7 @@ std::shared_ptr<ClassSymbol> SymbolTable::getOrCreateClassMonomorphization(
     mono->genericTemplate = tmpl;
     mono->typeArguments = typeArgs;
     mono->genericASTNode = tmpl->genericASTNode;
+    mono->typeParameterConstraints = tmpl->typeParameterConstraints;
     mono->isAbstract = tmpl->isAbstract;
 
     // Set symbolScope_ so getQualifiedName() can walk Module_Class_member
@@ -780,6 +783,7 @@ std::shared_ptr<InterfaceSymbol> SymbolTable::getOrCreateInterfaceMonomorphizati
     mono->genericTemplate = tmpl;
     mono->typeArguments = typeArgs;
     mono->genericASTNode = tmpl->genericASTNode;
+    mono->typeParameterConstraints = tmpl->typeParameterConstraints;
 
     // Substitute method signatures
     for (size_t mi = 0; mi < tmpl->methods.size(); mi++) {

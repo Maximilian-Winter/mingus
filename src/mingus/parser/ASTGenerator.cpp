@@ -797,10 +797,28 @@ std::any ASTGenerator::visitClassDeclaration(
     cls->isStatic = ctx->staticModifier() != nullptr;
     cls->isAbstract = ctx->abstractModifier() != nullptr;
 
-    // Generic type parameters: class Box<T> { ... }
+    // Generic type parameters: class Box<T: Printable> { ... }
     if (ctx->typeParameterList()) {
-        for (auto* id : ctx->typeParameterList()->Identifier()) {
-            cls->typeParameters.push_back(id->getText());
+        for (auto* tpCtx : ctx->typeParameterList()->typeParameter()) {
+            cls->typeParameters.push_back(tpCtx->Identifier()->getText());
+
+            std::vector<std::shared_ptr<TypeNode>> constraints;
+            for (auto* boundCtx : tpCtx->typeParameterBound()) {
+                auto parts = parseQualifiedName(boundCtx->qualifiedName());
+                if (!parts.empty()) {
+                    auto namedType = std::make_shared<NamedTypeNode>();
+                    namedType->qualifiedName = parts;
+                    namedType->debugInfo = makeDebugInfo(boundCtx);
+                    if (boundCtx->typeArgumentList()) {
+                        for (auto* typeIdCtx : boundCtx->typeArgumentList()->typeIdentifier()) {
+                            auto typeArg = anyToNode<TypeNode>(visitTypeIdentifier(typeIdCtx));
+                            if (typeArg) namedType->typeArguments.push_back(typeArg);
+                        }
+                    }
+                    constraints.push_back(namedType);
+                }
+            }
+            cls->typeParameterConstraints.push_back(std::move(constraints));
         }
     }
 
@@ -897,10 +915,28 @@ std::any ASTGenerator::visitInterfaceDeclaration(
     iface->name = ctx->Identifier()->getText();
     iface->accessModifier = parseAccessModifier(ctx->accessModifier());
 
-    // Generic type parameters: interface Getter<T> { ... }
+    // Generic type parameters: interface Getter<T: Comparable> { ... }
     if (ctx->typeParameterList()) {
-        for (auto* id : ctx->typeParameterList()->Identifier()) {
-            iface->typeParameters.push_back(id->getText());
+        for (auto* tpCtx : ctx->typeParameterList()->typeParameter()) {
+            iface->typeParameters.push_back(tpCtx->Identifier()->getText());
+
+            std::vector<std::shared_ptr<TypeNode>> constraints;
+            for (auto* boundCtx : tpCtx->typeParameterBound()) {
+                auto parts = parseQualifiedName(boundCtx->qualifiedName());
+                if (!parts.empty()) {
+                    auto namedType = std::make_shared<NamedTypeNode>();
+                    namedType->qualifiedName = parts;
+                    namedType->debugInfo = makeDebugInfo(boundCtx);
+                    if (boundCtx->typeArgumentList()) {
+                        for (auto* typeIdCtx : boundCtx->typeArgumentList()->typeIdentifier()) {
+                            auto typeArg = anyToNode<TypeNode>(visitTypeIdentifier(typeIdCtx));
+                            if (typeArg) namedType->typeArguments.push_back(typeArg);
+                        }
+                    }
+                    constraints.push_back(namedType);
+                }
+            }
+            iface->typeParameterConstraints.push_back(std::move(constraints));
         }
     }
 
@@ -928,10 +964,28 @@ std::any ASTGenerator::visitStructDeclaration(
         parseLayoutAttributes(ctx->attribute(), strct->isPacked, strct->alignment);
     }
 
-    // Generic type parameters: struct Pair<T, U> { ... }
+    // Generic type parameters: struct Pair<T: Printable, U> { ... }
     if (ctx->typeParameterList()) {
-        for (auto* id : ctx->typeParameterList()->Identifier()) {
-            strct->typeParameters.push_back(id->getText());
+        for (auto* tpCtx : ctx->typeParameterList()->typeParameter()) {
+            strct->typeParameters.push_back(tpCtx->Identifier()->getText());
+
+            std::vector<std::shared_ptr<TypeNode>> constraints;
+            for (auto* boundCtx : tpCtx->typeParameterBound()) {
+                auto parts = parseQualifiedName(boundCtx->qualifiedName());
+                if (!parts.empty()) {
+                    auto namedType = std::make_shared<NamedTypeNode>();
+                    namedType->qualifiedName = parts;
+                    namedType->debugInfo = makeDebugInfo(boundCtx);
+                    if (boundCtx->typeArgumentList()) {
+                        for (auto* typeIdCtx : boundCtx->typeArgumentList()->typeIdentifier()) {
+                            auto typeArg = anyToNode<TypeNode>(visitTypeIdentifier(typeIdCtx));
+                            if (typeArg) namedType->typeArguments.push_back(typeArg);
+                        }
+                    }
+                    constraints.push_back(namedType);
+                }
+            }
+            strct->typeParameterConstraints.push_back(std::move(constraints));
         }
     }
 
@@ -1075,10 +1129,29 @@ std::any ASTGenerator::visitFunctionDeclaration(
     fn->isStatic   = ctx->staticModifier()   != nullptr;
     fn->isAbstract = ctx->abstractModifier() != nullptr;
 
-    // Generic type parameters: func foo<T, U>(...)
+    // Generic type parameters: func foo<T: Printable, U>(...)
     if (ctx->typeParameterList()) {
-        for (auto* id : ctx->typeParameterList()->Identifier()) {
-            fn->typeParameters.push_back(id->getText());
+        for (auto* tpCtx : ctx->typeParameterList()->typeParameter()) {
+            fn->typeParameters.push_back(tpCtx->Identifier()->getText());
+
+            // Parse constraint bounds: T: Printable + HasSize
+            std::vector<std::shared_ptr<TypeNode>> constraints;
+            for (auto* boundCtx : tpCtx->typeParameterBound()) {
+                auto parts = parseQualifiedName(boundCtx->qualifiedName());
+                if (!parts.empty()) {
+                    auto namedType = std::make_shared<NamedTypeNode>();
+                    namedType->qualifiedName = parts;
+                    namedType->debugInfo = makeDebugInfo(boundCtx);
+                    if (boundCtx->typeArgumentList()) {
+                        for (auto* typeIdCtx : boundCtx->typeArgumentList()->typeIdentifier()) {
+                            auto typeArg = anyToNode<TypeNode>(visitTypeIdentifier(typeIdCtx));
+                            if (typeArg) namedType->typeArguments.push_back(typeArg);
+                        }
+                    }
+                    constraints.push_back(namedType);
+                }
+            }
+            fn->typeParameterConstraints.push_back(std::move(constraints));
         }
     }
 

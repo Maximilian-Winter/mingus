@@ -341,7 +341,15 @@ returnType
     ;
 
 typeParameterList
-    : SmallerOperator Identifier (CommaSeparator Identifier)* GreaterOperator
+    : SmallerOperator typeParameter (CommaSeparator typeParameter)* GreaterOperator
+    ;
+
+typeParameter
+    : Identifier ( ColonOperator typeParameterBound ( PlusOperator typeParameterBound )* )?
+    ;
+
+typeParameterBound
+    : qualifiedName typeArgumentList?
     ;
 
 typeArgumentList

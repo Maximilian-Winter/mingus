@@ -1,0 +1,10 @@
+=== Test 1: Single constraint ===
+hello
+=== Test 2: Multiple constraints ===
+[size=5] Container(5)
+=== Test 3: Single constraint with different type ===
+Container(5)
+=== Test 4: Mixed constrained and unconstrained ===
+wrap(42): hello
+=== Test 5: Turbofish with constraint ===
+Container(5)
