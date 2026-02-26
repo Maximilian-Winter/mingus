@@ -1,0 +1,185 @@
+// Example 13: SQLite3 C FFI — Real-World Database Operations
+//
+// Demonstrates the Mingus C FFI system against SQLite3, a universally-known
+// complex C library. Showcases: opaque types, pointer-to-pointer output params,
+// const byte* returns, #define constants, prepared statements, parameter
+// binding, and column access.
+//
+// Full auto-generated bindings: SQLite3.mingus (via mingus_bind_gen.py)
+// Build: see build_sqlite3_example.bat
+
+module SQLite3Example
+{
+    // === C standard library ===
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // === SQLite3 FFI Bindings (curated subset) ===
+    // Full auto-generated bindings available in SQLite3.mingus
+    extern {
+        // Opaque handles — forward-declared C structs with no body
+        opaque sqlite3;
+        opaque sqlite3_stmt;
+
+        // Lifecycle
+        func sqlite3_open(string filename, sqlite3** ppDb) => int;
+        func sqlite3_close(sqlite3* db) => int;
+
+        // Execute SQL directly (callback=null for DDL/DML)
+        func sqlite3_exec(sqlite3* db, string sql, byte* callback,
+                          byte* arg, byte* errmsg) => int;
+
+        // Prepared statements
+        func sqlite3_prepare_v2(sqlite3* db, string sql, int nByte,
+                                sqlite3_stmt** ppStmt, byte* pzTail) => int;
+        func sqlite3_step(sqlite3_stmt* stmt) => int;
+        func sqlite3_finalize(sqlite3_stmt* stmt) => int;
+        func sqlite3_reset(sqlite3_stmt* stmt) => int;
+
+        // Bind parameters (1-indexed)
+        func sqlite3_bind_int(sqlite3_stmt* stmt, int idx, int value) => int;
+        func sqlite3_bind_double(sqlite3_stmt* stmt, int idx, double value) => int;
+        func sqlite3_bind_text(sqlite3_stmt* stmt, int idx, string value,
+                               int nByte, byte* dtor) => int;
+
+        // Read columns (0-indexed)
+        func sqlite3_column_int(sqlite3_stmt* stmt, int iCol) => int;
+        func sqlite3_column_double(sqlite3_stmt* stmt, int iCol) => double;
+        func sqlite3_column_text(sqlite3_stmt* stmt, int iCol) => const byte*;
+        func sqlite3_column_count(sqlite3_stmt* stmt) => int;
+
+        // Error reporting
+        func sqlite3_errmsg(sqlite3* db) => const byte*;
+    }
+
+    // === SQLite3 Result Codes (from #define constants) ===
+    const int SQLITE_OK    = 0;
+    const int SQLITE_ERROR = 1;
+    const int SQLITE_ROW   = 100;
+    const int SQLITE_DONE  = 101;
+
+    // === Helper: check SQLite result and report errors ===
+    func check(int rc, sqlite3* db, string context) => void
+    {
+        if (rc != SQLITE_OK)
+        {
+            printf("ERROR in %s: %s\n", context, sqlite3_errmsg(db));
+        }
+    }
+
+    // === Helper: execute SQL statement via sqlite3_exec ===
+    func execSQL(sqlite3* db, string sql) => void
+    {
+        var rc = sqlite3_exec(db, sql, null, null, null);
+        check(rc, db, "exec");
+    }
+
+    // === Main program ===
+    func main() => int
+    {
+        puts("=== Mingus SQLite3 FFI Example ===");
+        puts("");
+
+        // --- Step 1: Open in-memory database ---
+        // Demonstrates: opaque type (sqlite3), pointer-to-pointer output param (&db)
+        puts("--- Step 1: Open database ---");
+        sqlite3* db = null;
+        var rc = sqlite3_open(":memory:", &db);
+        check(rc, db, "open");
+        puts("Database opened successfully.");
+        puts("");
+
+        // --- Step 2: Create table ---
+        // Demonstrates: sqlite3_exec for DDL, string literals passed to C
+        puts("--- Step 2: Create table ---");
+        execSQL(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL)");
+        puts("Table 'users' created.");
+        puts("");
+
+        // --- Step 3: Insert data using prepared statements ---
+        // Demonstrates: sqlite3_stmt opaque type, pointer-to-pointer (&stmt),
+        //               bind_text (string to C), bind_double, step/reset cycle
+        puts("--- Step 3: Insert data (prepared statements) ---");
+        sqlite3_stmt* stmt = null;
+        rc = sqlite3_prepare_v2(db,
+            "INSERT INTO users (name, score) VALUES (?, ?)",
+            -1, &stmt, null);
+        check(rc, db, "prepare insert");
+
+        // Insert Alice
+        sqlite3_bind_text(stmt, 1, "Alice", -1, null);
+        sqlite3_bind_double(stmt, 2, 95.5);
+        sqlite3_step(stmt);
+        printf("Inserted: Alice (score 95.50)\n");
+        sqlite3_reset(stmt);
+
+        // Insert Bob
+        sqlite3_bind_text(stmt, 1, "Bob", -1, null);
+        sqlite3_bind_double(stmt, 2, 87.3);
+        sqlite3_step(stmt);
+        printf("Inserted: Bob (score 87.30)\n");
+        sqlite3_reset(stmt);
+
+        // Insert Charlie
+        sqlite3_bind_text(stmt, 1, "Charlie", -1, null);
+        sqlite3_bind_double(stmt, 2, 92.1);
+        sqlite3_step(stmt);
+        printf("Inserted: Charlie (score 92.10)\n");
+        sqlite3_reset(stmt);
+
+        sqlite3_finalize(stmt);
+        puts("");
+
+        // --- Step 4: Query all rows ---
+        // Demonstrates: step loop (SQLITE_ROW), column_int, column_text (const byte*),
+        //               column_double, column access by index
+        puts("--- Step 4: Query all rows ---");
+        rc = sqlite3_prepare_v2(db,
+            "SELECT id, name, score FROM users ORDER BY id",
+            -1, &stmt, null);
+        check(rc, db, "prepare select");
+
+        var count = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            var id    = sqlite3_column_int(stmt, 0);
+            var name  = sqlite3_column_text(stmt, 1);
+            var score = sqlite3_column_double(stmt, 2);
+            printf("  [%d] %-10s score=%.2f\n", id, name, score);
+            count = count + 1;
+        }
+        printf("%d rows returned.\n", count);
+        sqlite3_finalize(stmt);
+        puts("");
+
+        // --- Step 5: Parameterized query (score > 90.0) ---
+        // Demonstrates: bind_double for WHERE clause, filtered results
+        puts("--- Step 5: Parameterized query (score > 90.0) ---");
+        rc = sqlite3_prepare_v2(db,
+            "SELECT id, name, score FROM users WHERE score > ? ORDER BY id",
+            -1, &stmt, null);
+        check(rc, db, "prepare filtered");
+
+        sqlite3_bind_double(stmt, 1, 90.0);
+        count = 0;
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            var id    = sqlite3_column_int(stmt, 0);
+            var name  = sqlite3_column_text(stmt, 1);
+            var score = sqlite3_column_double(stmt, 2);
+            printf("  [%d] %-10s score=%.2f\n", id, name, score);
+            count = count + 1;
+        }
+        printf("%d rows returned.\n", count);
+        sqlite3_finalize(stmt);
+        puts("");
+
+        // --- Cleanup ---
+        puts("--- Cleanup ---");
+        sqlite3_close(db);
+        puts("Database closed.");
+        puts("Done.");
+
+        return 0;
+    }
+}
