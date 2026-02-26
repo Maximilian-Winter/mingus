@@ -192,6 +192,33 @@ class Dog : Animal
 }
 ```
 
+## Abstract Classes
+
+Mark a base class as `abstract` to indicate it is not meant to be instantiated directly — only through derived classes:
+
+```mingus
+abstract class AudioEffect
+{
+    double param;
+
+    constructor(double p) { this.param = p; }
+
+    func paramValue() => double { return this.param; }
+}
+
+class GainEffect : AudioEffect
+{
+    constructor(double g) : super(g) {}
+
+    func process(double sample) => double
+    {
+        return sample * this.paramValue();
+    }
+}
+```
+
+Abstract classes can have fields, constructors, and method implementations. Derived classes call the abstract class constructor via `super(args)` and can override methods.
+
 ## Interfaces
 
 Interfaces define method contracts that classes must implement:
@@ -515,7 +542,6 @@ printf("arr[0] = %d\n", arr[0]);   // 10
 ## Known Limitations
 
 - No multiple inheritance (single base class + multiple interfaces)
-- No abstract classes — use interfaces for pure virtual contracts
 - No `final` or `sealed` classes
 - No property syntax (getters/setters are regular methods)
 - No private constructors

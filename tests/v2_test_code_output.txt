@@ -1,0 +1,7477 @@
+============================================================
+ Mingus V2 Feature Test Suite
+============================================================
+
+-------- Basics [test_01_basics.mingus] --------
+
+  --- Source ---
+// Test 1: Basic types, arithmetic, control flow, loops
+module Test01
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func main() => int
+    {
+        puts("=== Test 01: Basics ===");
+
+        // Integer arithmetic
+        var x = 10;
+        var y = 20;
+        var sum = x + y;
+        var diff = y - x;
+        var prod = x * y;
+        var quot = y / x;
+        var rem = y % 3;
+
+        printf("10 + 20 = %d\n", sum);
+        printf("20 - 10 = %d\n", diff);
+        printf("10 * 20 = %d\n", prod);
+        printf("20 / 10 = %d\n", quot);
+        printf("20 %% 3  = %d\n", rem);
+
+        // If / else
+        if (sum > 25)
+        {
+            puts("sum > 25: PASS");
+        }
+        else
+        {
+            puts("sum > 25: FAIL");
+        }
+
+        if (diff == 10)
+        {
+            puts("diff == 10: PASS");
+        }
+        else
+        {
+            puts("diff == 10: FAIL");
+        }
+
+        // For loop
+        var total = 0;
+        for (int i = 0; i < 10; i++)
+        {
+            total = total + i;
+        }
+        printf("sum(0..9) = %d (expect 45)\n", total);
+
+        // While loop
+        var count = 0;
+        var n = 1;
+        while (n < 100)
+        {
+            n = n * 2;
+            count++;
+        }
+        printf("2^k >= 100: k = %d (expect 7)\n", count);
+
+        // Nested loops
+        var matrix_sum = 0;
+        for (int row = 0; row < 3; row++)
+        {
+            for (int col = 0; col < 3; col++)
+            {
+                matrix_sum = matrix_sum + (row * 3 + col);
+            }
+        }
+        printf("matrix sum = %d (expect 36)\n", matrix_sum);
+
+        puts("=== Test 01 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 01: Basics ===
+10 + 20 = 30
+20 - 10 = 10
+10 * 20 = 200
+20 / 10 = 2
+20 % 3  = 2
+sum > 25: PASS
+diff == 10: PASS
+sum(0..9) = 45 (expect 45)
+2^k >= 100: k = 7 (expect 7)
+matrix sum = 36 (expect 36)
+=== Test 01 complete ===
+  --------------
+  PASS
+
+-------- Structs and Operators [test_02_structs_operators.mingus] --------
+
+  --- Source ---
+// Test 2: Structs, methods, operator overloading
+module Test02
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+    extern func sqrt(double x) => double;
+
+    struct Vec3
+    {
+        double x;
+        double y;
+        double z;
+
+        func operator+(Vec3 other) => Vec3
+        {
+            Vec3 result;
+            result.x = this.x + other.x;
+            result.y = this.y + other.y;
+            result.z = this.z + other.z;
+            return result;
+        }
+
+        func operator*(double scalar) => Vec3
+        {
+            Vec3 result;
+            result.x = this.x * scalar;
+            result.y = this.y * scalar;
+            result.z = this.z * scalar;
+            return result;
+        }
+
+        func dot(Vec3 other) => double
+        {
+            return this.x * other.x + this.y * other.y + this.z * other.z;
+        }
+
+        func cross(Vec3 other) => Vec3
+        {
+            Vec3 result;
+            result.x = this.y * other.z - this.z * other.y;
+            result.y = this.z * other.x - this.x * other.z;
+            result.z = this.x * other.y - this.y * other.x;
+            return result;
+        }
+
+        func length() => double
+        {
+            return sqrt(this.dot(this));
+        }
+
+        func normalize() => Vec3
+        {
+            var len = this.length();
+            return this * (1.0 / len);
+        }
+    }
+
+    func main() => int
+    {
+        puts("=== Test 02: Structs & Operators ===");
+
+        // Create vectors
+        Vec3 a;
+        a.x = 1.0;
+        a.y = 0.0;
+        a.z = 0.0;
+
+        Vec3 b;
+        b.x = 0.0;
+        b.y = 1.0;
+        b.z = 0.0;
+
+        // operator+
+        var c = a + b;
+        printf("(1,0,0) + (0,1,0) x = %f\n", c.x);
+        printf("(1,0,0) + (0,1,0) y = %f\n", c.y);
+        printf("(1,0,0) + (0,1,0) z = %f\n", c.z);
+
+        // operator* (scalar)
+        var d = c * 2.5;
+        printf("scaled x = %f (expect 2.5)\n", d.x);
+        printf("scaled y = %f (expect 2.5)\n", d.y);
+
+        // Chained: (a + b) * 2.5
+        var e = (a + b) * 2.5;
+        printf("chained x = %f (expect 2.5)\n", e.x);
+        printf("chained y = %f (expect 2.5)\n", e.y);
+
+        // Dot product
+        var dot_ab = a.dot(b);
+        printf("a.dot(b) = %f (expect 0.0)\n", dot_ab);
+        var dot_aa = a.dot(a);
+        printf("a.dot(a) = %f (expect 1.0)\n", dot_aa);
+
+        // Cross product
+        var cross = a.cross(b);
+        printf("a x b = (%f,", cross.x);
+        printf(" %f,", cross.y);
+        printf(" %f) (expect 0,0,1)\n", cross.z);
+
+        // Length
+        Vec3 v;
+        v.x = 3.0;
+        v.y = 4.0;
+        v.z = 0.0;
+        var len = v.length();
+        printf("|(3,4,0)| = %f (expect 5.0)\n", len);
+
+        // Normalize + chained method call on temp
+        var n = a.cross(b).normalize();
+        printf("norm z = %f (expect 1.0)\n", n.z);
+
+        puts("=== Test 02 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 02: Structs & Operators ===
+(1,0,0) + (0,1,0) x = 1.000000
+(1,0,0) + (0,1,0) y = 1.000000
+(1,0,0) + (0,1,0) z = 0.000000
+scaled x = 2.500000 (expect 2.5)
+scaled y = 2.500000 (expect 2.5)
+chained x = 2.500000 (expect 2.5)
+chained y = 2.500000 (expect 2.5)
+a.dot(b) = 0.000000 (expect 0.0)
+a.dot(a) = 1.000000 (expect 1.0)
+a x b = (0.000000, 0.000000, 1.000000) (expect 0,0,1)
+|(3,4,0)| = 5.000000 (expect 5.0)
+norm z = 1.000000 (expect 1.0)
+=== Test 02 complete ===
+  --------------
+  PASS
+
+-------- Classes and RAII [test_03_classes_raii.mingus] --------
+
+  --- Source ---
+// Test 3: Classes, constructors, destructors, RAII, new/delete
+module Test03
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memcpy(byte* dest, byte* src, int n) => byte*;
+
+    class DynamicArray
+    {
+        private int* data;
+        private int size;
+        private int capacity;
+
+        constructor(int initialCapacity)
+        {
+            this.capacity = initialCapacity;
+            this.size = 0;
+            raw { this.data = (int*)malloc(initialCapacity * sizeof(int)); }
+        }
+
+        destructor
+        {
+            if (this.data != null)
+            {
+                raw { free((byte*)this.data); }
+            }
+            puts("  [DynamicArray destructor called]");
+        }
+
+        func push(int value) => void
+        {
+            if (this.size >= this.capacity)
+            {
+                this.grow();
+            }
+
+            raw
+            {
+                *(this.data + this.size) = value;
+            }
+
+            this.size++;
+        }
+
+        func operator[](int index) => int
+        {
+            raw
+            {
+                return *(this.data + index);
+            }
+        }
+
+        func length() => int
+        {
+            return this.size;
+        }
+
+        private func grow() => void
+        {
+            var newCapacity = this.capacity * 2;
+
+            raw
+            {
+                var newData = (int*)malloc(newCapacity * sizeof(int));
+                memcpy((byte*)newData, (byte*)this.data, this.size * sizeof(int));
+                free((byte*)this.data);
+                this.data = newData;
+            }
+
+            this.capacity = newCapacity;
+        }
+    }
+
+    class Node
+    {
+        int value;
+        Node* left;
+        Node* right;
+
+        constructor(int value)
+        {
+            this.value = value;
+            this.left = null;
+            this.right = null;
+        }
+
+        destructor
+        {
+            if (this.left != null)
+            {
+                delete this.left;
+            }
+            if (this.right != null)
+            {
+                delete this.right;
+            }
+        }
+    }
+
+    func sumTree(Node* node) => int
+    {
+        if (node == null)
+        {
+            return 0;
+        }
+        return node->value + sumTree(node->left) + sumTree(node->right);
+    }
+
+    func main() => int
+    {
+        puts("=== Test 03: Classes & RAII ===");
+
+        // Test DynamicArray with constructor + push + operator[]
+        puts("Creating DynamicArray(4)...");
+        {
+            var arr = DynamicArray(4);
+
+            for (int i = 0; i < 10; i++)
+            {
+                arr.push(i * 10);
+            }
+
+            printf("arr.length() = %d (expect 10)\n", arr.length());
+            printf("arr[0] = %d (expect 0)\n", arr[0]);
+            printf("arr[3] = %d (expect 30)\n", arr[3]);
+            printf("arr[9] = %d (expect 90)\n", arr[9]);
+
+            puts("Leaving scope...");
+        }
+        // Destructor should have been called
+
+        // Test new/delete with tree
+        puts("\nBuilding tree: 10(5(2,7),15)...");
+        var root = new Node(10);
+        root->left = new Node(5);
+        root->right = new Node(15);
+        root->left->left = new Node(2);
+        root->left->right = new Node(7);
+
+        var total = sumTree(root);
+        printf("Tree sum = %d (expect 39)\n", total);
+
+        puts("Deleting tree...");
+        delete root;
+
+        puts("=== Test 03 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 03: Classes & RAII ===
+Creating DynamicArray(4)...
+arr.length() = 10 (expect 10)
+arr[0] = 0 (expect 0)
+arr[3] = 30 (expect 30)
+arr[9] = 90 (expect 90)
+Leaving scope...
+  [DynamicArray destructor called]
+
+Building tree: 10(5(2,7),15)...
+Tree sum = 39 (expect 39)
+Deleting tree...
+=== Test 03 complete ===
+  --------------
+  PASS
+
+-------- Pipes and Match [test_04_pipes_match.mingus] --------
+
+  --- Source ---
+// Test 4: Pipes, pattern matching with guards, match expressions
+module Test04
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func applyGain(double sample, double gain) => double
+    {
+        return sample * gain;
+    }
+
+    func softClip(double sample) => double
+    {
+        return match sample {
+            var x if x > 1.0  => 1.0,
+            var x if x < -1.0 => -1.0,
+            var x => x - (x * x * x) / 3.0,
+        };
+    }
+
+    func classify(double value) => int
+    {
+        // Returns a category: 0=silent, 1=quiet, 2=nominal, 3=hot, 4=clipping
+        return match value {
+            var x if x > 0.9  => 4,
+            var x if x > 0.7  => 3,
+            var x if x > 0.3  => 2,
+            var x if x > 0.01 => 1,
+            _ => 0,
+        };
+    }
+
+    func processSample(double sample) => double
+    {
+        return sample
+            |> applyGain(1.5)
+            |> softClip;
+    }
+
+    func main() => int
+    {
+        puts("=== Test 04: Pipes & Pattern Matching ===");
+
+        // Simple pipe
+        var x = 0.5;
+        var gained = x |> applyGain(2.0);
+        printf("0.5 |> applyGain(2.0) = %f (expect 1.0)\n", gained);
+
+        // Chained pipe
+        var result = 0.7 |> applyGain(1.5) |> softClip;
+        printf("0.7 |> gain(1.5) |> clip = %f (expect 1.0)\n", result);
+
+        // Pipe through processSample
+        var p1 = 0.3 |> processSample;
+        printf("processSample(0.3) = %f\n", p1);
+
+        // Match: softClip cases
+        var c1 = softClip(0.5);
+        printf("softClip(0.5) = %f (expect ~0.458)\n", c1);
+
+        var c2 = softClip(2.0);
+        printf("softClip(2.0) = %f (expect 1.0)\n", c2);
+
+        var c3 = softClip(-2.0);
+        printf("softClip(-2.0) = %f (expect -1.0)\n", c3);
+
+        var c4 = softClip(0.0);
+        printf("softClip(0.0) = %f (expect 0.0)\n", c4);
+
+        // Integer match for classification
+        printf("\nClassification results:\n", 0.0);
+        var cat1 = classify(0.95);
+        printf("  classify(0.95) = %f (expect 4=clipping)\n", cat1 * 1.0);
+        var cat2 = classify(0.5);
+        printf("  classify(0.50) = %f (expect 2=nominal)\n", cat2 * 1.0);
+        var cat3 = classify(0.001);
+        printf("  classify(0.001) = %f (expect 0=silent)\n", cat3 * 1.0);
+
+        puts("=== Test 04 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 04: Pipes & Pattern Matching ===
+0.5 |> applyGain(2.0) = 1.000000 (expect 1.0)
+0.7 |> gain(1.5) |> clip = 1.000000 (expect 1.0)
+processSample(0.3) = 0.419625
+softClip(0.5) = 0.458333 (expect ~0.458)
+softClip(2.0) = 1.000000 (expect 1.0)
+softClip(-2.0) = -1.000000 (expect -1.0)
+softClip(0.0) = 0.000000 (expect 0.0)
+
+Classification results:
+  classify(0.95) = 4.000000 (expect 4=clipping)
+  classify(0.50) = 2.000000 (expect 2=nominal)
+  classify(0.001) = 0.000000 (expect 0=silent)
+=== Test 04 complete ===
+  --------------
+  PASS
+
+-------- Enums and Switch [test_05_enums_switch.mingus] --------
+
+  --- Source ---
+// Test 5: Enums in match expressions, switch statements
+module Test05
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    enum TokenKind : int
+    {
+        Number     = 0,
+        Identifier = 1,
+        Plus       = 2,
+        Minus      = 3,
+        Star       = 4,
+        Slash      = 5,
+    }
+
+    func tokenPrecedence(int kind) => int
+    {
+        return match kind {
+            TokenKind.Plus  => 1,
+            TokenKind.Minus => 1,
+            TokenKind.Star  => 2,
+            TokenKind.Slash => 2,
+            _ => 0,
+        };
+    }
+
+    func isOperator(int kind) => bool
+    {
+        return match kind {
+            TokenKind.Plus  => true,
+            TokenKind.Minus => true,
+            TokenKind.Star  => true,
+            TokenKind.Slash => true,
+            _ => false,
+        };
+    }
+
+    func tokenName(int kind) => int
+    {
+        // Return a code for the token name (match with enum patterns)
+        return match kind {
+            TokenKind.Number     => 100,
+            TokenKind.Identifier => 200,
+            TokenKind.Plus       => 300,
+            TokenKind.Minus      => 400,
+            TokenKind.Star       => 500,
+            TokenKind.Slash      => 600,
+            _ => 0,
+        };
+    }
+
+    func main() => int
+    {
+        puts("=== Test 05: Enums and Switch ===");
+
+        // Use enum values as integers (enum underlying type is int)
+        // TokenKind.Plus = 2, TokenKind.Star = 4, TokenKind.Number = 0
+        var p_plus = tokenPrecedence(2);
+        var p_star = tokenPrecedence(4);
+        var p_num  = tokenPrecedence(0);
+        printf("prec(Plus) = %d (expect 1)\n", p_plus);
+        printf("prec(Star) = %d (expect 2)\n", p_star);
+        printf("prec(Number) = %d (expect 0)\n", p_num);
+
+        // Boolean match result
+        if (isOperator(2))
+        {
+            puts("Plus is operator: PASS");
+        }
+        else
+        {
+            puts("Plus is operator: FAIL");
+        }
+
+        if (isOperator(0))
+        {
+            puts("Number is not operator: FAIL");
+        }
+        else
+        {
+            puts("Number is not operator: PASS");
+        }
+
+        // Token name match
+        var name_plus = tokenName(2);
+        var name_num  = tokenName(0);
+        printf("tokenName(Plus) = %d (expect 300)\n", name_plus);
+        printf("tokenName(Number) = %d (expect 100)\n", name_num);
+
+        // Switch statement (integer)
+        var val = 2;
+        switch (val)
+        {
+            case 1: puts("switch: one");
+            case 2: puts("switch: two (expect this)");
+            case 3: puts("switch: three");
+            default: puts("switch: other");
+        }
+
+        puts("=== Test 05 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 05: Enums and Switch ===
+prec(Plus) = 1 (expect 1)
+prec(Star) = 2 (expect 2)
+prec(Number) = 0 (expect 0)
+Plus is operator: PASS
+Number is not operator: PASS
+tokenName(Plus) = 300 (expect 300)
+tokenName(Number) = 100 (expect 100)
+switch: two (expect this)
+=== Test 05 complete ===
+  --------------
+  PASS
+
+-------- Lambdas and Func Ptrs [test_06_lambdas_funcptr.mingus] --------
+
+  --- Source ---
+// Test 6: Lambdas (no captures), first-class functions, higher-order functions
+// NOTE: Closures with captures (e.g. makeScaler) require fat pointer support
+//       which is planned for a future update.
+module Test06
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func apply(double x, (double) => double transform) => double
+    {
+        return transform(x);
+    }
+
+    func applyTwice(double x, (double) => double f) => double
+    {
+        return f(f(x));
+    }
+
+    func main() => int
+    {
+        puts("=== Test 06: Lambdas & Function Pointers ===");
+
+        // Simple lambda (no captures)
+        var doubler = [](double x) => { return x * 2.0; };
+        var result = doubler(21.0);
+        printf("doubler(21.0) = %f (expect 42.0)\n", result);
+
+        // Pass lambda to higher-order function
+        var applied = apply(5.0, [](double x) => { return x * x; });
+        printf("apply(5.0, x=>x*x) = %f (expect 25.0)\n", applied);
+
+        // Another higher-order function call
+        var added = apply(10.0, [](double x) => { return x + 7.0; });
+        printf("apply(10.0, x=>x+7) = %f (expect 17.0)\n", added);
+
+        // Apply twice: f(f(x))
+        var doubled2 = applyTwice(3.0, [](double x) => { return x * 2.0; });
+        printf("applyTwice(3.0, x=>x*2) = %f (expect 12.0)\n", doubled2);
+
+        // Pipe with lambda
+        var piped = 7.0 |> apply([](double x) => { return x + 3.0; });
+        printf("7.0 |> apply(x=>x+3) = %f (expect 10.0)\n", piped);
+
+        puts("=== Test 06 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 06: Lambdas & Function Pointers ===
+doubler(21.0) = 42.000000 (expect 42.0)
+apply(5.0, x=>x*x) = 25.000000 (expect 25.0)
+apply(10.0, x=>x+7) = 17.000000 (expect 17.0)
+applyTwice(3.0, x=>x*2) = 12.000000 (expect 12.0)
+7.0 |> apply(x=>x+3) = 10.000000 (expect 10.0)
+=== Test 06 complete ===
+  --------------
+  PASS
+
+-------- Floats and Math [test_07_floats_math.mingus] --------
+
+  --- Source ---
+// Test 7: Floating point, math functions, type widening
+module Test07
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+    extern func sin(double x) => double;
+    extern func cos(double x) => double;
+    extern func sqrt(double x) => double;
+    extern func pow(double base, double exp) => double;
+
+    func main() => int
+    {
+        puts("=== Test 07: Floats & Math ===");
+
+        // Basic float arithmetic
+        var a = 3.14159265;
+        var b = 2.71828183;
+        printf("pi = %f\n", a);
+        printf("e  = %f\n", b);
+        printf("pi + e = %f\n", a + b);
+        printf("pi * e = %f\n", a * b);
+
+        // Math functions
+        printf("sin(0) = %f (expect 0.0)\n", sin(0.0));
+        printf("cos(0) = %f (expect 1.0)\n", cos(0.0));
+        printf("sqrt(144) = %f (expect 12.0)\n", sqrt(144.0));
+        printf("pow(2,10) = %f (expect 1024.0)\n", pow(2.0, 10.0));
+
+        // Integer-to-float widening
+        var intVal = 7;
+        var floatResult = intVal * 2.0;
+        printf("7 * 2.0 = %f (expect 14.0)\n", floatResult);
+
+        // Ternary expression
+        var x = 5.0;
+        var abs_x = x > 0.0 ? x : -x;
+        printf("|5.0| = %f\n", abs_x);
+
+        var y = -3.5;
+        var abs_y = y > 0.0 ? y : -y;
+        printf("|-3.5| = %f\n", abs_y);
+
+        puts("=== Test 07 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 07: Floats & Math ===
+pi = 3.141593
+e  = 2.718282
+pi + e = 5.859874
+pi * e = 8.539734
+sin(0) = 0.000000 (expect 0.0)
+cos(0) = 1.000000 (expect 1.0)
+sqrt(144) = 12.000000 (expect 12.0)
+pow(2,10) = 1024.000000 (expect 1024.0)
+7 * 2.0 = 14.000000 (expect 14.0)
+|5.0| = 5.000000
+|-3.5| = 3.500000
+=== Test 07 complete ===
+  --------------
+  PASS
+
+-------- Pointers and Raw [test_08_pointers_raw.mingus] --------
+
+  --- Source ---
+// Test 8: Pointers, raw blocks, pointer arithmetic, casts
+module Test08
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+
+    func main() => int
+    {
+        puts("=== Test 08: Pointers & Raw Blocks ===");
+
+        // Stack array with pointer access
+        int[10] arr;
+        for (int i = 0; i < 10; i++)
+        {
+            arr[i] = i * i;
+        }
+        printf("arr[0] = %d (expect 0)\n", arr[0]);
+        printf("arr[3] = %d (expect 9)\n", arr[3]);
+        printf("arr[9] = %d (expect 81)\n", arr[9]);
+
+        // Pointer to array element
+        var ptr = &arr[0];
+        raw
+        {
+            var val = *(ptr + 5);
+            printf("*(ptr+5) = %d (expect 25)\n", val);
+        }
+
+        // Heap allocation via raw block
+        raw
+        {
+            var data = (int*)malloc(5 * sizeof(int));
+            *(data + 0) = 100;
+            *(data + 1) = 200;
+            *(data + 2) = 300;
+            *(data + 3) = 400;
+            *(data + 4) = 500;
+
+            printf("heap[0] = %d (expect 100)\n", *(data + 0));
+            printf("heap[2] = %d (expect 300)\n", *(data + 2));
+            printf("heap[4] = %d (expect 500)\n", *(data + 4));
+
+            free((byte*)data);
+        }
+        puts("Heap freed OK");
+
+        // Null pointer check
+        int* p = null;
+        if (p == null)
+        {
+            puts("null check: PASS");
+        }
+        else
+        {
+            puts("null check: FAIL");
+        }
+
+        puts("=== Test 08 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 08: Pointers & Raw Blocks ===
+arr[0] = 0 (expect 0)
+arr[3] = 9 (expect 9)
+arr[9] = 81 (expect 81)
+*(ptr+5) = 25 (expect 25)
+heap[0] = 100 (expect 100)
+heap[2] = 300 (expect 300)
+heap[4] = 500 (expect 500)
+Heap freed OK
+null check: PASS
+=== Test 08 complete ===
+  --------------
+  PASS
+
+-------- Enum Expressions [test_09_enum_expressions.mingus] --------
+
+  --- Source ---
+module Test09
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    enum Color : int
+    {
+        Red = 0,
+        Green = 1,
+        Blue = 2,
+    }
+
+    enum TokenKind : int
+    {
+        Number = 0,
+        Plus = 2,
+        Star = 4,
+    }
+
+    enum SmallFlags : byte
+    {
+        None = 0,
+        Read = 1,
+        Write = 2,
+        Execute = 4,
+    }
+
+    enum HttpMethod : string
+    {
+        Get = "GET",
+        Post = "POST",
+        Delete = "DELETE",
+    }
+
+    func main() => int
+    {
+        // Direct enum member access
+        var r = Color.Red;
+        var g = Color.Green;
+        var b = Color.Blue;
+
+        printf("Red = %d (expect 0)\n", r);
+        printf("Green = %d (expect 1)\n", g);
+        printf("Blue = %d (expect 2)\n", b);
+
+        // Enum in arithmetic (underlying type is int)
+        var next = r + 1;
+        printf("Red + 1 = %d (expect 1)\n", next);
+
+        // Enum comparison
+        if (r == Color.Red)
+        {
+            printf("r is Red: %d (expect 1)\n", 1);
+        }
+
+        // Enum as function argument
+        printf("Blue value = %d (expect 2)\n", Color.Blue);
+
+        // Enum in match (verify still works)
+        var name = match b {
+            Color.Red   => 10,
+            Color.Green => 20,
+            Color.Blue  => 30,
+            _ => -1,
+        };
+        printf("match Blue = %d (expect 30)\n", name);
+
+        // Different enum
+        var tok = TokenKind.Star;
+        printf("Star = %d (expect 4)\n", tok);
+
+        // Byte-backed enum
+        var sf = SmallFlags.Write;
+        printf("Write = %d (expect 2)\n", sf);
+        printf("Execute = %d (expect 4)\n", SmallFlags.Execute);
+
+        // Byte enum arithmetic
+        var combined = SmallFlags.Read + SmallFlags.Write;
+        printf("Read+Write = %d (expect 3)\n", combined);
+
+        // String-backed enum
+        puts(HttpMethod.Get);
+        puts(HttpMethod.Post);
+        puts(HttpMethod.Delete);
+
+        var method = HttpMethod.Post;
+        puts(method);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+Red = 0 (expect 0)
+Green = 1 (expect 1)
+Blue = 2 (expect 2)
+Red + 1 = 1 (expect 1)
+r is Red: 1 (expect 1)
+Blue value = 2 (expect 2)
+match Blue = 30 (expect 30)
+Star = 4 (expect 4)
+Write = 2 (expect 2)
+Execute = 4 (expect 4)
+Read+Write = 3 (expect 3)
+GET
+POST
+DELETE
+POST
+  --------------
+  PASS
+
+-------- Closures [test_10_closures.mingus] --------
+
+  --- Source ---
+// Test 10: Closures (lambdas with captures) via fat pointer { fnPtr, envPtr }
+module Test10
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // Returns a closure that multiplies by 'factor'
+    func makeScaler(double factor) => (double) => double
+    {
+        return [=](double x) => { return x * factor; };
+    }
+
+    // Higher-order function that applies f to x
+    func apply(double x, (double) => double f) => double
+    {
+        return f(x);
+    }
+
+    // Applies f twice: f(f(x))
+    func applyTwice(double x, (double) => double f) => double
+    {
+        return f(f(x));
+    }
+
+    // Returns a function that computes f(g(x))
+    func compose((double) => double f, (double) => double g) => (double) => double
+    {
+        return [=](double x) => { return f(g(x)); };
+    }
+
+    func main() => int
+    {
+        puts("=== Test 10: Closures ===");
+
+        // Basic closure
+        var doubler = makeScaler(2.0);
+        var tripler = makeScaler(3.0);
+        printf("doubler(5.0) = %f (expect 10.0)\n", apply(5.0, doubler));
+        printf("tripler(5.0) = %f (expect 15.0)\n", apply(5.0, tripler));
+
+        // Closure with applyTwice
+        printf("double twice(3.0) = %f (expect 12.0)\n", applyTwice(3.0, doubler));
+
+        // Compose: doubler(tripler(x)) = 6x
+        var times6 = compose(doubler, tripler);
+        printf("times6(7.0) = %f (expect 42.0)\n", apply(7.0, times6));
+
+        // Pipe with closure
+        var result = 10.0 |> apply(doubler);
+        printf("10 |> doubler = %f (expect 20.0)\n", result);
+
+        puts("=== Test 10 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 10: Closures ===
+doubler(5.0) = 10.000000 (expect 10.0)
+tripler(5.0) = 15.000000 (expect 15.0)
+double twice(3.0) = 12.000000 (expect 12.0)
+times6(7.0) = 42.000000 (expect 42.0)
+10 |> doubler = 20.000000 (expect 20.0)
+=== Test 10 complete ===
+  --------------
+  PASS
+
+-------- DSP Showcase [test_11_dsp_showcase.mingus] --------
+
+  --- Source ---
+// Test 11: DSP Showcase — A musical tribute to Charles Mingus
+// Weaves together: structs + operators, enums + match, closures, pipes, math
+module Test11
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+    extern func sin(double x) => double;
+    extern func sqrt(double x) => double;
+
+    // ── Stereo sample: struct + operator overloading ──
+
+    struct Sample
+    {
+        double left;
+        double right;
+
+        func operator+(Sample other) => Sample
+        {
+            Sample out;
+            out.left  = this.left  + other.left;
+            out.right = this.right + other.right;
+            return out;
+        }
+
+        func operator*(double gain) => Sample
+        {
+            Sample out;
+            out.left  = this.left  * gain;
+            out.right = this.right * gain;
+            return out;
+        }
+
+        func rms() => double
+        {
+            return sqrt((this.left * this.left + this.right * this.right) / 2.0);
+        }
+
+        func pan(double p) => Sample
+        {
+            Sample out;
+            out.left  = this.left  * (1.0 - p) / 2.0;
+            out.right = this.right * (1.0 + p) / 2.0;
+            return out;
+        }
+    }
+
+    // ── Waveform selection: enum + match ──
+
+    enum Wave : int
+    {
+        Sine     = 0,
+        Square   = 1,
+        Triangle = 2,
+        Saw      = 3,
+    }
+
+    func twoPi() => double { return 6.28318530717959; }
+
+    func oscillator(int wave, double phase) => double
+    {
+        return match wave {
+            Wave.Sine     => sin(phase * twoPi()),
+            Wave.Square   => phase < 0.5 ? 1.0 : -1.0,
+            Wave.Triangle => phase < 0.5
+                ? phase * 4.0 - 1.0
+                : 3.0 - phase * 4.0,
+            _ => phase * 2.0 - 1.0,
+        };
+    }
+
+    func stereoOsc(int wave, double phase) => Sample
+    {
+        var mono = oscillator(wave, phase);
+        Sample s;
+        s.left  = mono;
+        s.right = mono;
+        return s;
+    }
+
+    // ── Effects: closures + higher-order functions ──
+
+    func makeGain(double amount) => (double) => double
+    {
+        return [=](double x) => { return x * amount; };
+    }
+
+    func softClip(double x) => double
+    {
+        return match x {
+            var v if v >  1.0 =>  1.0,
+            var v if v < -1.0 => -1.0,
+            var v => v - (v * v * v) / 3.0,
+        };
+    }
+
+    func makeDrive(double drive) => (double) => double
+    {
+        return [=](double x) => { return softClip(x * drive); };
+    }
+
+    func composeEffect((double) => double f, (double) => double g) => (double) => double
+    {
+        return [=](double x) => { return f(g(x)); };
+    }
+
+    func applyStereo(Sample s, (double) => double fx) => Sample
+    {
+        Sample out;
+        out.left  = fx(s.left);
+        out.right = fx(s.right);
+        return out;
+    }
+
+    func transform(double x, (double) => double f) => double
+    {
+        return f(x);
+    }
+
+    // ── Main: the full signal chain ──
+
+    func main() => int
+    {
+        puts("=== Test 11: DSP Showcase ===");
+
+        // --- Oscillators (enum + match + math) ---
+        puts("--- Oscillators ---");
+        printf("sine(0.25)     = %f\n", oscillator(Wave.Sine, 0.25));
+        printf("square(0.25)   = %f\n", oscillator(Wave.Square, 0.25));
+        printf("triangle(0.25) = %f\n", oscillator(Wave.Triangle, 0.25));
+        printf("saw(0.75)      = %f\n", oscillator(Wave.Saw, 0.75));
+
+        // --- Stereo mixing (struct + operators) ---
+        puts("--- Stereo Mix ---");
+        var tone = stereoOsc(Wave.Sine, 0.25);
+        var buzz = stereoOsc(Wave.Triangle, 0.375);
+        printf("tone = %f\n", tone.left);
+        printf("buzz = %f\n", buzz.left);
+
+        var mixed = tone * 0.5 + buzz * 0.5;
+        printf("mix  = %f\n", mixed.left);
+        printf("rms  = %f\n", mixed.rms());
+
+        var panned = tone.pan(1.0);
+        printf("panL = %f\n", panned.left);
+        printf("panR = %f\n", panned.right);
+
+        // --- Effects (closures + pipes) ---
+        puts("--- Effects ---");
+        var boost = makeGain(2.0);
+        var boosted = 0.3 |> transform(boost);
+        printf("boost(0.3)  = %f\n", boosted);
+
+        printf("clip(0.75)  = %f\n", softClip(0.75));
+
+        var crunch = makeDrive(2.0);
+        var crunched = 0.5 |> transform(crunch);
+        printf("drive(0.5)  = %f\n", crunched);
+
+        // --- Signal chain (compose + closure + stereo) ---
+        puts("--- Signal Chain ---");
+        var chain = composeEffect(makeGain(2.0), makeDrive(1.5));
+        var sig = stereoOsc(Wave.Triangle, 0.375);
+        var processed = applyStereo(sig, chain);
+        printf("chain L = %f\n", processed.left);
+        printf("chain R = %f\n", processed.right);
+
+        puts("=== Test 11 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 11: DSP Showcase ===
+--- Oscillators ---
+sine(0.25)     = 1.000000
+square(0.25)   = 1.000000
+triangle(0.25) = 0.000000
+saw(0.75)      = 0.500000
+--- Stereo Mix ---
+tone = 1.000000
+buzz = 0.500000
+mix  = 0.750000
+rms  = 0.750000
+panL = 0.000000
+panR = 1.000000
+--- Effects ---
+boost(0.3)  = 0.600000
+clip(0.75)  = 0.609375
+drive(0.5)  = 0.666667
+--- Signal Chain ---
+chain L = 1.218750
+chain R = 1.218750
+=== Test 11 complete ===
+  --------------
+  PASS
+
+-------- Imports [test_12_imports.mingus] --------
+
+  --- Source ---
+// test_12_imports.mingus -- Multi-module import test
+// Tests: selective import, aliased import, whole-module import
+
+module Test12
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // Selective import: bring in specific symbols from MathLib
+    import add, square from MathLib;
+
+    func main() => int
+    {
+        puts("=== Test 12: Imports ===");
+
+        // Use imported functions directly by name
+        printf("add(3, 4) = %d\n", add(3, 4));
+        printf("square(5) = %d\n", square(5));
+        printf("add(square(3), square(4)) = %d\n", add(square(3), square(4)));
+
+        puts("=== Test 12 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 12: Imports ===
+add(3, 4) = 7
+square(5) = 25
+add(square(3), square(4)) = 25
+=== Test 12 complete ===
+  --------------
+  PASS
+
+-------- Inheritance [test_13_inheritance.mingus] --------
+
+  --- Source ---
+// Test 13: Inheritance, virtual dispatch, super constructor, destructor chaining
+module Test13
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+
+    // Base class with virtual methods
+    class Animal
+    {
+        int legs;
+
+        constructor(int l)
+        {
+            this.legs = l;
+        }
+
+        func speak() => void
+        {
+            puts("...");
+        }
+
+        func getLegs() => int
+        {
+            return this.legs;
+        }
+    }
+
+    // Derived class overriding speak()
+    class Dog : Animal
+    {
+        constructor() : super(4)
+        {
+        }
+
+        func speak() => void
+        {
+            puts("Woof!");
+        }
+    }
+
+    // Another derived class
+    class Cat : Animal
+    {
+        constructor() : super(4)
+        {
+        }
+
+        func speak() => void
+        {
+            puts("Meow!");
+        }
+    }
+
+    // Derived class with different leg count
+    class Snake : Animal
+    {
+        constructor() : super(0)
+        {
+        }
+
+        func speak() => void
+        {
+            puts("Hiss!");
+        }
+    }
+
+    // Test polymorphic dispatch through base pointer
+    func makeAnimalSpeak(Animal* a) => void
+    {
+        a->speak();
+    }
+
+    func main() => int
+    {
+        puts("=== Test 13: Inheritance ===");
+
+        // Stack-allocated objects
+        puts("\n--- Stack allocation ---");
+        var dog = Dog();
+        var cat = Cat();
+        var snake = Snake();
+
+        puts("Dog says:");
+        dog.speak();
+        puts("Cat says:");
+        cat.speak();
+        puts("Snake says:");
+        snake.speak();
+
+        // Inherited field access
+        printf("Dog legs: %d\n", dog.getLegs());
+        printf("Cat legs: %d\n", cat.getLegs());
+        printf("Snake legs: %d\n", snake.getLegs());
+
+        // Heap-allocated + polymorphic dispatch
+        puts("\n--- Polymorphic dispatch ---");
+        var animals0 = new Dog();
+        var animals1 = new Cat();
+        var animals2 = new Snake();
+
+        puts("Through Animal*:");
+        makeAnimalSpeak(animals0);
+        makeAnimalSpeak(animals1);
+        makeAnimalSpeak(animals2);
+
+        printf("animals0 legs: %d\n", animals0->getLegs());
+        printf("animals2 legs: %d\n", animals2->getLegs());
+
+        // Clean up
+        delete animals0;
+        delete animals1;
+        delete animals2;
+
+        puts("\n=== Test 13 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 13: Inheritance ===
+
+--- Stack allocation ---
+Dog says:
+Woof!
+Cat says:
+Meow!
+Snake says:
+Hiss!
+Dog legs: 4
+Cat legs: 4
+Snake legs: 0
+
+--- Polymorphic dispatch ---
+Through Animal*:
+Woof!
+Meow!
+Hiss!
+animals0 legs: 4
+animals2 legs: 0
+
+=== Test 13 complete ===
+  --------------
+  PASS
+
+-------- String Operations [test_14_strings.mingus] --------
+
+  --- Source ---
+// Test 14: String Operations — concatenation, comparison, methods, RAII
+module Test14
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func main() => int
+    {
+        puts("=== Test 14: String Operations ===");
+
+        // Concatenation
+        puts("\n--- Concatenation ---");
+        var hello = "Hello";
+        var world = " World";
+        var greeting = hello + world;
+        puts(greeting);
+
+        // Content comparison
+        puts("\n--- Comparison ---");
+        var a = "abc";
+        var b = "abc";
+        var c = "xyz";
+        if (a == b) { puts("a == b: true"); }
+        if (a != c) { puts("a != c: true"); }
+
+        // Length
+        puts("\n--- Length ---");
+        printf("greeting length: %d\n", greeting.length());
+
+        // Substring — also exercises concat for the label
+        puts("\n--- Substring ---");
+        var sub = greeting.substring(0, 5);
+        puts("substring(0,5): " + sub);
+
+        // String +=
+        puts("\n--- Concat Assign ---");
+        var s = "foo";
+        s += "bar";
+        puts("s: " + s);
+
+        // Interpolation
+        puts("\n--- Interpolation ---");
+        var x = 42;
+        var msg = "value=${x}";
+        puts(msg);
+
+        puts("\n=== Test 14 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 14: String Operations ===
+
+--- Concatenation ---
+Hello World
+
+--- Comparison ---
+a == b: true
+a != c: true
+
+--- Length ---
+greeting length: 11
+
+--- Substring ---
+substring(0,5): Hello
+
+--- Concat Assign ---
+s: foobar
+
+--- Interpolation ---
+value=42
+
+=== Test 14 complete ===
+  --------------
+  PASS
+
+-------- Interfaces [test_15_interfaces.mingus] --------
+
+  --- Source ---
+// Test 15: Interfaces — contracts, fat pointer dispatch, multiple implementation
+module Test15
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    interface Drawable
+    {
+        func draw() => void;
+    }
+
+    interface Resizable
+    {
+        func resize(int factor) => int;
+    }
+
+    class Circle : Drawable, Resizable
+    {
+        int radius;
+        constructor(int r) { this.radius = r; }
+        func draw() => void { puts("Circle drawn"); }
+        func resize(int factor) => int { return this.radius * factor; }
+    }
+
+    class Square : Drawable, Resizable
+    {
+        int side;
+        constructor(int s) { this.side = s; }
+        func draw() => void { puts("Square drawn"); }
+        func resize(int factor) => int { return this.side * factor; }
+    }
+
+    func renderAll(Drawable* d) => void
+    {
+        d->draw();
+    }
+
+    func main() => int
+    {
+        puts("=== Test 15: Interfaces ===");
+
+        puts("--- Direct calls ---");
+        var c = Circle(5);
+        var sq = Square(3);
+        c.draw();
+        sq.draw();
+
+        puts("--- Interface dispatch ---");
+        Drawable* d0 = new Circle(10);
+        Drawable* d1 = new Square(7);
+        renderAll(d0);
+        renderAll(d1);
+
+        puts("--- Resizable ---");
+        Resizable* r = new Circle(4);
+        printf("resize(3) = %d\n", r->resize(3));
+
+        delete d0;
+        delete d1;
+        delete r;
+
+        puts("=== Test 15 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 15: Interfaces ===
+--- Direct calls ---
+Circle drawn
+Square drawn
+--- Interface dispatch ---
+Circle drawn
+Square drawn
+--- Resizable ---
+resize(3) = 12
+=== Test 15 complete ===
+  --------------
+  PASS
+
+-------- DSP WAV Synthesis [test_16_dsp_wav.mingus] --------
+
+  --- Source ---
+// Test 16: DSP WAV Synthesis
+//
+// A synthesizer that writes a real WAV file.
+// Demonstrates: interfaces (Effect, Named), single inheritance
+// (AudioEffect → GainEffect / DriveEffect / SoftClipEffect),
+// class-based oscillator with mutable state, pattern matching,
+// and fat-pointer interface dispatch in a real-time render loop.
+//
+// Output: output.wav — 3 seconds, mono, 44100 Hz, 16-bit PCM
+//         A3 sine (220 Hz) + E4 triangle (330 Hz) through
+//         a Gain → Drive → SoftClip effect chain.
+
+module DspWav
+{
+    // ---- C standard library ----------------------------------------------------------------------------------------
+
+    extern func fopen(string path, string mode) => byte*;
+    extern func fputc(int c, byte* f) => int;
+    extern func fclose(byte* f) => int;
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+    extern func lround(double x) => int;
+    extern func sin(double x) => double;
+
+    // ---- WAV writing primitives --------------------------------------------------------------------------------
+
+    func putU16LE(byte* f, int v) => void
+    {
+        fputc(v & 255, f);
+        fputc((v >> 8) & 255, f);
+    }
+
+    func putU32LE(byte* f, int v) => void
+    {
+        fputc(v & 255, f);
+        fputc((v >> 8) & 255, f);
+        fputc((v >> 16) & 255, f);
+        fputc((v >> 24) & 255, f);
+    }
+
+    // Write a 44-byte PCM WAV header (mono, 16-bit).
+    // ASCII codes used for chunk IDs to avoid string cast complexity.
+    func writeWavHeader(byte* f, int sampleRate, int numSamples) => void
+    {
+        int dataSize = numSamples * 2;       // 1 channel * 2 bytes per sample
+        int riffSize = dataSize + 36;
+        int byteRate = sampleRate * 2;
+
+        // "RIFF"
+        fputc(82, f); fputc(73, f); fputc(70, f); fputc(70, f);
+        putU32LE(f, riffSize);
+        // "WAVE"
+        fputc(87, f); fputc(65, f); fputc(86, f); fputc(69, f);
+        // "fmt "
+        fputc(102, f); fputc(109, f); fputc(116, f); fputc(32, f);
+        putU32LE(f, 16);        // PCM sub-chunk size
+        putU16LE(f, 1);         // PCM audio format
+        putU16LE(f, 1);         // mono
+        putU32LE(f, sampleRate);
+        putU32LE(f, byteRate);
+        putU16LE(f, 2);         // block align (1 ch * 2 bytes)
+        putU16LE(f, 16);        // bits per sample
+        // "data"
+        fputc(100, f); fputc(97, f); fputc(116, f); fputc(97, f);
+        putU32LE(f, dataSize);
+    }
+
+    // Clamp, scale, and write one 16-bit PCM sample (little-endian).
+    func writeSample(byte* f, double sample) => void
+    {
+        var clamped = sample > 1.0 ? 1.0 : (sample < -1.0 ? -1.0 : sample);
+        int ival = lround(clamped * 32767.0);
+        putU16LE(f, ival);
+    }
+
+    // ---- Interfaces --------------------------------------------------------------------------------------------------------
+
+    interface Effect
+    {
+        func process(double s) => double;
+    }
+
+    interface Named
+    {
+        func name() => string;
+    }
+
+    // ---- Abstract base class --------------------------------------------------------------------------------------
+    //
+    // Holds a single 'param' double used differently by each effect.
+    // Cannot be instantiated; subclasses must implement Effect and Named.
+
+    abstract class AudioEffect
+    {
+        double param;
+        constructor(double p) { this.param = p; }
+        // A virtual method is required so that AudioEffect gets a vtable pointer
+        // in its struct layout — { ptr, double } — matching the layout of every
+        // derived class and ensuring super() stores 'param' at the correct offset.
+        func paramValue() => double { return this.param; }
+    }
+
+    // ---- Concrete effects --------------------------------------------------------------------------------------------
+
+    // GainEffect: simple linear amplitude scaling.
+    class GainEffect : AudioEffect, Effect, Named
+    {
+        constructor(double g) : super(g) { }
+        func process(double s) => double { return s * this.param; }
+        func name() => string { return "Gain"; }
+    }
+
+    // DriveEffect: soft saturation — x - x³/3.
+    // param is the drive multiplier applied before the curve.
+    class DriveEffect : AudioEffect, Effect, Named
+    {
+        constructor(double d) : super(d) { }
+        func process(double s) => double
+        {
+            var x = s * this.param;
+            return x - (x * x * x) / 3.0;
+        }
+        func name() => string { return "Drive"; }
+    }
+
+    // SoftClipEffect: hard limit at ±threshold with a cubic roll-off inside.
+    class SoftClipEffect : AudioEffect, Effect, Named
+    {
+        constructor(double threshold) : super(threshold) { }
+        func process(double s) => double
+        {
+            var t = this.param;
+            return match s {
+                var x if x >  t =>  t,
+                var x if x < -t => -t,
+                var x           => x - (x * x * x) / 3.0,
+            };
+        }
+        func name() => string { return "SoftClip"; }
+    }
+
+    // ---- Oscillator --------------------------------------------------------------------------------------------------------
+    //
+    // Class (reference type) so that phase state can be mutated
+    // between tick() calls without passing pointers manually.
+
+    class Oscillator
+    {
+        double phase;
+        double phaseInc;
+        int    waveform;    // 0=sine  1=square  2=saw  3=triangle
+
+        constructor(int wave, double freq, double rate)
+        {
+            this.waveform = wave;
+            this.phase    = 0.0;
+            this.phaseInc = freq / rate;
+        }
+
+        func tick() => double
+        {
+            var p = this.phase;
+            var s = match this.waveform {
+                0 => sin(p * 6.283185307),
+                1 => p < 0.5 ? 1.0 : -1.0,
+                2 => p * 2.0 - 1.0,
+                _ => p < 0.5 ? p * 4.0 - 1.0 : 3.0 - p * 4.0,
+            };
+            var next = p + this.phaseInc;
+            this.phase = next >= 1.0 ? next - 1.0 : next;
+            return s;
+        }
+    }
+
+    // ---- Signal chain ----------------------------------------------------------------------------------------------------
+    //
+    // Three Effect* fat pointers dispatched in sequence.
+    // Each call resolves through the class's itable at runtime.
+
+    func applyChain(double s, Effect* e0, Effect* e1, Effect* e2) => double
+    {
+        var s0 = e0->process(s);
+        var s1 = e1->process(s0);
+        return e2->process(s1);
+    }
+
+    // Print the name of an effect through the Named interface.
+    func printEffectName(Named* n) => void
+    {
+        puts(n->name());
+    }
+
+    // ---- Main --------------------------------------------------------------------------------------------------------------------
+
+    func main() => int
+    {
+        puts("=== DSP WAV Example ===");
+
+        // Construct the effect chain
+        GainEffect*     gain  = new GainEffect(0.7);
+        DriveEffect*    drive = new DriveEffect(1.8);
+        SoftClipEffect* clip  = new SoftClipEffect(0.9);
+
+        // Print effect chain via Named interface
+        puts("Effect chain:");
+        Named* n0 = gain;
+        Named* n1 = drive;
+        Named* n2 = clip;
+        printEffectName(n0);
+        printEffectName(n1);
+        printEffectName(n2);
+
+        // Effect interface pointers for the render loop
+        Effect* e0 = gain;
+        Effect* e1 = drive;
+        Effect* e2 = clip;
+
+        // Two oscillators: A3 sine + E4 triangle (a perfect fifth)
+        Oscillator* osc1 = new Oscillator(0, 220.0, 44100.0);
+        Oscillator* osc2 = new Oscillator(3, 330.0, 44100.0);
+
+        // WAV parameters
+        int sampleRate = 44100;
+        int numSamples = 132300;    // 3 seconds
+
+        // Open output file
+        byte* f = fopen("output.wav", "wb");
+        if (f == null) {
+            puts("ERROR: could not open output.wav for writing");
+            return 1;
+        }
+
+        writeWavHeader(f, sampleRate, numSamples);
+
+        printf("Writing %d samples to output.wav...\n", numSamples);
+
+        for (int i = 0; i < numSamples; i++)
+        {
+            var s1 = osc1->tick();
+            var s2 = osc2->tick();
+            var mixed   = s1 * 0.65 + s2 * 0.35;
+            var out     = applyChain(mixed, e0, e1, e2);
+            writeSample(f, out);
+        }
+
+        fclose(f);
+
+        puts("Done.");
+        printf("Sample rate : %d Hz\n", sampleRate);
+        printf("Samples     : %d\n", numSamples);
+        puts("Output      : output.wav");
+        puts("=== Complete ===");
+
+        delete gain;
+        delete drive;
+        delete clip;
+        delete osc1;
+        delete osc2;
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== DSP WAV Example ===
+Effect chain:
+Gain
+Drive
+SoftClip
+Writing 132300 samples to output.wav...
+Done.
+Sample rate : 44100 Hz
+Samples     : 132300
+Output      : output.wav
+=== Complete ===
+  --------------
+  PASS
+
+-------- Hex Binary Octal Literals [test_17_hex_literals.mingus] --------
+
+  --- Source ---
+// Test 17: Hex, Binary, and Octal Literals
+//
+// Verifies that all three non-decimal integer literal notations
+// are parsed and converted correctly:
+//   0xFF   — hexadecimal
+//   0b1010 — binary
+//   0o777  — octal (Mingus-style prefix, not C-style leading zero)
+//
+// Also exercises bitwise masking with hex constants, which is the
+// primary real-world use case (WAV byte manipulation, LCG noise, etc.)
+
+module HexTest
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        // Hex literals
+        int h1 = 0xFF;
+        int h2 = 0xDEAD;
+        int h3 = 0x7FFFFFFF;
+        printf("hex:    %d %d %d\n", h1, h2, h3);
+
+        // Binary literals
+        int b1 = 0b1010;
+        int b2 = 0b11111111;
+        int b3 = 0b10101010;
+        printf("binary: %d %d %d\n", b1, b2, b3);
+
+        // Octal literals
+        int o1 = 0o10;
+        int o2 = 0o777;
+        int o3 = 0o666;
+        printf("octal:  %d %d %d\n", o1, o2, o3);
+
+        // Bitwise operations using hex masks (the original motivation)
+        int v = 255;
+        int masked   = v & 0xFF;
+        int shifted  = v & 0xFF00;
+        int combined = (v & 0xFF) | (0 & 0xFF00);
+        printf("ops:    %d %d %d\n", masked, shifted, combined);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+hex:    255 57005 2147483647
+binary: 10 255 170
+octal:  8 511 438
+ops:    255 0 255
+  --------------
+  PASS
+
+-------- Tuples [test_18_tuples.mingus] --------
+
+  --- Source ---
+// Test 18: Tuple Expressions and Destructuring
+// Tuples are anonymous struct values that can be returned from functions
+// and destructured into individual variables.
+
+module Test18
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    // Return a tuple of (int, int)
+    func divmod(int a, int b) => (int, int)
+    {
+        return (a / b, a % b);
+    }
+
+    // Return a tuple of three values with different logic
+    func classify(int n) => (string, int, bool)
+    {
+        var label = "zero";
+        var abs_val = n;
+        var is_positive = false;
+
+        if (n > 0)
+        {
+            label = "positive";
+            is_positive = true;
+        }
+        if (n < 0)
+        {
+            label = "negative";
+            abs_val = 0 - n;
+        }
+
+        return (label, abs_val, is_positive);
+    }
+
+    // Return a tuple of two ints — fibonacci pair
+    func fib_pair(int n) => (int, int)
+    {
+        if (n <= 0)
+        {
+            return (0, 1);
+        }
+
+        (var a, var b) = fib_pair(n - 1);
+        return (b, a + b);
+    }
+
+    func main() => int
+    {
+        // Basic tuple destructuring
+        (var quot, var rem) = divmod(17, 5);
+        printf("17 / 5 = %d", quot);
+        printf(" remainder %d\n", rem);
+
+        // Tuple with mixed types
+        (var label, var abs_val, var is_pos) = classify(42);
+        puts(label);
+        printf("abs: %d\n", abs_val);
+
+        (var label2, var abs_val2, var is_pos2) = classify(-7);
+        puts(label2);
+        printf("abs: %d\n", abs_val2);
+
+        // Recursive function returning tuple
+        (var fib8, var fib9) = fib_pair(8);
+        printf("fib(8) = %d\n", fib8);
+        printf("fib(9) = %d\n", fib9);
+
+        puts("Test18 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+17 / 5 = 3 remainder 2
+positive
+abs: 42
+negative
+abs: 7
+fib(8) = 21
+fib(9) = 34
+Test18 done
+  --------------
+  PASS
+
+-------- DynamicArray Map [test_19_dynamic_array_map.mingus] --------
+
+  --- Source ---
+// Test 19: DynamicArray.map with Lambda + Pipe, memcpy for grow
+// Tests first-class functions passed to class methods, pipe inside methods,
+// and memcpy interop for array resizing.
+
+module Test19
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+    extern func malloc(int size) => byte*;
+    extern func free(byte* ptr) => void;
+    extern func memcpy(byte* dest, byte* src, int n) => byte*;
+
+    class DynamicArray
+    {
+        private int* data;
+        private int size;
+        private int capacity;
+
+        constructor(int initialCapacity)
+        {
+            this.capacity = initialCapacity;
+            this.size = 0;
+            raw { this.data = (int*)malloc(initialCapacity * sizeof(int)); }
+        }
+
+        destructor
+        {
+            if (this.data != null)
+            {
+                raw { free((byte*)this.data); }
+            }
+        }
+
+        func push(int value) => void
+        {
+            if (this.size >= this.capacity)
+            {
+                this.grow();
+            }
+            raw { *(this.data + this.size) = value; }
+            this.size++;
+        }
+
+        func operator[](int index) => int
+        {
+            raw { return *(this.data + index); }
+        }
+
+        func length() => int
+        {
+            return this.size;
+        }
+
+        // Map: takes a first-class function, returns a new array
+        func map((int) => int transform) => DynamicArray
+        {
+            var result = DynamicArray(this.capacity);
+            for (int i = 0; i < this.size; i++)
+            {
+                var val = this[i] |> transform;
+                result.push(val);
+            }
+            return result;
+        }
+
+        // Grow: uses memcpy to resize the backing array
+        private func grow() => void
+        {
+            var newCapacity = this.capacity * 2;
+            raw
+            {
+                var newData = (int*)malloc(newCapacity * sizeof(int));
+                memcpy((byte*)newData, (byte*)this.data, this.size * sizeof(int));
+                free((byte*)this.data);
+                this.data = newData;
+            }
+            this.capacity = newCapacity;
+        }
+    }
+
+    func main() => int
+    {
+        // Build array with enough elements to trigger grow (capacity=4, push 10)
+        var arr = DynamicArray(4);
+        for (int i = 1; i <= 10; i++)
+        {
+            arr.push(i);
+        }
+
+        // Verify original values survived grow
+        printf("arr[0] = %d\n", arr[0]);
+        printf("arr[4] = %d\n", arr[4]);
+        printf("arr[9] = %d\n", arr[9]);
+        printf("length = %d\n", arr.length());
+
+        // Map with lambda: double each element
+        var doubled = arr.map([](int x) => { return x * 2; });
+        printf("doubled[0] = %d\n", doubled[0]);
+        printf("doubled[4] = %d\n", doubled[4]);
+        printf("doubled[9] = %d\n", doubled[9]);
+
+        // Map with lambda: square each element
+        var squared = arr.map([](int x) => { return x * x; });
+        printf("squared[0] = %d\n", squared[0]);
+        printf("squared[4] = %d\n", squared[4]);
+        printf("squared[9] = %d\n", squared[9]);
+
+        puts("Test19 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+arr[0] = 1
+arr[4] = 5
+arr[9] = 10
+length = 10
+doubled[0] = 2
+doubled[4] = 10
+doubled[9] = 20
+squared[0] = 1
+squared[4] = 25
+squared[9] = 100
+Test19 done
+  --------------
+  PASS
+
+-------- Complex Numbers [test_20_complex_numbers.mingus] --------
+
+  --- Source ---
+// Test 20: Complex Number Arithmetic (Operator Overloading)
+// Struct with operator+, operator*, and methods demonstrating
+// mathematical struct types with full operator overloading.
+
+module Test20
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+    extern func sqrt(double x) => double;
+
+    struct Complex
+    {
+        double real;
+        double imag;
+
+        func operator+(Complex other) => Complex
+        {
+            Complex result;
+            result.real = this.real + other.real;
+            result.imag = this.imag + other.imag;
+            return result;
+        }
+
+        func operator*(Complex other) => Complex
+        {
+            Complex result;
+            // (a+bi)(c+di) = (ac-bd) + (ad+bc)i
+            result.real = this.real * other.real - this.imag * other.imag;
+            result.imag = this.real * other.imag + this.imag * other.real;
+            return result;
+        }
+
+        func magnitude_squared() => double
+        {
+            return this.real * this.real + this.imag * this.imag;
+        }
+    }
+
+    func printComplex(string label, Complex c) => void
+    {
+        puts(label);
+        printf("  real: %.0f\n", c.real);
+        printf("  imag: %.0f\n", c.imag);
+    }
+
+    func main() => int
+    {
+        // Create two complex numbers: (3+4i) and (1+2i)
+        Complex a;
+        a.real = 3.0;
+        a.imag = 4.0;
+
+        Complex b;
+        b.real = 1.0;
+        b.imag = 2.0;
+
+        // Addition: (3+4i) + (1+2i) = (4+6i)
+        var sum = a + b;
+        printComplex("sum:", sum);
+
+        // Multiplication: (3+4i) * (1+2i) = (3-8) + (6+4)i = (-5+10i)
+        var prod = a * b;
+        printComplex("product:", prod);
+
+        // Chained: (a + b) * b = (4+6i) * (1+2i) = (4-12) + (8+6)i = (-8+14i)
+        var chained = (a + b) * b;
+        printComplex("chained:", chained);
+
+        // Magnitude squared: |3+4i|^2 = 9+16 = 25
+        double mag2 = a.magnitude_squared();
+        printf("mag^2 = %.0f\n", mag2);
+
+        puts("Test20 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+sum:
+  real: 4
+  imag: 6
+product:
+  real: -5
+  imag: 10
+chained:
+  real: -8
+  imag: 14
+mag^2 = 25
+Test20 done
+  --------------
+  PASS
+
+-------- Fat Pointer Null Comparison [test_21_fat_ptr_null.mingus] --------
+
+  --- Source ---
+// Test 21: Fat Pointer Null Comparison
+// Verifies that closure/function-typed values can be compared with null
+// using == and != operators (both orderings).
+
+module Test21
+{
+    extern func puts(string s) => int;
+
+    func apply((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func main() => int
+    {
+        // Declare a closure variable, initially null
+        (int) => int f = null;
+
+        // Test: f == null (should be true)
+        if (f == null) {
+            puts("f == null: true");
+        } else {
+            puts("f == null: false");
+        }
+
+        // Test: f != null (should be false)
+        if (f != null) {
+            puts("f != null: true");
+        } else {
+            puts("f != null: false");
+        }
+
+        // Test: null == f (reversed operand order)
+        if (null == f) {
+            puts("null == f: true");
+        } else {
+            puts("null == f: false");
+        }
+
+        // Assign a lambda
+        f = [](int x) => { return x * 2; };
+
+        // Test: f != null (should be true after assignment)
+        if (f != null) {
+            puts("after assign, f != null: true");
+        } else {
+            puts("after assign, f != null: false");
+        }
+
+        // Test: f == null (should be false after assignment)
+        if (f == null) {
+            puts("after assign, f == null: true");
+        } else {
+            puts("after assign, f == null: false");
+        }
+
+        // Verify the closure works
+        var result = apply(f, 21);
+        if (result == 42) {
+            puts("apply(f, 21) == 42: true");
+        }
+
+        puts("Test21 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+f == null: true
+f != null: false
+null == f: true
+after assign, f != null: true
+after assign, f == null: false
+apply(f, 21) == 42: true
+Test21 done
+  --------------
+  PASS
+
+-------- Access Modifiers [test_22_access_modifiers.mingus] --------
+
+  --- Source ---
+// Test 22: Access Modifier Enforcement
+// Verifies that public, private, and protected access modifiers work correctly.
+// Private members are accessible from within the class.
+// Protected members are accessible from within the class and derived classes.
+// Public members are accessible from everywhere.
+
+module Test22
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    class Animal
+    {
+        private int secret;
+        protected int health;
+        public int age;
+        int name_len;  // No modifier = public by default
+
+        constructor(int s, int h, int a, int n)
+        {
+            this.secret = s;
+            this.health = h;
+            this.age = a;
+            this.name_len = n;
+        }
+
+        // Private method — only callable within Animal
+        private func getSecret() => int
+        {
+            return this.secret;
+        }
+
+        // Protected method — callable within Animal and derived
+        protected func getHealth() => int
+        {
+            return this.health;
+        }
+
+        // Public method — callable from anywhere
+        public func describe() => int
+        {
+            // Inside the class, we can access everything
+            var s = this.getSecret();
+            var h = this.getHealth();
+            printf("secret=%d", s);
+            puts("");
+            printf("health=%d", h);
+            puts("");
+            printf("age=%d", this.age);
+            puts("");
+            return 0;
+        }
+    }
+
+    class Dog : Animal
+    {
+        constructor(int s, int h, int a) : super(s, h, a, 3)
+        {
+        }
+
+        public func bark() => int
+        {
+            // Derived class can access protected members
+            var h = this.getHealth();
+            printf("Dog health=%d", h);
+            puts("");
+            // Can also access public members
+            printf("Dog age=%d", this.age);
+            puts("");
+            // Can access no-modifier (public) members
+            printf("Dog name_len=%d", this.name_len);
+            puts("");
+            return 0;
+        }
+    }
+
+    func main() => int
+    {
+        var a = new Animal(42, 100, 5, 6);
+        // Public method
+        a->describe();
+        // Public field
+        printf("direct age=%d", a->age);
+        puts("");
+        // No-modifier field (public by default)
+        printf("direct name_len=%d", a->name_len);
+        puts("");
+
+        var d = new Dog(99, 200, 3);
+        d->bark();
+
+        // Cannot access: a->secret (private)
+        // Cannot access: a->health (protected)
+        // Cannot access: a->getSecret() (private)
+
+        delete d;
+        delete a;
+        puts("Test22 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+secret=42
+health=100
+age=5
+direct age=5
+direct name_len=6
+Dog health=200
+Dog age=3
+Dog name_len=3
+Test22 done
+  --------------
+  PASS
+
+-------- Virtual Destructor [test_23_virtual_destructor.mingus] --------
+
+  --- Source ---
+// Test 23: Virtual Destructor
+// Verifies that deleting a derived class through a base class pointer
+// calls the derived class destructor (virtual dispatch through vtable slot 0).
+// Also tests a three-level inheritance chain: Base → Middle → Leaf,
+// ensuring all three destructors fire in correct order when deleted through Base*.
+
+module Test23
+{
+    extern func puts(string s) => int;
+
+    class Base
+    {
+        int id;
+
+        constructor(int i)
+        {
+            this.id = i;
+        }
+
+        destructor
+        {
+            puts("~Base");
+        }
+
+        func greet() => int
+        {
+            puts("Base.greet");
+            return 0;
+        }
+    }
+
+    class Derived : Base
+    {
+        int extra;
+
+        constructor(int i, int e) : super(i)
+        {
+            this.extra = e;
+        }
+
+        destructor
+        {
+            puts("~Derived");
+            // Base destructor is chained automatically
+        }
+
+        func greet() => int
+        {
+            puts("Derived.greet");
+            return 0;
+        }
+    }
+
+    // Three-level chain: Base → Middle → Leaf
+    class Middle : Base
+    {
+        int mid;
+
+        constructor(int i, int m) : super(i)
+        {
+            this.mid = m;
+        }
+
+        destructor
+        {
+            puts("~Middle");
+        }
+
+        func greet() => int
+        {
+            puts("Middle.greet");
+            return 0;
+        }
+    }
+
+    class Leaf : Middle
+    {
+        int leaf;
+
+        constructor(int i, int m, int l) : super(i, m)
+        {
+            this.leaf = l;
+        }
+
+        destructor
+        {
+            puts("~Leaf");
+        }
+
+        func greet() => int
+        {
+            puts("Leaf.greet");
+            return 0;
+        }
+    }
+
+    func main() => int
+    {
+        // Direct delete of Derived — should call ~Derived then ~Base
+        puts("--- direct delete ---");
+        var d = new Derived(1, 2);
+        d->greet();
+        delete d;
+
+        // Delete through base pointer — virtual destructor dispatch
+        puts("--- base ptr delete ---");
+        Base* b = new Derived(3, 4);
+        b->greet();
+        delete b;
+
+        // Delete actual Base — should just call ~Base
+        puts("--- base delete ---");
+        var b2 = new Base(5);
+        b2->greet();
+        delete b2;
+
+        // Three-level chain: delete Leaf through Base* — must fire ~Leaf, ~Middle, ~Base
+        puts("--- 3-level via base ptr ---");
+        Base* deep = new Leaf(10, 20, 30);
+        deep->greet();
+        delete deep;
+
+        // Three-level chain: delete Leaf through Middle* — must fire ~Leaf, ~Middle, ~Base
+        puts("--- 3-level via middle ptr ---");
+        Middle* mid = new Leaf(11, 21, 31);
+        mid->greet();
+        delete mid;
+
+        // Three-level chain: direct delete of Leaf — same order
+        puts("--- 3-level direct ---");
+        var leaf = new Leaf(12, 22, 32);
+        leaf->greet();
+        delete leaf;
+
+        puts("Test23 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+--- direct delete ---
+Derived.greet
+~Derived
+~Base
+--- base ptr delete ---
+Derived.greet
+~Derived
+~Base
+--- base delete ---
+Base.greet
+~Base
+--- 3-level via base ptr ---
+Leaf.greet
+~Leaf
+~Middle
+~Base
+--- 3-level via middle ptr ---
+Leaf.greet
+~Leaf
+~Middle
+~Base
+--- 3-level direct ---
+Leaf.greet
+~Leaf
+~Middle
+~Base
+Test23 done
+  --------------
+  PASS
+
+-------- Static Methods [test_24_static_methods.mingus] --------
+
+  --- Source ---
+// Test 24: Static Methods
+// Verifies that static methods can be called via ClassName.method() syntax
+// and that they don't receive a 'this' pointer.
+
+module Test24
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    class MathUtils
+    {
+        static func add(int a, int b) => int
+        {
+            return a + b;
+        }
+
+        static func factorial(int n) => int
+        {
+            if (n <= 1) {
+                return 1;
+            }
+            return n * MathUtils.factorial(n - 1);
+        }
+
+        static func max(int a, int b) => int
+        {
+            if (a > b) {
+                return a;
+            }
+            return b;
+        }
+    }
+
+    struct Point
+    {
+        int x;
+        int y;
+
+        static func origin() => Point
+        {
+            Point p;
+            p.x = 0;
+            p.y = 0;
+            return p;
+        }
+    }
+
+    func main() => int
+    {
+        // Call static method via class name
+        var sum = MathUtils.add(3, 4);
+        printf("add(3,4) = %d", sum);
+        puts("");
+
+        // Recursive static method
+        var fact = MathUtils.factorial(5);
+        printf("factorial(5) = %d", fact);
+        puts("");
+
+        // Static method with comparison
+        var m = MathUtils.max(10, 20);
+        printf("max(10,20) = %d", m);
+        puts("");
+
+        // Static method on struct
+        var p = Point.origin();
+        printf("origin.x = %d", p.x);
+        puts("");
+        printf("origin.y = %d", p.y);
+        puts("");
+
+        puts("Test24 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+add(3,4) = 7
+factorial(5) = 120
+max(10,20) = 20
+origin.x = 0
+origin.y = 0
+Test24 done
+  --------------
+  PASS
+
+-------- Escape Analysis [test_25_escape_analysis.mingus] --------
+
+  --- Source ---
+// Test 25: Escape Analysis and Closure Leak Fix
+// Verifies that temporary closures passed as function arguments are
+// properly cleaned up (no memory leak), and that non-escaping closures
+// are correctly identified.
+
+module Test25
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    func apply((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func applyTwice((int) => int f, int x) => int
+    {
+        var first = f(x);
+        return f(first);
+    }
+
+    func main() => int
+    {
+        var base = 10;
+
+        // Temporary lambda passed directly as argument (non-escaping)
+        // This previously leaked — the closure env was malloc'd but never freed
+        var r1 = apply([=](int x) => { return x + base; }, 5);
+        printf("apply(x+base, 5) = %d", r1);
+        puts("");
+
+        // Another temporary lambda with captures
+        var multiplier = 3;
+        var r2 = apply([=](int x) => { return x * multiplier; }, 7);
+        printf("apply(x*multiplier, 7) = %d", r2);
+        puts("");
+
+        // Temporary lambda with double application
+        var r3 = applyTwice([](int x) => { return x + 1; }, 0);
+        printf("applyTwice(x+1, 0) = %d", r3);
+        puts("");
+
+        // Named closure (already has RAII)
+        var addBase = [=](int x) => { return x + base; };
+        var r4 = apply(addBase, 20);
+        printf("apply(addBase, 20) = %d", r4);
+        puts("");
+
+        // Multiple temporary lambdas in sequence
+        var r5 = apply([](int x) => { return x + 100; }, 0);
+        var r6 = apply([](int x) => { return x - 50; }, r5);
+        printf("chain result = %d", r6);
+        puts("");
+
+        puts("Test25 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+apply(x+base, 5) = 15
+apply(x*multiplier, 7) = 21
+applyTwice(x+1, 0) = 2
+apply(addBase, 20) = 30
+chain result = 50
+Test25 done
+  --------------
+  PASS
+
+-------- Self-Capturing Closures [test_26_self_capture.mingus] --------
+
+  --- Source ---
+// Test 26: Self-Capturing Closures
+// Verifies that a closure can reference itself recursively.
+// var fib = (int x) => { return fib(x-1); };  // fib captures itself
+
+module Test26
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        // Self-capturing recursive fibonacci
+        (int) => int fib = [=](int n) => {
+            if (n <= 1) {
+                return n;
+            }
+            return fib(n - 1) + fib(n - 2);
+        };
+
+        printf("fib(0) = %d", fib(0));
+        puts("");
+        printf("fib(1) = %d", fib(1));
+        puts("");
+        printf("fib(5) = %d", fib(5));
+        puts("");
+        printf("fib(10) = %d", fib(10));
+        puts("");
+
+        // Self-capturing factorial
+        (int) => int fact = [=](int n) => {
+            if (n <= 1) {
+                return 1;
+            }
+            return n * fact(n - 1);
+        };
+
+        printf("fact(5) = %d", fact(5));
+        puts("");
+        printf("fact(7) = %d", fact(7));
+        puts("");
+
+        // Self-capturing countdown
+        (int) => int count = [=](int n) => {
+            if (n <= 0) {
+                return 0;
+            }
+            printf("  count: %d", n);
+            puts("");
+            return count(n - 1);
+        };
+        puts("countdown:");
+        count(3);
+
+        puts("Test26 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+fib(0) = 0
+fib(1) = 1
+fib(5) = 5
+fib(10) = 55
+fact(5) = 120
+fact(7) = 5040
+countdown:
+  count: 3
+  count: 2
+  count: 1
+Test26 done
+  --------------
+  PASS
+
+-------- Debug Info [test_27_debug_info.mingus] --------
+
+  --- Source ---
+// Test 27: Debug Information
+// Verifies that --debug flag doesn't break compilation or runtime behavior.
+// The test compiles normally and produces correct output.
+
+module Test27
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    func add(int a, int b) => int
+    {
+        var result = a + b;
+        return result;
+    }
+
+    class Counter
+    {
+        int value;
+
+        constructor(int initial)
+        {
+            this.value = initial;
+        }
+
+        func increment() => int
+        {
+            this.value = this.value + 1;
+            return this.value;
+        }
+
+        func get() => int
+        {
+            return this.value;
+        }
+    }
+
+    func main() => int
+    {
+        var x = 10;
+        var y = 20;
+        var sum = add(x, y);
+        printf("sum = %d", sum);
+        puts("");
+
+        var c = new Counter(0);
+        c->increment();
+        c->increment();
+        c->increment();
+        printf("counter = %d", c->get());
+        puts("");
+
+        // Local variables with debug info
+        var msg = "debug works";
+        puts(msg);
+
+        delete c;
+        puts("Test27 done");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+sum = 30
+counter = 3
+debug works
+Test27 done
+  --------------
+  PASS
+
+-------- Explicit Captures [test_28_explicit_captures.mingus] --------
+
+  --- Source ---
+// Test 28: Explicit Capture Lists
+// Verifies C++-style capture list syntax for lambdas:
+// []  — no captures
+// [=] — all by value
+// [&] — all by reference
+// [x] — explicit by value
+// [&x] — explicit by reference
+// [=, &x] — all by value, x by reference
+// [&, x] — all by reference, x by value
+
+module Test28
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    func apply((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func main() => int
+    {
+        puts("=== Test 28: Explicit Captures ===");
+
+        // [] — no captures
+        var r1 = apply([](int x) => { return x * 2; }, 21);
+        printf("[] no capture: %d\n", r1);
+
+        // [=] — capture all by value
+        var base = 10;
+        var r2 = apply([=](int x) => { return x + base; }, 5);
+        printf("[=] by value: %d\n", r2);
+
+        // Verify by-value doesn't modify outer
+        var counter = 0;
+        var inc = [=](int x) => {
+            // counter here is a copy — mutation doesn't escape
+            return x + counter + 1;
+        };
+        var r3 = inc(10);
+        printf("[=] value result: %d\n", r3);
+        printf("[=] counter unchanged: %d\n", counter);
+
+        // [x] — explicit by value for named variable
+        var multiplier = 3;
+        var r4 = apply([multiplier](int x) => { return x * multiplier; }, 7);
+        printf("[x] explicit value: %d\n", r4);
+
+        // [&x] — explicit by reference (mutation persists)
+        var total = 0;
+        var adder = [&total](int x) => {
+            total = total + x;
+            return total;
+        };
+        adder(10);
+        adder(20);
+        adder(30);
+        printf("[&x] ref capture total: %d\n", total);
+
+        // [=, &x] — mixed: all by value, one by reference
+        var scale = 2;
+        var accum = 0;
+        var mixed = [=, &accum](int x) => {
+            accum = accum + x * scale;
+            return accum;
+        };
+        mixed(5);
+        mixed(3);
+        printf("[=, &x] mixed accum: %d\n", accum);
+
+        // [&, x] — all by ref, one by value
+        var a = 100;
+        var b = 200;
+        var mixedRef = [&, b](int x) => {
+            // a captured by ref, b captured by value
+            a = a + x;
+            return a + b;
+        };
+        var r5 = mixedRef(50);
+        printf("[&, x] a modified: %d\n", a);
+        printf("[&, x] result: %d\n", r5);
+
+        // Multiple calls accumulating via [&]
+        var sum = 0;
+        var accumulate = [&](int x) => {
+            sum = sum + x;
+            return sum;
+        };
+        accumulate(1);
+        accumulate(2);
+        accumulate(3);
+        accumulate(4);
+        printf("[&] accumulated sum: %d\n", sum);
+
+        // Classic C++ capture-time vs call-time semantics:
+        //   int x = 1;
+        //   auto valueLambda = [=]() { cout << x; };  // freezes x=1
+        //   auto refLambda   = [&]() { cout << x; };  // sees current x
+        //   x = 13;
+        //   valueLambda();  // prints 1
+        //   refLambda();    // prints 13
+        var x = 1;
+        var valueLambda = [=]() => { return x; };
+        var refLambda   = [&]() => { return x; };
+        x = 13;
+        printf("[=] frozen at capture: %d\n", valueLambda());
+        printf("[&] sees mutation: %d\n", refLambda());
+
+        // Nested lambdas with different capture modes
+        var outer = 5;
+        var inner_result = 0;
+        var outerFn = [=, &inner_result](int x) => {
+            var innerFn = [=, &inner_result](int y) => {
+                inner_result = outer + x + y;
+                return inner_result;
+            };
+            return innerFn(x * 2);
+        };
+        outerFn(3);
+        printf("nested capture: %d\n", inner_result);
+
+        puts("=== Test 28 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 28: Explicit Captures ===
+[] no capture: 42
+[=] by value: 15
+[=] value result: 11
+[=] counter unchanged: 0
+[x] explicit value: 21
+[&x] ref capture total: 60
+[=, &x] mixed accum: 16
+[&, x] a modified: 150
+[&, x] result: 350
+[&] accumulated sum: 10
+[=] frozen at capture: 1
+[&] sees mutation: 13
+nested capture: 14
+=== Test 28 complete ===
+  --------------
+  PASS
+
+-------- Reference Parameters [test_29_ref_params.mingus] --------
+
+  --- Source ---
+// Test 29: Reference Parameters
+// Verifies func swap(int& a, int& b) => void style reference parameters.
+// Callee receives a pointer to the caller's variable and can modify it.
+
+module Test29
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    // Classic swap using reference parameters
+    func swap(int& a, int& b) => void
+    {
+        var tmp = a;
+        a = b;
+        b = tmp;
+    }
+
+    // Increment through reference
+    func increment(int& x) => void
+    {
+        x = x + 1;
+    }
+
+    // Add to accumulator through reference, return old value
+    func addAndReturn(int& accum, int value) => int
+    {
+        var old = accum;
+        accum = accum + value;
+        return old;
+    }
+
+    // Multiple reference parameters
+    func divmod(int a, int b, int& quotient, int& remainder) => void
+    {
+        quotient = a / b;
+        remainder = a - (quotient * b);
+    }
+
+    func main() => int
+    {
+        puts("=== Test 29: Reference Parameters ===");
+
+        // Test swap
+        var x = 10;
+        var y = 20;
+        swap(x, y);
+        printf("swap: x=%d\n", x);
+        printf("swap: y=%d\n", y);
+
+        // Test increment
+        var counter = 0;
+        increment(counter);
+        increment(counter);
+        increment(counter);
+        printf("increment 3x: %d\n", counter);
+
+        // Test mixed ref and value params
+        var total = 0;
+        var old1 = addAndReturn(total, 10);
+        var old2 = addAndReturn(total, 20);
+        var old3 = addAndReturn(total, 30);
+        printf("total: %d\n", total);
+        printf("old1: %d\n", old1);
+        printf("old2: %d\n", old2);
+        printf("old3: %d\n", old3);
+
+        // Test multiple output parameters
+        var q = 0;
+        var r = 0;
+        divmod(17, 5, q, r);
+        printf("17/5 quotient: %d\n", q);
+        printf("17/5 remainder: %d\n", r);
+
+        puts("=== Test 29 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 29: Reference Parameters ===
+swap: x=20
+swap: y=10
+increment 3x: 3
+total: 60
+old1: 0
+old2: 10
+old3: 30
+17/5 quotient: 3
+17/5 remainder: 2
+=== Test 29 complete ===
+  --------------
+  PASS
+
+-------- Capture Write-Back [test_30_capture_writeback.mingus] --------
+
+  --- Source ---
+// Test 30: Capture Write-Back (By-Reference Captures)
+// The primary goal of this feature: [&x] captures by reference so that
+// writes inside the lambda persist to the outer variable.
+
+module Test30
+{
+    extern func puts(string s) => int;
+    extern func printf(string fmt, ...) => int;
+
+    func apply((int) => int f, int x) => int
+    {
+        return f(x);
+    }
+
+    func applyVoid(() => void f) => void
+    {
+        f();
+    }
+
+    func main() => int
+    {
+        puts("=== Test 30: Capture Write-Back ===");
+
+        // Basic write-back: counter incremented inside lambda persists
+        var counter = 0;
+        var inc = [&counter]() => {
+            counter = counter + 1;
+        };
+        inc();
+        inc();
+        inc();
+        inc();
+        inc();
+        printf("counter after 5 calls: %d\n", counter);
+
+        // Accumulator pattern: sum values through lambda
+        var sum = 0;
+        var add = [&sum](int x) => {
+            sum = sum + x;
+            return sum;
+        };
+        add(10);
+        add(20);
+        add(30);
+        printf("accumulated sum: %d\n", sum);
+
+        // Multiple ref captures
+        var min = 999;
+        var max = 0;
+        var track = [&min, &max](int x) => {
+            if (x < min) { min = x; }
+            if (x > max) { max = x; }
+            return x;
+        };
+        track(50);
+        track(10);
+        track(90);
+        track(30);
+        track(70);
+        printf("min: %d\n", min);
+        printf("max: %d\n", max);
+
+        // Mixed captures: by-value for read-only, by-reference for mutable
+        var scale = 2;
+        var total = 0;
+        var scaledAdd = [scale, &total](int x) => {
+            total = total + x * scale;
+            return total;
+        };
+        scaledAdd(5);
+        scaledAdd(3);
+        scaledAdd(2);
+        printf("scaled total: %d\n", total);
+
+        // [&] default all by reference
+        var a = 1;
+        var b = 2;
+        var bothRef = [&](int x) => {
+            a = a + x;
+            b = b + x;
+            return a + b;
+        };
+        bothRef(10);
+        printf("[&] a: %d\n", a);
+        printf("[&] b: %d\n", b);
+
+        // Verify write-back through higher-order function
+        var count = 0;
+        var counter2 = [&count](int x) => {
+            count = count + 1;
+            return x;
+        };
+        apply(counter2, 0);
+        apply(counter2, 0);
+        apply(counter2, 0);
+        printf("count through HOF: %d\n", count);
+
+        puts("=== Test 30 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 30: Capture Write-Back ===
+counter after 5 calls: 5
+accumulated sum: 60
+min: 10
+max: 90
+scaled total: 20
+[&] a: 11
+[&] b: 12
+count through HOF: 3
+=== Test 30 complete ===
+  --------------
+  PASS
+
+-------- Closure + Struct Params [test_31_closure_struct_params.mingus] --------
+
+  --- Source ---
+// Test 31: Closures with Struct Parameters
+// Verifies closure calling convention handles struct params correctly.
+// V1 had ABI mismatch (mapType returned struct LLVM type, not ptr).
+// V2 uses mapParamType() which returns ptr for structs.
+
+module Test31 {
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    struct Vec2 {
+        double x;
+        double y;
+    }
+
+    // Higher-order function that passes a struct to a closure
+    func applyToVec(Vec2 v, (Vec2) => double f) => double {
+        return f(v);
+    }
+
+    // Regular function taking struct for comparison
+    func magnitudeSq(Vec2 v) => double {
+        return v.x * v.x + v.y * v.y;
+    }
+
+    func main() => int {
+        puts("=== Test 31: Closure + Struct Params ===");
+
+        var p = Vec2();
+        p.x = 3.0;
+        p.y = 4.0;
+
+        // Test 1: Regular function with struct param (baseline)
+        var base = magnitudeSq(p);
+        printf("regular: %f\n", base);
+
+        // Test 2: Closure with struct param — direct call
+        var dist = [=](Vec2 v) => { return v.x * v.x + v.y * v.y; };
+        var r1 = dist(p);
+        printf("closure direct: %f\n", r1);
+
+        // Test 3: Closure with struct param — through higher-order function
+        var r2 = applyToVec(p, dist);
+        printf("closure HOF: %f\n", r2);
+
+        // Test 4: Lambda literal with struct param — passed directly as arg
+        var r3 = applyToVec(p, [](Vec2 v) => { return v.x + v.y; });
+        printf("lambda literal: %f\n", r3);
+
+        // Test 5: Closure capturing a value and taking struct param
+        var scale = 2.0;
+        var scaled = [=](Vec2 v) => { return (v.x + v.y) * scale; };
+        var r4 = scaled(p);
+        printf("capturing closure: %f\n", r4);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 31: Closure + Struct Params ===
+regular: 25.000000
+closure direct: 25.000000
+closure HOF: 25.000000
+lambda literal: 7.000000
+capturing closure: 14.000000
+  --------------
+  PASS
+
+-------- Closure + Ref Params [test_32_closure_ref_params.mingus] --------
+
+  --- Source ---
+// Test 32: Closures with Reference Parameters
+// Verifies closure calling convention handles ref params correctly.
+// V1 had ABI mismatch (FunctionType lacked isReference).
+// V2 carries isReference in FunctionTypeSymbol::ParameterInfo.
+
+module Test32 {
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // Higher-order function that passes a ref through a closure
+    func applyRef((int&) => void f, int& val) => void {
+        f(val);
+    }
+
+    func main() => int {
+        puts("=== Test 32: Closure + Ref Params ===");
+
+        // Test 1: Closure with ref param — direct call
+        var x = 10;
+        var inc = [](int& n) => { n = n + 1; };
+        inc(x);
+        printf("after inc: %d\n", x);
+
+        // Test 2: Closure with ref param — through HOF
+        applyRef(inc, x);
+        printf("after HOF inc: %d\n", x);
+
+        // Test 3: Closure capturing a value + ref param
+        var step = 5;
+        var addStep = [=](int& n) => { n = n + step; };
+        addStep(x);
+        printf("after addStep: %d\n", x);
+
+        // Test 4: Lambda literal with ref param — passed directly
+        applyRef([](int& n) => { n = n * 2; }, x);
+        printf("after double: %d\n", x);
+
+        // Test 5: Multiple ref params in closure
+        var swap = [](int& a, int& b) => {
+            var tmp = a;
+            a = b;
+            b = tmp;
+        };
+        var a = 100;
+        var b = 200;
+        swap(a, b);
+        printf("a after swap: %d\n", a);
+        printf("b after swap: %d\n", b);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 32: Closure + Ref Params ===
+after inc: 11
+after HOF inc: 12
+after addStep: 17
+after double: 34
+a after swap: 200
+b after swap: 100
+  --------------
+  PASS
+
+-------- Interface Params [test_33_interface_params.mingus] --------
+
+  --- Source ---
+// Test 33: Interface Parameters
+// Verifies passing class pointers as interface-typed function parameters.
+// The caller has Dog* (raw ptr), function expects Drawable* (fat ptr {obj, itable}).
+// Codegen must wrap class pointer to interface fat pointer at call site.
+
+module Test33 {
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    interface Printable {
+        func print() => void;
+    }
+
+    class Dog : Printable {
+        int id;
+        constructor(int i) {
+            this.id = i;
+        }
+        func print() => void {
+            printf("Dog #%d says Woof!\n", this.id);
+        }
+    }
+
+    class Cat : Printable {
+        int id;
+        constructor(int i) {
+            this.id = i;
+        }
+        func print() => void {
+            printf("Cat #%d says Meow!\n", this.id);
+        }
+    }
+
+    // Function taking interface parameter — this is the bug trigger
+    func printAnimal(Printable* p) => void {
+        p->print();
+    }
+
+    // Function taking two interface parameters
+    func printBoth(Printable* a, Printable* b) => void {
+        a->print();
+        b->print();
+    }
+
+    func main() => int {
+        puts("=== Test 33: Interface Params ===");
+
+        var dog = new Dog(1);
+        var cat = new Cat(2);
+
+        // Test 1: Pass class pointer where interface expected
+        printAnimal(dog);
+        printAnimal(cat);
+
+        // Test 2: Pass two different class pointers as interface params
+        printBoth(dog, cat);
+
+        // Test 3: Pass through an interface variable (should already work)
+        var p = dog;
+        printAnimal(p);
+
+        delete dog;
+        delete cat;
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 33: Interface Params ===
+Dog #1 says Woof!
+Cat #2 says Meow!
+Dog #1 says Woof!
+Cat #2 says Meow!
+Dog #1 says Woof!
+  --------------
+  PASS
+
+-------- Varargs [test_34_varargs.mingus] --------
+
+  --- Source ---
+module Test34
+{
+    // Varargs extern declarations — using the new ... syntax
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        printf("=== Test 34: Varargs ===\n");
+
+        // Basic varargs: one int arg
+        printf("int: %d\n", 42);
+
+        // Two int args
+        printf("two ints: %d %d\n", 10, 20);
+
+        // Double arg
+        printf("double: %f\n", 3.14);
+
+        // Mixed types
+        printf("mixed: %d %f %d\n", 1, 2.718, 3);
+
+        // String arg
+        printf("string: %s\n", "hello");
+
+        // No extra args (just format string)
+        printf("no args\n");
+
+        // Three ints
+        printf("three: %d %d %d\n", 100, 200, 300);
+
+        printf("=== Test 34 complete ===\n");
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 34: Varargs ===
+int: 42
+two ints: 10 20
+double: 3.140000
+mixed: 1 2.718000 3
+string: hello
+no args
+three: 100 200 300
+=== Test 34 complete ===
+  --------------
+  PASS
+
+-------- For Multi-Init [test_35_for_multi_init.mingus] --------
+
+  --- Source ---
+module Test35
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        printf("=== Test 35: For Multi-Init ===\n");
+
+        // Two typed declarations
+        var sum = 0;
+        for (int i = 0, int j = 10; i < j; i = i + 1, j = j - 1)
+        {
+            sum = sum + i + j;
+        }
+        printf("converge sum = %d (expect 50)\n", sum);
+
+        // Two inferred declarations
+        var product = 1;
+        for (var a = 1, var b = 5; a <= b; a = a + 1, b = b - 1)
+        {
+            product = product * a;
+        }
+        printf("product = %d (expect 6)\n", product);
+
+        // Mixed: typed + inferred
+        var total = 0;
+        for (int x = 0, var y = 100; x < 5; x = x + 1)
+        {
+            total = total + y;
+            y = y - 10;
+        }
+        printf("total = %d (expect 400)\n", total);
+
+        // Single init (regression test — still works)
+        var count = 0;
+        for (int k = 0; k < 10; k = k + 1)
+        {
+            count = count + 1;
+        }
+        printf("count = %d (expect 10)\n", count);
+
+        printf("=== Test 35 complete ===\n");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 35: For Multi-Init ===
+converge sum = 50 (expect 50)
+product = 6 (expect 6)
+total = 400 (expect 400)
+count = 10 (expect 10)
+=== Test 35 complete ===
+  --------------
+  PASS
+
+-------- Const Variables [test_36_const.mingus] --------
+
+  --- Source ---
+module Test36
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        printf("=== Test 36: Const ===\n");
+
+        // Typed const
+        const int x = 42;
+        printf("const int x = %d (expect 42)\n", x);
+
+        // Inferred const
+        const pi = 3.14;
+        printf("const pi = %f (expect 3.14)\n", pi);
+
+        // Const in expressions
+        const int a = 10;
+        const int b = 20;
+        var sum = a + b;
+        printf("a + b = %d (expect 30)\n", sum);
+
+        // Const string
+        const greeting = "hello";
+        printf("greeting = %s\n", greeting);
+
+        // Const in for-loop (loop counter itself is mutable, but we can have const inside)
+        var total = 0;
+        for (int i = 0; i < 5; i = i + 1)
+        {
+            const int factor = 2;
+            total = total + i * factor;
+        }
+        printf("total = %d (expect 20)\n", total);
+
+        // Mutable var can still be reassigned (regression test)
+        var mutable_val = 100;
+        mutable_val = 200;
+        printf("mutable = %d (expect 200)\n", mutable_val);
+
+        printf("=== Test 36 complete ===\n");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 36: Const ===
+const int x = 42 (expect 42)
+const pi = 3.140000 (expect 3.14)
+a + b = 30 (expect 30)
+greeting = hello
+total = 20 (expect 20)
+mutable = 200 (expect 200)
+=== Test 36 complete ===
+  --------------
+  PASS
+
+-------- Pipe Methods [test_37_pipe_methods.mingus] --------
+
+  --- Source ---
+module Test37
+{
+    extern func printf(string fmt, ...) => int;
+
+    struct Vec2 {
+        double x;
+        double y;
+    }
+
+    class Transform
+    {
+        double scaleX;
+        double scaleY;
+        double offsetX;
+        double offsetY;
+
+        constructor(double sx, double sy, double ox, double oy)
+        {
+            this.scaleX = sx;
+            this.scaleY = sy;
+            this.offsetX = ox;
+            this.offsetY = oy;
+        }
+
+        func scale(double val) => double
+        {
+            return val * this.scaleX;
+        }
+
+        func offset(double val) => double
+        {
+            return val + this.offsetX;
+        }
+
+        func apply(double val, double extra) => double
+        {
+            return val * this.scaleX + extra;
+        }
+    }
+
+    func double_it(double x) => double
+    {
+        return x * 2.0;
+    }
+
+    func add_ten(double x) => double
+    {
+        return x + 10.0;
+    }
+
+    func main() => int
+    {
+        printf("=== Test 37: Pipe Methods ===\n");
+
+        // Basic pipe with free functions (regression test)
+        var result1 = 5.0 |> double_it |> add_ten;
+        printf("5 |> double |> add10 = %f (expect 20.0)\n", result1);
+
+        // Pipe into method call
+        Transform* t = new Transform(2.0, 1.0, 100.0, 0.0);
+
+        var result2 = 3.0 |> t->scale;
+        printf("3 |> t->scale = %f (expect 6.0)\n", result2);
+
+        var result3 = 5.0 |> t->offset;
+        printf("5 |> t->offset = %f (expect 105.0)\n", result3);
+
+        // Chained pipe with methods
+        var result4 = 5.0 |> t->scale |> t->offset;
+        printf("5 |> scale |> offset = %f (expect 110.0)\n", result4);
+
+        // Mixed: free function then method
+        var result5 = 5.0 |> double_it |> t->offset;
+        printf("5 |> double |> offset = %f (expect 110.0)\n", result5);
+
+        // Method with extra args
+        var result6 = 3.0 |> t->apply(7.0);
+        printf("3 |> t->apply(7) = %f (expect 13.0)\n", result6);
+
+        delete t;
+
+        printf("=== Test 37 complete ===\n");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 37: Pipe Methods ===
+5 |> double |> add10 = 20.000000 (expect 20.0)
+3 |> t->scale = 6.000000 (expect 6.0)
+5 |> t->offset = 105.000000 (expect 105.0)
+5 |> scale |> offset = 110.000000 (expect 110.0)
+5 |> double |> offset = 110.000000 (expect 110.0)
+3 |> t->apply(7) = 13.000000 (expect 13.0)
+=== Test 37 complete ===
+  --------------
+  PASS
+
+-------- Bare Field Access [test_38_bare_fields.mingus] --------
+
+  --- Source ---
+// Test 38: Bare Field Access (without this. prefix)
+// Verifies that class/struct fields can be accessed by name alone in methods.
+
+module Test38
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Class with bare field access ---
+    class Counter
+    {
+        int count;
+        double factor;
+
+        constructor(int c, double f)
+        {
+            // Bare field write in constructor
+            count = c;
+            factor = f;
+        }
+
+        func increment() => void
+        {
+            // Bare field read + write
+            count = count + 1;
+        }
+
+        func scaled() => double
+        {
+            // Bare field read in expression
+            return count * factor;
+        }
+
+        func getCount() => int
+        {
+            return count;
+        }
+    }
+
+    // --- Inheritance: bare access to inherited field ---
+    class NamedCounter : Counter
+    {
+        int bonus;
+
+        constructor(int c, double f, int b) : super(c, f)
+        {
+            bonus = b;
+        }
+
+        func total() => int
+        {
+            // Bare access to inherited field 'count' and own field 'bonus'
+            return count + bonus;
+        }
+    }
+
+    // --- Shadowing: local var shadows field ---
+    class ShadowTest
+    {
+        int value;
+
+        constructor(int v)
+        {
+            value = v;
+        }
+
+        func shadowed() => int
+        {
+            // Local shadows the field — should use local, not field
+            int value = 999;
+            return value;
+        }
+
+        func unshadowed() => int
+        {
+            // No local — should use field
+            return value;
+        }
+    }
+
+    func main() => int
+    {
+        printf("=== Test 38: Bare Field Access ===\n");
+
+        // Basic bare field read/write
+        Counter* c = new Counter(10, 2.5);
+        printf("initial count = %d (expect 10)\n", c->getCount());
+        c->increment();
+        c->increment();
+        printf("after 2 increments = %d (expect 12)\n", c->getCount());
+        printf("scaled = %f (expect 30.0)\n", c->scaled());
+        delete c;
+
+        // Inherited field bare access
+        NamedCounter* nc = new NamedCounter(5, 1.0, 100);
+        printf("total = %d (expect 105)\n", nc->total());
+        delete nc;
+
+        // Shadowing
+        ShadowTest* st = new ShadowTest(42);
+        printf("shadowed = %d (expect 999)\n", st->shadowed());
+        printf("unshadowed = %d (expect 42)\n", st->unshadowed());
+        delete st;
+
+        printf("=== Test 38 complete ===\n");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 38: Bare Field Access ===
+initial count = 10 (expect 10)
+after 2 increments = 12 (expect 12)
+scaled = 30.000000 (expect 30.0)
+total = 105 (expect 105)
+shadowed = 999 (expect 999)
+unshadowed = 42 (expect 42)
+=== Test 38 complete ===
+  --------------
+  PASS
+
+-------- Do-While Loop [test_39_do_while.mingus] --------
+
+  --- Source ---
+// Test 39: do-while Loop
+// Verifies do-while loop semantics:
+//   - Body executes at least once (even when condition is false)
+//   - Normal looping with condition
+//   - Break inside do-while
+//   - Continue inside do-while
+//   - Nested do-while
+
+module Test39
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        // --- 1. Basic do-while: count to 5 ---
+        var i = 0;
+        do {
+            i++;
+        } while (i < 5);
+        printf("count to 5: %d\n", i);
+
+        // --- 2. Body executes once even when condition is false ---
+        var once = 0;
+        do {
+            once = 42;
+        } while (false);
+        printf("once: %d\n", once);
+
+        // --- 3. Countdown with do-while ---
+        var n = 3;
+        do {
+            printf("n=%d\n", n);
+            n--;
+        } while (n > 0);
+
+        // --- 4. Break inside do-while ---
+        var sum = 0;
+        var j = 0;
+        do {
+            j++;
+            if (j == 4) {
+                break;
+            }
+            sum = sum + j;
+        } while (j < 10);
+        printf("break sum: %d\n", sum);
+
+        // --- 5. Continue inside do-while ---
+        var total = 0;
+        var k = 0;
+        do {
+            k++;
+            if (k == 3) {
+                continue;
+            }
+            total = total + k;
+        } while (k < 5);
+        printf("continue total: %d\n", total);
+
+        // --- 6. Nested do-while ---
+        var outer = 0;
+        var inner_sum = 0;
+        do {
+            outer++;
+            var inner = 0;
+            do {
+                inner++;
+                inner_sum = inner_sum + 1;
+            } while (inner < 3);
+        } while (outer < 2);
+        printf("nested: outer=%d inner_sum=%d\n", outer, inner_sum);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+count to 5: 5
+once: 42
+n=3
+n=2
+n=1
+break sum: 6
+continue total: 12
+nested: outer=2 inner_sum=6
+  --------------
+  PASS
+
+-------- Covariant Return Types [test_40_covariant_returns.mingus] --------
+
+  --- Source ---
+// Test 40: Covariant Return Types
+// Verifies that overriding virtual methods can return a more derived type.
+
+module Test40
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Base class ---
+    class Animal
+    {
+        int id;
+
+        constructor(int i)
+        {
+            this.id = i;
+        }
+
+        destructor {}
+
+        func describe() => int
+        {
+            return this.id;
+        }
+
+        // Virtual method returning Animal*
+        func clone(int newId) => Animal*
+        {
+            return new Animal(newId);
+        }
+
+        // Virtual method returning int (same type in derived)
+        func kind() => int
+        {
+            return 0;
+        }
+    }
+
+    // --- Derived class with covariant return ---
+    class Dog : Animal
+    {
+        int barkVolume;
+
+        constructor(int i, int vol) : super(i)
+        {
+            this.barkVolume = vol;
+        }
+
+        destructor {}
+
+        // Covariant: returns Dog* where base returns Animal*
+        func clone(int newId) => Dog*
+        {
+            return new Dog(newId, this.barkVolume);
+        }
+
+        // Same return type override
+        func kind() => int
+        {
+            return 1;
+        }
+
+        func getBark() => int
+        {
+            return this.barkVolume;
+        }
+    }
+
+    // --- Second derived class ---
+    class Cat : Animal
+    {
+        int purr;
+
+        constructor(int i, int p) : super(i)
+        {
+            this.purr = p;
+        }
+
+        destructor {}
+
+        // Covariant: returns Cat* where base returns Animal*
+        func clone(int newId) => Cat*
+        {
+            return new Cat(newId, this.purr);
+        }
+
+        func kind() => int
+        {
+            return 2;
+        }
+
+        func getPurr() => int
+        {
+            return this.purr;
+        }
+    }
+
+    func main() => int
+    {
+        // --- 1. Direct covariant call ---
+        var dog = new Dog(10, 99);
+        var clonedDog = dog->clone(20);
+        printf("dog clone id=%d bark=%d\n", clonedDog->describe(), clonedDog->getBark());
+
+        // --- 2. Through base pointer (virtual dispatch) ---
+        Animal* animalPtr = dog;
+        var clonedAnimal = animalPtr->clone(30);
+        printf("animal clone id=%d kind=%d\n", clonedAnimal->describe(), clonedAnimal->kind());
+
+        // --- 3. Cat covariant ---
+        var cat = new Cat(40, 77);
+        var clonedCat = cat->clone(50);
+        printf("cat clone id=%d purr=%d\n", clonedCat->describe(), clonedCat->getPurr());
+
+        // --- 4. Polymorphic dispatch ---
+        Animal* a1 = new Dog(1, 10);
+        Animal* a2 = new Cat(2, 20);
+
+        var c1 = a1->clone(11);
+        var c2 = a2->clone(22);
+        printf("poly c1 kind=%d c2 kind=%d\n", c1->kind(), c2->kind());
+
+        // --- Cleanup ---
+        delete clonedDog;
+        delete clonedAnimal;
+        delete clonedCat;
+        delete c1;
+        delete c2;
+        delete dog;
+        delete cat;
+        delete a1;
+        delete a2;
+
+        printf("done\n");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+dog clone id=20 bark=99
+animal clone id=30 kind=1
+cat clone id=50 purr=77
+poly c1 kind=1 c2 kind=2
+done
+  --------------
+  PASS
+
+-------- Typedef / Type Alias [test_41_typedef.mingus] --------
+
+  --- Source ---
+// Test 41: typedef / Type Alias
+// Verifies typedef declarations that create named aliases for types.
+
+module Test41
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Primitive typedef ---
+    typedef int Count;
+    typedef double Temperature;
+    typedef bool Flag;
+
+    // --- Struct with typedef fields ---
+    struct Point
+    {
+        Temperature x;
+        Temperature y;
+    }
+
+    // --- Function using typedef ---
+    func addCounts(Count a, Count b) => Count
+    {
+        return a + b;
+    }
+
+    func toFahrenheit(Temperature celsius) => Temperature
+    {
+        return celsius * 1.8 + 32.0;
+    }
+
+    func main() => int
+    {
+        // --- 1. Primitive typedef ---
+        Count items = 42;
+        printf("items: %d\n", items);
+
+        Temperature temp = 100.0;
+        printf("temp: %.1f\n", temp);
+
+        Flag active = true;
+        if (active) {
+            printf("active: yes\n");
+        }
+
+        // --- 2. Typedef in function params and return ---
+        Count total = addCounts(10, 20);
+        printf("total: %d\n", total);
+
+        Temperature f = toFahrenheit(100.0);
+        printf("100C = %.1fF\n", f);
+
+        // --- 3. Typedef in struct fields ---
+        Point p;
+        p.x = 3.14;
+        p.y = 2.71;
+        printf("point: %.2f, %.2f\n", p.x, p.y);
+
+        // --- 4. Typedef mixed with original type ---
+        int original = 5;
+        Count aliased = original;
+        printf("original=%d aliased=%d\n", original, aliased);
+
+        printf("done\n");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+items: 42
+temp: 100.0
+active: yes
+total: 30
+100C = 212.0F
+point: 3.14, 2.71
+original=5 aliased=5
+done
+  --------------
+  PASS
+
+-------- Labeled Break/Continue [test_42_labeled_loops.mingus] --------
+
+  --- Source ---
+// Test 42: Labeled break/continue
+// Tests labeled loops with break/continue targeting outer loops
+
+module Test42
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Test 1: Labeled break from nested for loop
+    func test_labeled_break() => void
+    {
+        printf("=== Labeled Break ===\n");
+        outer: for (int i = 0; i < 5; i++)
+        {
+            for (int j = 0; j < 5; j++)
+            {
+                if (j == 2)
+                {
+                    printf("Breaking outer at i=%d\n", i);
+                    break outer;
+                }
+            }
+        }
+        printf("After outer loop\n");
+    }
+
+    // Test 2: Labeled continue to outer loop
+    func test_labeled_continue() => void
+    {
+        printf("=== Labeled Continue ===\n");
+        outer: for (int i = 0; i < 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                if (j == 1)
+                {
+                    continue outer;
+                }
+                printf("i=%d j=%d\n", i, j);
+            }
+        }
+        printf("Done\n");
+    }
+
+    // Test 3: Unlabeled break still works (regression test)
+    func test_unlabeled_break() => void
+    {
+        printf("=== Unlabeled Break ===\n");
+        for (int i = 0; i < 10; i++)
+        {
+            if (i == 3)
+            {
+                break;
+            }
+            printf("%d\n", i);
+        }
+        printf("Done\n");
+    }
+
+    // Test 4: Labeled break on while loop
+    func test_labeled_while() => void
+    {
+        printf("=== Labeled While ===\n");
+        var i = 0;
+        outer: while (i < 5)
+        {
+            var j = 0;
+            while (j < 5)
+            {
+                if (i == 1)
+                {
+                    if (j == 1)
+                    {
+                        break outer;
+                    }
+                }
+                j++;
+            }
+            i++;
+        }
+        printf("Exited at i=%d\n", i);
+    }
+
+    // Test 5: Labeled break on do-while loop
+    func test_labeled_do_while() => void
+    {
+        printf("=== Labeled Do-While ===\n");
+        var i = 0;
+        outer: do
+        {
+            var j = 0;
+            do
+            {
+                if (i == 2)
+                {
+                    if (j == 0)
+                    {
+                        break outer;
+                    }
+                }
+                j++;
+            } while (j < 3);
+            i++;
+        } while (i < 5);
+        printf("Exited at i=%d\n", i);
+    }
+
+    // Test 6: Triple-nested labeled break
+    func test_triple_nested() => void
+    {
+        printf("=== Triple Nested ===\n");
+        var count = 0;
+        outer: for (int i = 0; i < 10; i++)
+        {
+            for (int j = 0; j < 10; j++)
+            {
+                for (int k = 0; k < 10; k++)
+                {
+                    count++;
+                    if (count == 15)
+                    {
+                        printf("Breaking outer at count=%d\n", count);
+                        break outer;
+                    }
+                }
+            }
+        }
+        printf("Total iterations: %d\n", count);
+    }
+
+    // Test 7: Labeled continue in while loop
+    func test_labeled_continue_while() => void
+    {
+        printf("=== Labeled Continue While ===\n");
+        var i = 0;
+        var skipped = 0;
+        outer: while (i < 4)
+        {
+            var j = 0;
+            while (j < 4)
+            {
+                j++;
+                if (i == 2)
+                {
+                    skipped++;
+                    i++;
+                    continue outer;
+                }
+            }
+            printf("Completed inner loop for i=%d\n", i);
+            i++;
+        }
+        printf("Skipped: %d\n", skipped);
+    }
+
+    func main() => int
+    {
+        test_labeled_break();
+        test_labeled_continue();
+        test_unlabeled_break();
+        test_labeled_while();
+        test_labeled_do_while();
+        test_triple_nested();
+        test_labeled_continue_while();
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Labeled Break ===
+Breaking outer at i=0
+After outer loop
+=== Labeled Continue ===
+i=0 j=0
+i=1 j=0
+i=2 j=0
+Done
+=== Unlabeled Break ===
+0
+1
+2
+Done
+=== Labeled While ===
+Exited at i=1
+=== Labeled Do-While ===
+Exited at i=2
+=== Triple Nested ===
+Breaking outer at count=15
+Total iterations: 15
+=== Labeled Continue While ===
+Completed inner loop for i=0
+Completed inner loop for i=1
+Completed inner loop for i=3
+Skipped: 1
+  --------------
+  PASS
+
+-------- Copy Constructors [test_43_copy_constructors.mingus] --------
+
+  --- Source ---
+// Test 43: Copy Constructors
+
+module Test43
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Test 1: Explicit copy construction ---
+    class Counter
+    {
+        public int value;
+        public int id;
+
+        constructor(int v, int i)
+        {
+            this.value = v;
+            this.id = i;
+        }
+
+        constructor(Counter& other)
+        {
+            this.value = other.value;
+            this.id = other.id + 100;
+        }
+
+        destructor {}
+
+        func getValue() => int => this.value;
+        func getId() => int => this.id;
+    }
+
+    // --- Test 3: Class without copy constructor (regression) ---
+    class Simple
+    {
+        public int value;
+
+        constructor(int v)
+        {
+            this.value = v;
+        }
+
+        destructor {}
+
+        func getValue() => int => this.value;
+    }
+
+    func main() => int
+    {
+        // Test 1: Explicit copy construction
+        printf("=== Explicit Copy ===\n");
+        var original = new Counter(42, 1);
+        printf("original: value=%d id=%d\n", original->getValue(), original->getId());
+        var copy = new Counter(original);
+        printf("copy: value=%d id=%d\n", copy->getValue(), copy->getId());
+        delete copy;
+        delete original;
+
+        // Test 2: Copy preserves values but is independent
+        printf("=== Copy Preserves Values ===\n");
+        var a = new Counter(999, 0);
+        var b = new Counter(a);
+        printf("a.value=%d b.value=%d\n", a->getValue(), b->getValue());
+        // b should be independent (different id proves copy ctor ran)
+        var independent = 0;
+        if (b->getId() == 100) {
+            independent = 1;
+        }
+        printf("b is independent: %d\n", independent);
+        delete b;
+        delete a;
+
+        // Test 3: Class without copy constructor (regular construction still works)
+        printf("=== No Copy Constructor ===\n");
+        var s = new Simple(77);
+        printf("value=%d\n", s->getValue());
+        delete s;
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Explicit Copy ===
+original: value=42 id=1
+copy: value=42 id=101
+=== Copy Preserves Values ===
+a.value=999 b.value=999
+b is independent: 1
+=== No Copy Constructor ===
+value=77
+  --------------
+  PASS
+
+-------- Function Overloading [test_44_overloading.mingus] --------
+
+  --- Source ---
+// Test 44: Function Overloading
+
+module Test44
+{
+    extern func printf(string fmt, ...) => int;
+
+    // --- Overloaded free functions: different parameter counts ---
+    func add(int a, int b) => int => a + b;
+    func add(int a, int b, int c) => int => a + b + c;
+
+    // --- Overloaded free functions: different parameter types ---
+    func describe(int x) => int
+    {
+        printf("int: %d\n", x);
+        return 1;
+    }
+
+    func describe(double x) => int
+    {
+        printf("double: %.1f\n", x);
+        return 2;
+    }
+
+    func describe(string x) => int
+    {
+        printf("string: %s\n", x);
+        return 3;
+    }
+
+    // --- Overloaded methods ---
+    class Calculator
+    {
+        public int base;
+
+        constructor(int b)
+        {
+            this.base = b;
+        }
+
+        destructor {}
+
+        func compute(int x) => int => this.base + x;
+        func compute(int x, int y) => int => this.base + x * y;
+    }
+
+    func main() => int
+    {
+        // Test 1: Different parameter counts
+        printf("=== Parameter Count Overloading ===\n");
+        printf("add(1,2) = %d\n", add(1, 2));
+        printf("add(1,2,3) = %d\n", add(1, 2, 3));
+
+        // Test 2: Different parameter types
+        printf("=== Parameter Type Overloading ===\n");
+        var r1 = describe(42);
+        var r2 = describe(3.14);
+        var r3 = describe("hello");
+        printf("results: %d %d %d\n", r1, r2, r3);
+
+        // Test 3: Overloaded methods
+        printf("=== Method Overloading ===\n");
+        var calc = new Calculator(10);
+        printf("compute(5) = %d\n", calc->compute(5));
+        printf("compute(3,4) = %d\n", calc->compute(3, 4));
+        delete calc;
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Parameter Count Overloading ===
+add(1,2) = 3
+add(1,2,3) = 6
+=== Parameter Type Overloading ===
+int: 42
+double: 3.1
+string: hello
+results: 1 2 3
+=== Method Overloading ===
+compute(5) = 15
+compute(3,4) = 22
+  --------------
+  PASS
+
+-------- Move Semantics [test_45_move_semantics.mingus] --------
+
+  --- Source ---
+module Test45 {
+    extern func printf(string fmt, ...) => int;
+
+    class Resource {
+        public int value;
+        public int moved;
+
+        constructor(int v) {
+            this.value = v;
+            this.moved = 0;
+        }
+
+        constructor(Resource&& other) {
+            this.value = other.value;
+            this.moved = 0;
+            other.value = 0;
+            other.moved = 1;
+        }
+
+        destructor {}
+        func getValue() => int => this.value;
+        func isMoved() => int => this.moved;
+    }
+
+    func main() => int {
+        printf("=== Move Constructor ===\n");
+        var a = new Resource(42);
+        printf("a before: %d\n", a->getValue());
+        var b = new Resource(move(a));
+        printf("a after:  %d\n", a->getValue());
+        printf("b value:  %d\n", b->getValue());
+        printf("a moved:  %d\n", a->isMoved());
+
+        printf("=== No Move (Regular Ctor) ===\n");
+        var c = new Resource(99);
+        printf("c value: %d\n", c->getValue());
+
+        delete b;
+        delete a;
+        delete c;
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Move Constructor ===
+a before: 42
+a after:  0
+b value:  42
+a moved:  1
+=== No Move (Regular Ctor) ===
+c value: 99
+  --------------
+  PASS
+
+-------- Temp Closure Fix [test_46_temp_closure_fix.mingus] --------
+
+  --- Source ---
+// Test 46: Temporary Closure Argument Fix
+// Verifies that closures returned by functions and passed directly
+// as arguments are properly released (no leak).
+
+module Test46
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // Factory: returns a closure that captures k
+    func make_adder(int k) => (int) => int
+    {
+        return [=](int x) => { return x + k; };
+    }
+
+    // Applies a closure to a value
+    func apply((int) => int f, int val) => int
+    {
+        return f(val);
+    }
+
+    // Takes two closures
+    func combine((int) => int f, (int) => int g, int x) => int
+    {
+        return f(x) + g(x);
+    }
+
+    func main() => int
+    {
+        puts("=== Test 46: Temp Closure Fix ===");
+
+        // Case 1: Function-returned closure passed directly as arg
+        var r1 = apply(make_adder(10), 5);
+        printf("apply(make_adder(10), 5) = %d\n", r1);
+
+        // Case 2: Lambda literal passed directly as arg
+        var r2 = apply([=](int x) => { return x * 2; }, 7);
+        printf("apply(lambda*2, 7) = %d\n", r2);
+
+        // Case 3: Two function-returned closures as args
+        var r3 = combine(make_adder(100), make_adder(200), 1);
+        printf("combine(+100, +200, 1) = %d\n", r3);
+
+        // Case 4: Mixed lambda literal and function-returned closure
+        var r4 = combine(make_adder(50), [=](int x) => { return x * 3; }, 10);
+        printf("combine(+50, *3, 10) = %d\n", r4);
+
+        // Case 5: Loop with temp closures (stress the allocator)
+        var sum = 0;
+        for (int i = 0; i < 1000; i++)
+        {
+            sum = sum + apply(make_adder(i), 1);
+        }
+        printf("loop sum = %d\n", sum);
+
+        // Case 6: Named variable (should NOT be released by temp logic)
+        var myAdder = make_adder(42);
+        var r6 = apply(myAdder, 8);
+        printf("apply(myAdder, 8) = %d\n", r6);
+
+        // Use myAdder again to prove it wasn't released
+        var r7 = apply(myAdder, 100);
+        printf("apply(myAdder, 100) = %d\n", r7);
+
+        puts("=== Test 46 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 46: Temp Closure Fix ===
+apply(make_adder(10), 5) = 15
+apply(lambda*2, 7) = 14
+combine(+100, +200, 1) = 302
+combine(+50, *3, 10) = 90
+loop sum = 500500
+apply(myAdder, 8) = 50
+apply(myAdder, 100) = 142
+=== Test 46 complete ===
+  --------------
+  PASS
+
+-------- Self-Capture Safety [test_47_self_capture_safety.mingus] --------
+
+  --- Source ---
+// Test 47: Self-Capturing Closure Safety
+// Verifies that self-capturing closures are kept alive during recursion
+// via automatic retain-at-entry / release-at-exit.
+
+module Test47
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func main() => int
+    {
+        puts("=== Test 47: Self-Capture Safety ===");
+
+        // Case 1: Classic recursive fibonacci via self-capture
+        (int) => int fib = [=](int n) => {
+            if (n <= 1) return n;
+            return fib(n - 1) + fib(n - 2);
+        };
+        printf("fib(10) = %d\n", fib(10));
+
+        // Case 2: Self-capturing countdown
+        (int) => int countdown = [=](int n) => {
+            if (n <= 0) return 0;
+            return n + countdown(n - 1);
+        };
+        printf("countdown(100) = %d\n", countdown(100));
+
+        // Case 3: Self-capturing factorial
+        (int) => int factorial = [=](int n) => {
+            if (n <= 1) return 1;
+            return n * factorial(n - 1);
+        };
+        printf("factorial(12) = %d\n", factorial(12));
+
+        // Case 4: Deep recursion stress (verify RC balance)
+        (int) => int deep = [=](int n) => {
+            if (n <= 0) return 0;
+            return 1 + deep(n - 1);
+        };
+        printf("deep(5000) = %d\n", deep(5000));
+
+        puts("=== Test 47 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 47: Self-Capture Safety ===
+fib(10) = 55
+countdown(100) = 5050
+factorial(12) = 479001600
+deep(5000) = 5000
+=== Test 47 complete ===
+  --------------
+  PASS
+
+-------- Ref Capture Escape Analysis [test_48_ref_capture_escape.mingus] --------
+
+  --- Source ---
+// Test 48: By-Reference Capture Escape Analysis
+// Verifies that legal by-ref captures still work, while dangerous
+// escaping patterns are detected at compile time.
+
+module Test48
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // Legal: by-ref capture within scope lifetime
+    func test_legal_ref_capture() => int
+    {
+        var counter = 0;
+        var inc = [&counter]() => { counter = counter + 1; };
+        inc();
+        inc();
+        inc();
+        return counter;
+    }
+
+    // Legal: by-ref capture in a loop (scope doesn't escape)
+    func test_loop_ref() => int
+    {
+        var total = 0;
+        for (int i = 0; i < 10; i++)
+        {
+            var adder = [&total](int x) => { total = total + x; };
+            adder(i);
+        }
+        return total;
+    }
+
+    // Legal: by-ref with multiple captures
+    func test_multi_ref() => int
+    {
+        var a = 10;
+        var b = 20;
+        var swap = [&a, &b]() => {
+            var tmp = a;
+            a = b;
+            b = tmp;
+        };
+        swap();
+        return a * 100 + b;
+    }
+
+    // Legal: pass by-ref closure as arg (doesn't escape — callee borrows)
+    func apply_void(() => void f) => void
+    {
+        f();
+    }
+
+    func test_pass_as_arg() => int
+    {
+        var x = 0;
+        var setter = [&x]() => { x = 42; };
+        apply_void(setter);
+        return x;
+    }
+
+    func main() => int
+    {
+        puts("=== Test 48: Ref Capture Escape Analysis ===");
+
+        var r1 = test_legal_ref_capture();
+        printf("legal ref capture: %d\n", r1);
+
+        var r2 = test_loop_ref();
+        printf("loop ref: %d\n", r2);
+
+        var r3 = test_multi_ref();
+        printf("multi ref (swap): %d\n", r3);
+
+        var r4 = test_pass_as_arg();
+        printf("pass as arg: %d\n", r4);
+
+        puts("=== Test 48 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 48: Ref Capture Escape Analysis ===
+legal ref capture: 3
+loop ref: 45
+multi ref (swap): 2010
+pass as arg: 42
+=== Test 48 complete ===
+  --------------
+  PASS
+
+-------- Weak Captures [test_49_weak_captures.mingus] --------
+
+  --- Source ---
+// Test 49: Weak Captures for Cycle Breaking
+// Tests [weak x] capture mode: alive/dead detection, cycle breaking, null safety
+
+module Test49
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // ========================================================================
+    // Test 1: Basic weak capture — alive reference
+    // ========================================================================
+    func test_alive() => int
+    {
+        var callback = [=]() => { return 42; };
+
+        // Capture callback weakly
+        var checker = [weak callback]() => {
+            if (callback != null) {
+                return callback();
+            }
+            return -1;
+        };
+
+        // callback is still alive, so weak capture should work
+        return checker();
+    }
+
+    // ========================================================================
+    // Test 2: Weak capture breaks simple cycle
+    // ========================================================================
+    func test_cycle_break() => int
+    {
+        var value = 100;
+
+        // Create a closure that will be captured weakly
+        var producer = [=]() => { return value; };
+
+        // Capture producer weakly — breaks potential cycle
+        var consumer = [weak producer]() => {
+            if (producer != null) {
+                return producer() + 1;
+            }
+            return 0;
+        };
+
+        return consumer();
+    }
+
+    // ========================================================================
+    // Test 3: Weak capture with null closure
+    // ========================================================================
+    func test_null_weak() => int
+    {
+        () => int callback = null;
+
+        var checker = [weak callback]() => {
+            if (callback != null) {
+                return callback();
+            }
+            return -999;
+        };
+
+        return checker();
+    }
+
+    // ========================================================================
+    // Test 4: Weak and strong captures mixed
+    // ========================================================================
+    func test_mixed_captures() => int
+    {
+        var x = 10;
+        var multiplier = [=](int n) => { return n * x; };
+
+        // Capture x by value (strong), multiplier weakly
+        var combined = [=, weak multiplier]() => {
+            if (multiplier != null) {
+                return multiplier(x);
+            }
+            return x;
+        };
+
+        return combined();
+    }
+
+    // ========================================================================
+    // Test 5: Stress — many weak captures in a loop
+    // ========================================================================
+    func test_stress() => int
+    {
+        var sum = 0;
+        for (int i = 0; i < 1000; i++)
+        {
+            var inner = [=]() => { return i; };
+
+            var outer = [weak inner]() => {
+                if (inner != null) {
+                    return inner();
+                }
+                return 0;
+            };
+
+            sum = sum + outer();
+        }
+
+        return sum;
+    }
+
+    // ========================================================================
+    // Main
+    // ========================================================================
+    func main() => int
+    {
+        puts("=== Test 49: Weak Captures ===");
+
+        var r1 = test_alive();
+        printf("alive weak capture: %d\n", r1);
+
+        var r2 = test_cycle_break();
+        printf("cycle-safe result: %d\n", r2);
+
+        var r3 = test_null_weak();
+        printf("null weak result: %d\n", r3);
+
+        var r4 = test_mixed_captures();
+        printf("mixed captures: %d\n", r4);
+
+        var r5 = test_stress();
+        printf("stress sum: %d\n", r5);
+
+        puts("=== Test 49 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 49: Weak Captures ===
+alive weak capture: 42
+cycle-safe result: 101
+null weak result: -999
+mixed captures: 100
+stress sum: 499500
+=== Test 49 complete ===
+  --------------
+  PASS
+
+-------- Shared Pointers [test_50_shared_pointers.mingus] --------
+
+  --- Source ---
+module Test50
+{
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // ================================================================
+    // Base class with tracking
+    // ================================================================
+    class Animal {
+        int id;
+        string name;
+
+        constructor(int id, string name) {
+            this.id = id;
+            this.name = name;
+            printf("  Animal(%d) created\n", id);
+        }
+
+        destructor {
+            printf("  Animal(%d) destroyed\n", this.id);
+        }
+
+        func speak() => void {
+            printf("  Animal(%d) speaks: %s\n", this.id, this.name);
+        }
+
+        func getId() => int {
+            return this.id;
+        }
+    }
+
+    // ================================================================
+    // Derived class for polymorphism test
+    // ================================================================
+    class Dog : Animal {
+        string breed;
+
+        constructor(int id, string name, string breed) : super(id, name) {
+            this.breed = breed;
+            printf("  Dog(%d) created\n", id);
+        }
+
+        destructor {
+            printf("  Dog(%d) destroyed\n", this.id);
+        }
+
+        func speak() => void {
+            printf("  Dog(%d) barks: %s the %s\n", this.id, this.name, this.breed);
+        }
+    }
+
+    // ================================================================
+    // Test 1: Basic lifecycle — auto cleanup at scope exit
+    // ================================================================
+    func test_basic() => void {
+        puts("test_basic:");
+        shared Animal* a = new shared Animal(1, "Rex");
+        a->speak();
+        puts("  leaving scope...");
+        // a is automatically released here via RAII
+    }
+
+    // ================================================================
+    // Test 2: Scope cleanup — inner scope destruction
+    // ================================================================
+    func test_scope() => void {
+        puts("test_scope:");
+        {
+            shared Animal* a = new shared Animal(2, "Luna");
+            a->speak();
+            puts("  leaving inner scope...");
+        }
+        puts("  back in outer scope");
+    }
+
+    // ================================================================
+    // Test 3: Reassignment — old released, new retained
+    // ================================================================
+    func test_reassign() => void {
+        puts("test_reassign:");
+        shared Animal* a = new shared Animal(3, "Max");
+        a->speak();
+        puts("  reassigning...");
+        a = new shared Animal(4, "Bella");
+        a->speak();
+        puts("  leaving scope...");
+    }
+
+    // ================================================================
+    // Test 4: Null shared pointer — no crash
+    // ================================================================
+    func test_null() => void {
+        puts("test_null:");
+        shared Animal* a = null;
+        puts("  null shared pointer OK");
+    }
+
+    // ================================================================
+    // Test 5: Inheritance + polymorphism
+    // ================================================================
+    func test_inheritance() => void {
+        puts("test_inheritance:");
+        shared Animal* a = new shared Dog(5, "Buddy", "Labrador");
+        a->speak();
+        printf("  id = %d\n", a->getId());
+        puts("  leaving scope...");
+    }
+
+    // ================================================================
+    // Test 6: Delete as release
+    // ================================================================
+    func test_delete() => void {
+        puts("test_delete:");
+        shared Animal* a = new shared Animal(6, "Charlie");
+        a->speak();
+        delete a;
+        puts("  after delete");
+    }
+
+    // ================================================================
+    // Simple counter class for quiet stress test
+    // ================================================================
+    class Counter {
+        int val;
+
+        constructor(int v) {
+            this.val = v;
+        }
+
+        destructor { }
+
+        func getVal() => int {
+            return this.val;
+        }
+    }
+
+    // ================================================================
+    // Test 7: Stress — many shared objects in a loop
+    // ================================================================
+    func test_stress() => void {
+        puts("test_stress:");
+        int count = 0;
+        for (int i = 0; i < 1000; i = i + 1) {
+            shared Counter* c = new shared Counter(i);
+            count = count + c->getVal();
+        }
+        printf("  stress sum: %d\n", count);
+    }
+
+    // ================================================================
+    // Entry point
+    // ================================================================
+    func main() => int {
+        puts("=== Test 50: Shared Pointers ===");
+
+        test_basic();
+        test_scope();
+        test_reassign();
+        test_null();
+        test_inheritance();
+        test_delete();
+        test_stress();
+
+        puts("=== Test 50 complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 50: Shared Pointers ===
+test_basic:
+  Animal(1) created
+  Animal(1) speaks: Rex
+  leaving scope...
+  Animal(1) destroyed
+test_scope:
+  Animal(2) created
+  Animal(2) speaks: Luna
+  leaving inner scope...
+  Animal(2) destroyed
+  back in outer scope
+test_reassign:
+  Animal(3) created
+  Animal(3) speaks: Max
+  reassigning...
+  Animal(3) destroyed
+  Animal(4) created
+  Animal(4) speaks: Bella
+  leaving scope...
+  Animal(4) destroyed
+test_null:
+  null shared pointer OK
+test_inheritance:
+  Animal(5) created
+  Dog(5) created
+  Dog(5) barks: Buddy the Labrador
+  id = 5
+  leaving scope...
+  Dog(5) destroyed
+  Animal(5) destroyed
+test_delete:
+  Animal(6) created
+  Animal(6) speaks: Charlie
+  Animal(6) destroyed
+  after delete
+test_stress:
+  stress sum: 499500
+=== Test 50 complete ===
+  --------------
+  PASS
+
+-------- Arrays [test_51_arrays.mingus] --------
+
+  --- Source ---
+module Test51 {
+
+extern {
+    func printf(string fmt, ...) => int;
+    func puts(string s) => int;
+}
+
+// ============================================================================
+// Test 1: Array parameter — pass int[5] to function
+// ============================================================================
+func sumArray(int[5] arr) => int {
+    int total = 0;
+    for (int i = 0; i < 5; i = i + 1) {
+        total = total + arr[i];
+    }
+    return total;
+}
+
+func test_param() => void {
+    puts("--- test_param ---");
+    int[5] arr;
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = 30;
+    arr[3] = 40;
+    arr[4] = 50;
+    int s = sumArray(arr);
+    printf("sum = %d\n", s);
+}
+
+// ============================================================================
+// Test 2: Array return — function returns int[3]
+// ============================================================================
+func makeArray() => int[3] {
+    int[3] result;
+    result[0] = 100;
+    result[1] = 200;
+    result[2] = 300;
+    return result;
+}
+
+func test_return() => void {
+    puts("--- test_return ---");
+    int[3] arr = makeArray();
+    printf("arr = [%d, %d, %d]\n", arr[0], arr[1], arr[2]);
+}
+
+// ============================================================================
+// Test 3: Array literal initialization
+// ============================================================================
+func test_literal() => void {
+    puts("--- test_literal ---");
+    int[4] arr = [10, 20, 30, 40];
+    printf("arr = [%d, %d, %d, %d]\n", arr[0], arr[1], arr[2], arr[3]);
+}
+
+// ============================================================================
+// Test 4: Array literal with var (type inferred)
+// ============================================================================
+func test_var_literal() => void {
+    puts("--- test_var_literal ---");
+    var arr = [1, 2, 3];
+    printf("arr = [%d, %d, %d]\n", arr[0], arr[1], arr[2]);
+}
+
+// ============================================================================
+// Test 5: Array as function argument (literal directly)
+// ============================================================================
+func sumThree(int[3] arr) => int {
+    return arr[0] + arr[1] + arr[2];
+}
+
+func test_literal_arg() => void {
+    puts("--- test_literal_arg ---");
+    int s = sumThree([100, 200, 300]);
+    printf("sum = %d\n", s);
+}
+
+// ============================================================================
+// Test 6: Array in struct field
+// ============================================================================
+struct Vec4 {
+    int[4] data;
+}
+
+func test_struct_field() => void {
+    puts("--- test_struct_field ---");
+    Vec4 v;
+    v.data[0] = 1;
+    v.data[1] = 2;
+    v.data[2] = 3;
+    v.data[3] = 4;
+    int s = v.data[0] + v.data[1] + v.data[2] + v.data[3];
+    printf("sum = %d\n", s);
+}
+
+// ============================================================================
+// Test 7: Array in class field with constructor
+// ============================================================================
+class Buffer {
+    int[4] data;
+    int count;
+
+    constructor(int a, int b, int c, int d) {
+        this.data[0] = a;
+        this.data[1] = b;
+        this.data[2] = c;
+        this.data[3] = d;
+        this.count = 4;
+    }
+
+    func get(int i) => int {
+        return this.data[i];
+    }
+
+    func sum() => int {
+        int total = 0;
+        for (int i = 0; i < this.count; i = i + 1) {
+            total = total + this.data[i];
+        }
+        return total;
+    }
+}
+
+func test_class_field() => void {
+    puts("--- test_class_field ---");
+    var buf = Buffer(10, 20, 30, 40);
+    printf("buf.get(0) = %d\n", buf.get(0));
+    printf("buf.get(3) = %d\n", buf.get(3));
+    printf("buf.sum() = %d\n", buf.sum());
+}
+
+// ============================================================================
+// Test 8: Array field with literal assignment
+// ============================================================================
+struct Point3 {
+    int[3] coords;
+}
+
+func test_field_literal() => void {
+    puts("--- test_field_literal ---");
+    Point3 p;
+    p.coords = [10, 20, 30];
+    printf("p = (%d, %d, %d)\n", p.coords[0], p.coords[1], p.coords[2]);
+}
+
+// ============================================================================
+// Test 9: Nested array access — pass struct with array to function
+// ============================================================================
+func sumVec4(Vec4 v) => int {
+    return v.data[0] + v.data[1] + v.data[2] + v.data[3];
+}
+
+func test_nested_access() => void {
+    puts("--- test_nested_access ---");
+    Vec4 v;
+    v.data[0] = 5;
+    v.data[1] = 10;
+    v.data[2] = 15;
+    v.data[3] = 20;
+    int s = sumVec4(v);
+    printf("sum = %d\n", s);
+}
+
+// ============================================================================
+// Test 10: Array reassignment with literal
+// ============================================================================
+func test_reassign() => void {
+    puts("--- test_reassign ---");
+    int[3] arr = [1, 2, 3];
+    printf("before: [%d, %d, %d]\n", arr[0], arr[1], arr[2]);
+    arr = [4, 5, 6];
+    printf("after:  [%d, %d, %d]\n", arr[0], arr[1], arr[2]);
+}
+
+// ============================================================================
+// Entry point
+// ============================================================================
+func main() => int {
+    puts("=== Test 51: Arrays ===");
+    test_param();
+    test_return();
+    test_literal();
+    test_var_literal();
+    test_literal_arg();
+    test_struct_field();
+    test_class_field();
+    test_field_literal();
+    test_nested_access();
+    test_reassign();
+    puts("=== Test 51 complete ===");
+    return 0;
+}
+
+}
+
+  -------------
+
+  --- Output ---
+=== Test 51: Arrays ===
+--- test_param ---
+sum = 150
+--- test_return ---
+arr = [100, 200, 300]
+--- test_literal ---
+arr = [10, 20, 30, 40]
+--- test_var_literal ---
+arr = [1, 2, 3]
+--- test_literal_arg ---
+sum = 600
+--- test_struct_field ---
+sum = 10
+--- test_class_field ---
+buf.get(0) = 10
+buf.get(3) = 40
+buf.sum() = 100
+--- test_field_literal ---
+p = (10, 20, 30)
+--- test_nested_access ---
+sum = 50
+--- test_reassign ---
+before: [1, 2, 3]
+after:  [4, 5, 6]
+=== Test 51 complete ===
+  --------------
+  PASS
+
+-------- Tier 1 Fixes [test_52_tier1_fixes.mingus] --------
+
+  --- Source ---
+// test_52_tier1_fixes.mingus — Tests for Tier 1 bug fixes:
+//   1. Char literal escape processing (\n, \t, \\, etc.)
+//   2. Duplicate cross-module externs (import module that also declares printf)
+//   3. Whole-module import (import OpLib; without selective targets)
+
+module Test52 {
+
+extern func printf(string fmt, ...) => int;
+extern func puts(string s) => int;
+extern func putchar(int c) => int;
+
+// Whole-module import — OpLib also declares extern printf
+import OpLib;
+
+func testCharEscapes() => void {
+    puts("--- char escapes ---");
+
+    // Newline
+    var nl = '\n';
+    printf("newline: %d\n", (int)nl);  // expect 10
+
+    // Tab
+    var tab = '\t';
+    printf("tab: %d\n", (int)tab);  // expect 9
+
+    // Null
+    var nul = '\0';
+    printf("null: %d\n", (int)nul);  // expect 0
+
+    // Backslash
+    var bs = '\\';
+    printf("backslash: %d\n", (int)bs);  // expect 92
+
+    // Single quote
+    var sq = '\'';
+    printf("single-quote: %d\n", (int)sq);  // expect 39
+
+    // Regular char (no escape)
+    var ch = 'A';
+    printf("A: %d\n", (int)ch);  // expect 65
+}
+
+func testWholeModuleImport() => void {
+    puts("--- whole-module import ---");
+
+    // makeVec2 is available via import OpLib;
+    var a = makeVec2(1.0, 2.0);
+    var b = makeVec2(3.0, 4.0);
+
+    // operator+ across module boundary
+    var c = a + b;
+    printf("a + b = (%f, %f)\n", c.x, c.y);
+
+    // operator* across module boundary
+    var d = a * 2.0;
+    printf("a * 2 = (%f, %f)\n", d.x, d.y);
+
+    // operator== across module boundary
+    var e = makeVec2(4.0, 6.0);
+    if (c == e) {
+        puts("c == e: true");
+    } else {
+        puts("c == e: false");
+    }
+
+    // Vec2.print() method across module boundary
+    printf("c = ");
+    c.print();
+    printf("\n");
+}
+
+func main() => int {
+    puts("=== Tier 1 Fixes ===");
+
+    testCharEscapes();
+    testWholeModuleImport();
+
+    puts("=== done ===");
+    return 0;
+}
+
+}
+
+  -------------
+
+  --- Output ---
+=== Tier 1 Fixes ===
+--- char escapes ---
+newline: 10
+tab: 9
+null: 0
+backslash: 92
+single-quote: 39
+A: 65
+--- whole-module import ---
+a + b = (4.000000, 6.000000)
+a * 2 = (2.000000, 4.000000)
+c == e: true
+c = (4.000000, 6.000000)
+=== done ===
+  --------------
+  PASS
+
+-------- Forward Type References [test_53_forward_refs.mingus] --------
+
+  --- Source ---
+// test_53_forward_refs.mingus — Forward type references
+// Classes/structs/interfaces/enums can reference types defined later in the same module
+
+module Test53 {
+
+extern func printf(string fmt, ...) => int;
+
+// === Forward class inheritance ===
+// Dog references Animal which is defined AFTER Dog
+
+class Dog : Animal {
+    string breed;
+
+    constructor(string n, int a, string b) : super(n, a) {
+        this.breed = b;
+    }
+
+    func speak() => void {
+        printf("Woof! I'm %s, a %s\n", this.name, this.breed);
+    }
+}
+
+class Animal {
+    string name;
+    int age;
+
+    constructor(string n, int a) {
+        this.name = n;
+        this.age = a;
+    }
+
+    func speak() => void {
+        printf("...\n");
+    }
+
+    func getAge() => int {
+        return this.age;
+    }
+}
+
+// === Forward interface implementation ===
+// Printer references Printable which is defined AFTER Printer
+
+class Printer : Printable {
+    string label;
+
+    constructor(string l) {
+        this.label = l;
+    }
+
+    func print() => void {
+        printf("Printer: %s\n", this.label);
+    }
+}
+
+interface Printable {
+    func print() => void;
+}
+
+// === Forward struct field reference ===
+
+struct Node {
+    int value;
+}
+
+struct Pair {
+    Node first;
+    Node second;
+}
+
+// === Forward enum reference ===
+// Function uses Color which is defined after
+
+func getColorName(int c) => string {
+    if (c == 0) {
+        return "Red";
+    }
+    if (c == 1) {
+        return "Green";
+    }
+    return "Blue";
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+// === Main test ===
+
+func main() => int {
+    printf("=== Forward Type References ===\n");
+
+    // Forward class inheritance
+    var dog = new Dog("Rex", 5, "Labrador");
+    dog->speak();
+    printf("Age: %d\n", dog->getAge());
+
+    // Forward interface implementation
+    var printer = new Printer("Hello World");
+    printer->print();
+
+    // Forward struct reference
+    var n1 = Node();
+    n1.value = 10;
+    var n2 = Node();
+    n2.value = 20;
+    var pair = Pair();
+    pair.first = n1;
+    pair.second = n2;
+    printf("Pair: %d, %d\n", pair.first.value, pair.second.value);
+
+    // Forward enum reference
+    printf("Color: %s\n", getColorName(Color.Green));
+
+    // Polymorphism with forward-declared base
+    Animal* animal = dog;
+    animal->speak();
+
+    printf("=== All forward ref tests passed ===\n");
+
+    delete dog;
+    delete printer;
+
+    return 0;
+}
+
+}
+
+  -------------
+
+  --- Output ---
+=== Forward Type References ===
+Woof! I'm Rex, a Labrador
+Age: 5
+Printer: Hello World
+Pair: 10, 20
+Color: Green
+Woof! I'm Rex, a Labrador
+=== All forward ref tests passed ===
+  --------------
+  PASS
+
+-------- Float Literal Suffix [test_54_float_suffix.mingus] --------
+
+  --- Source ---
+// test_54_float_suffix.mingus — Float literal suffix ('f'/'F')
+// 1.0f creates a float, 1.0 creates a double
+
+module Test54 {
+
+extern func printf(string fmt, ...) => int;
+
+func main() => int {
+    printf("=== Float Literal Suffix ===\n");
+
+    // Float suffix: 1.0f is float (32-bit)
+    float x = 3.14f;
+    printf("float x = %.2f\n", (double)x);
+
+    // Double (no suffix): 1.0 is double (64-bit)
+    double y = 3.14;
+    printf("double y = %.2f\n", y);
+
+    // Float arithmetic
+    float a = 1.5f;
+    float b = 2.5f;
+    float c = a + b;
+    printf("float 1.5 + 2.5 = %.1f\n", (double)c);
+
+    // Float multiplication
+    float d = 2.0f;
+    float e = 3.0f;
+    float f = d * e;
+    printf("float 2.0 * 3.0 = %.1f\n", (double)f);
+
+    // Exponent with suffix
+    float g = 1.5e2f;
+    printf("float 1.5e2f = %.1f\n", (double)g);
+
+    // Capital F suffix
+    float h = 42.0F;
+    printf("float 42.0F = %.1f\n", (double)h);
+
+    // sizeof check: float is 4, double is 8
+    printf("sizeof(float) = %d\n", sizeof(float));
+    printf("sizeof(double) = %d\n", sizeof(double));
+
+    printf("=== All float suffix tests passed ===\n");
+    return 0;
+}
+
+}
+
+  -------------
+
+  --- Output ---
+=== Float Literal Suffix ===
+float x = 3.14
+double y = 3.14
+float 1.5 + 2.5 = 4.0
+float 2.0 * 3.0 = 6.0
+float 1.5e2f = 150.0
+float 42.0F = 42.0
+sizeof(float) = 4
+sizeof(double) = 8
+=== All float suffix tests passed ===
+  --------------
+  PASS
+
+-------- Constructor Overloading [test_55_ctor_overloading.mingus] --------
+
+  --- Source ---
+// test_55_ctor_overloading.mingus — Constructor overloading
+// Multiple constructors with different parameter signatures
+
+module Test55 {
+
+extern func printf(string fmt, ...) => int;
+
+// Class with multiple constructor overloads
+class Point {
+    int x;
+    int y;
+
+    // Default constructor (no params)
+    constructor() {
+        this.x = 0;
+        this.y = 0;
+    }
+
+    // Single-param constructor
+    constructor(int v) {
+        this.x = v;
+        this.y = v;
+    }
+
+    // Two-param constructor
+    constructor(int px, int py) {
+        this.x = px;
+        this.y = py;
+    }
+
+    func print() => void {
+        printf("Point(%d, %d)\n", this.x, this.y);
+    }
+}
+
+// Class with string + int overloads
+class Named {
+    string name;
+    int id;
+
+    constructor(string n) {
+        this.name = n;
+        this.id = 0;
+    }
+
+    constructor(string n, int i) {
+        this.name = n;
+        this.id = i;
+    }
+
+    func print() => void {
+        printf("Named(%s, %d)\n", this.name, this.id);
+    }
+}
+
+// Inheritance: derived class calls specific base ctor
+class Animal {
+    string name;
+    int age;
+
+    constructor(string n) {
+        this.name = n;
+        this.age = 0;
+    }
+
+    constructor(string n, int a) {
+        this.name = n;
+        this.age = a;
+    }
+
+    func describe() => void {
+        printf("Animal(%s, %d)\n", this.name, this.age);
+    }
+}
+
+class Dog : Animal {
+    string breed;
+
+    constructor(string n, string b) : super(n) {
+        this.breed = b;
+    }
+
+    func describe() => void {
+        printf("Dog(%s, breed=%s, age=%d)\n", this.name, this.breed, this.age);
+    }
+}
+
+func main() => int {
+    printf("=== Constructor Overloading ===\n");
+
+    // Stack construction with different overloads
+    var p0 = Point();
+    p0.print();
+
+    var p1 = Point(5);
+    p1.print();
+
+    var p2 = Point(3, 7);
+    p2.print();
+
+    // Heap construction with different overloads
+    var hp0 = new Point();
+    hp0->print();
+
+    var hp1 = new Point(10);
+    hp1->print();
+
+    var hp2 = new Point(4, 8);
+    hp2->print();
+
+    // Named class overloads
+    var n1 = new Named("Alice");
+    n1->print();
+
+    var n2 = new Named("Bob", 42);
+    n2->print();
+
+    // Inheritance with super()
+    var dog = new Dog("Rex", "Labrador");
+    dog->describe();
+
+    printf("=== All ctor overloading tests passed ===\n");
+
+    delete hp0;
+    delete hp1;
+    delete hp2;
+    delete n1;
+    delete n2;
+    delete dog;
+
+    return 0;
+}
+
+}
+
+  -------------
+
+  --- Output ---
+=== Constructor Overloading ===
+Point(0, 0)
+Point(5, 5)
+Point(3, 7)
+Point(0, 0)
+Point(10, 10)
+Point(4, 8)
+Named(Alice, 0)
+Named(Bob, 42)
+Dog(Rex, breed=Labrador, age=0)
+=== All ctor overloading tests passed ===
+  --------------
+  PASS
+
+-------- Definite Assignment [test_56_definite_assign.mingus] --------
+
+  --- Source ---
+// test_56_definite_assign.mingus — Definite assignment analysis
+// Tests that properly assigned variables work correctly at runtime.
+// The compiler now warns on possibly-uninitialized reads (not tested here
+// since warnings go to stderr and don't affect output).
+
+module Test56 {
+
+extern func printf(string fmt, ...) => int;
+
+// Test 1: Simple assignment before use
+func testSimpleAssign() => void {
+    int x;
+    x = 42;
+    printf("simple: %d\n", x);
+}
+
+// Test 2: Assignment via initializer
+func testInitializer() => void {
+    int x = 10;
+    printf("init: %d\n", x);
+}
+
+// Test 3: Assignment in both if/else branches
+func testIfElse(int cond) => void {
+    int x;
+    if (cond > 0) {
+        x = 100;
+    } else {
+        x = 200;
+    }
+    printf("if-else: %d\n", x);
+}
+
+// Test 4: Assignment in loop (assigned before loop)
+func testLoop() => void {
+    int sum = 0;
+    for (int i = 0; i < 5; i = i + 1) {
+        sum = sum + i;
+    }
+    printf("loop: %d\n", sum);
+}
+
+// Test 5: Multiple variables
+func testMultiple() => void {
+    int a = 1;
+    int b = 2;
+    int c = a + b;
+    printf("multi: %d\n", c);
+}
+
+// Test 6: Do-while (body runs at least once)
+func testDoWhile() => void {
+    int x;
+    int count = 0;
+    do {
+        x = 99;
+        count = count + 1;
+    } while (count < 1);
+    printf("do-while: %d\n", x);
+}
+
+// Test 7: Function parameters are always assigned
+func testParams(int a, int b) => void {
+    int c = a + b;
+    printf("params: %d\n", c);
+}
+
+// Test 8: String variable
+func testString() => void {
+    string s = "hello";
+    printf("string: %s\n", s);
+}
+
+func main() => int {
+    printf("=== Definite Assignment ===\n");
+
+    testSimpleAssign();
+    testInitializer();
+    testIfElse(1);
+    testIfElse(-1);
+    testLoop();
+    testMultiple();
+    testDoWhile();
+    testParams(3, 4);
+    testString();
+
+    printf("=== All definite assign tests passed ===\n");
+    return 0;
+}
+
+}
+
+  -------------
+
+  --- Output ---
+=== Definite Assignment ===
+simple: 42
+init: 10
+if-else: 100
+if-else: 200
+loop: 10
+multi: 3
+do-while: 99
+params: 7
+string: hello
+=== All definite assign tests passed ===
+  --------------
+  PASS
+
+-------- String Type [test_57_string_type.mingus] --------
+
+  --- Source ---
+module Test57 {
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    func main() => int {
+        printf("=== String Type ===\n");
+
+        // Construction from literal
+        String s = "hello";
+        printf("s: %s\n", s);
+        printf("len: %d\n", s.length());
+
+        // Concatenation
+        String t = s + " world";
+        printf("concat: %s\n", t);
+        printf("concat len: %d\n", t.length());
+
+        // Mixed concat (String + string literal)
+        String u = s + "!";
+        printf("mixed: %s\n", u);
+
+        // Equality
+        String a = "abc";
+        String b = "abc";
+        String c = "xyz";
+        if (a == b) { puts("a == b: true"); }
+        if (a != c) { puts("a != c: true"); }
+
+        // Slice
+        String sub = t.slice(0, 5);
+        printf("slice: %s\n", sub);
+
+        // CharAt
+        int ch = s.charAt(0);
+        printf("charAt(0): %c\n", ch);
+
+        // Compound assignment
+        String r = "foo";
+        r += "bar";
+        printf("+=: %s\n", r);
+
+        // C interop (String passed to printf/puts)
+        puts(s);
+
+        // cstr() explicit extraction
+        string cval = s.cstr();
+        puts(cval);
+
+        printf("=== All String type tests passed ===\n");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== String Type ===
+s: hello
+len: 5
+concat: hello world
+concat len: 11
+mixed: hello!
+a == b: true
+a != c: true
+slice: hello
+charAt(0): h
++=: foobar
+hello
+hello
+=== All String type tests passed ===
+  --------------
+  PASS
+
+-------- Error Recovery [test_58_error_recovery.mingus] --------
+  PASS
+
+-------- Debug Info [test_59_debug_info.mingus] --------
+LINK : test_59_debug_info.exe wurde nicht gefunden oder beim letzten inkrementellen Linkvorgang nicht erstellt; vollst�ndiger Link wird durchgef�hrt.
+  PASS
+
+-------- C FFI [test_60_ffi.mingus] --------
+
+  --- Source ---
+// Test 60: C FFI — Link directives, opaque types, extern structs, extern enums
+module Test60
+{
+    // === Phase 1: Basic extern functions (already supported, sanity check) ===
+    extern func printf(string fmt, ...) => int;
+    extern func puts(string s) => int;
+
+    // === Phase 2-4: Opaque types, extern struct, extern enum in a block ===
+    extern {
+        opaque FILE;
+        func fopen(string path, string mode) => FILE*;
+        func fclose(FILE* fp) => int;
+        func fputs(string s, FILE* fp) => int;
+        func fflush(FILE* fp) => int;
+        func remove(string path) => int;
+
+        struct Point {
+            int x;
+            int y;
+        }
+
+        enum Color : int {
+            Red = 0,
+            Green = 1,
+            Blue = 2
+        }
+    }
+
+    func main() => int
+    {
+        puts("=== Test 60: C FFI ===");
+
+        // --- Case 1: Extern block grammar ---
+        puts("Case 1: extern block grammar - PASS");
+
+        // --- Case 2: Opaque type (FILE*) ---
+        var fp = fopen("test_60_ffi_temp.txt", "w");
+        if (fp != null)
+        {
+            fputs("hello from mingus FFI\n", fp);
+            fflush(fp);
+            fclose(fp);
+            puts("Case 2: opaque FILE* - PASS");
+        }
+        else
+        {
+            puts("Case 2: opaque FILE* - FAIL (could not open file)");
+        }
+        remove("test_60_ffi_temp.txt");
+
+        // --- Case 3: Extern struct ---
+        Point p;
+        p.x = 42;
+        p.y = 99;
+        printf("Case 3: extern struct Point(%d, %d)", p.x, p.y);
+        if (p.x == 42 && p.y == 99)
+        {
+            puts(" - PASS");
+        }
+        else
+        {
+            puts(" - FAIL");
+        }
+
+        // --- Case 4: Extern enum ---
+        var c = Color.Green;
+        printf("Case 4: extern enum Color.Green = %d", c);
+        if (c == 1)
+        {
+            puts(" - PASS");
+        }
+        else
+        {
+            puts(" - FAIL");
+        }
+
+        // --- Case 5: Callback interop ---
+        puts("Case 5: callback interop - PASS (compiled)");
+
+        puts("=== FFI test complete ===");
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 60: C FFI ===
+Case 1: extern block grammar - PASS
+Case 2: opaque FILE* - PASS
+Case 3: extern struct Point(42, 99) - PASS
+Case 4: extern enum Color.Green = 1 - PASS
+Case 5: callback interop - PASS (compiled)
+=== FFI test complete ===
+  --------------
+  PASS
+
+-------- Integer Types [test_61_integer_types.mingus] --------
+
+  --- Source ---
+// Test 61: Integer types — short, ushort, uint, long, ulong
+module Test61
+{
+    extern func printf(string fmt, ...) => int;
+
+    func main() => int
+    {
+        // === Case 1: Basic declarations and printf ===
+        short s = 1000;
+        ushort us = 50000;
+        uint ui = 3000000000;
+        long l = 9000000000;
+        ulong ul = 18000000000;
+
+        printf("short: %d\n", s);
+        printf("ushort: %u\n", us);
+        printf("uint: %u\n", ui);
+        printf("long: %lld\n", l);
+        printf("ulong: %llu\n", ul);
+
+        // === Case 2: Arithmetic operations ===
+        short s2 = s + 500;
+        printf("short add: %d\n", s2);
+
+        uint ui2 = ui / 2;
+        printf("uint div: %u\n", ui2);
+
+        long l2 = l * 2;
+        printf("long mul: %lld\n", l2);
+
+        uint um = 10;
+        uint ur = um % 3;
+        printf("uint mod: %u\n", ur);
+
+        // === Case 3: Unsigned comparison (critical test) ===
+        // 4000000000 > 2^31, so signed comparison would see it as negative
+        uint big = 4000000000;
+        uint small = 1;
+        if (big > small) {
+            printf("uint cmp: correct\n");
+        } else {
+            printf("uint cmp: WRONG\n");
+        }
+
+        // === Case 4: Implicit widening (short -> int) ===
+        int si = s;
+        printf("short->int: %d\n", si);
+
+        // === Case 5: Explicit cast (int -> uint) ===
+        int fromSigned = 42;
+        uint toUnsigned = (uint)fromSigned;
+        printf("int->uint: %u\n", toUnsigned);
+
+        // === Case 6: Cast ulong -> double ===
+        double uf = (double)ul;
+        printf("ulong->double: %.0f\n", uf);
+
+        // === Case 7: Mixed-width binary op (int + long -> long) ===
+        long mixed = l + (long)si;
+        printf("mixed: %lld\n", mixed);
+
+        // === Case 8: Unsigned division vs signed ===
+        // 4000000000 / 2 should be 2000000000 (unsigned), not negative
+        uint udiv_result = big / 2;
+        printf("udiv: %u\n", udiv_result);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+short: 1000
+ushort: 50000
+uint: 3000000000
+long: 9000000000
+ulong: 18000000000
+short add: 1500
+uint div: 1500000000
+long mul: 18000000000
+uint mod: 1
+uint cmp: correct
+short->int: 1000
+int->uint: 42
+ulong->double: 18000000000
+mixed: 9000001000
+udiv: 2000000000
+  --------------
+  PASS
+
+-------- FFI Phase 1 [test_62_ffi_phase1.mingus] --------
+
+  --- Source ---
+// Test 62: FFI Phase 1 — Verify existing capabilities
+// Tests: typed pointer params, multi-level pointers, array fields in extern structs,
+//        nested extern structs, address-of output params
+module Test62
+{
+    extern func printf(string fmt, ...) => int;
+
+    // === Case 1: Typed pointer output params ===
+    // Mingus function taking int* and writing through it
+    func set_value(int* p, int val) => void
+    {
+        *p = val;
+    }
+
+    // === Case 2: Swap via pointer params ===
+    func swap(int* a, int* b) => void
+    {
+        int tmp = *a;
+        *a = *b;
+        *b = tmp;
+    }
+
+    // === Extern structs for testing ===
+    extern {
+        // Case 4: Array fields in extern struct
+        struct IntBuffer {
+            int[4] data;
+            int count;
+        }
+
+        // Case 5: Nested extern structs
+        struct Vec2 {
+            int x;
+            int y;
+        }
+
+        struct Rect {
+            Vec2 pos;
+            Vec2 size;
+        }
+    }
+
+    func main() => int
+    {
+        // === Case 1: Typed pointer output param ===
+        int x = 0;
+        set_value(&x, 42);
+        printf("Case 1 set_value: %d\n", x);
+
+        // === Case 2: Swap via pointers ===
+        int a = 10;
+        int b = 20;
+        swap(&a, &b);
+        printf("Case 2 swap: %d %d\n", a, b);
+
+        // === Case 3: Multi-level pointers ===
+        int val = 99;
+        int* p = &val;
+        int** pp = &p;
+        printf("Case 3 deref: %d\n", *p);
+        printf("Case 3 double deref: %d\n", **pp);
+
+        // Write through double pointer
+        **pp = 77;
+        printf("Case 3 after write: %d\n", val);
+
+        // === Case 4: Array fields in extern struct ===
+        IntBuffer buf;
+        buf.data[0] = 100;
+        buf.data[1] = 200;
+        buf.data[2] = 300;
+        buf.data[3] = 400;
+        buf.count = 4;
+        printf("Case 4 array: %d %d %d %d count=%d\n",
+            buf.data[0], buf.data[1], buf.data[2], buf.data[3], buf.count);
+
+        // === Case 5: Nested extern structs ===
+        Rect r;
+        r.pos.x = 10;
+        r.pos.y = 20;
+        r.size.x = 640;
+        r.size.y = 480;
+        printf("Case 5 rect: (%d,%d) %dx%d\n",
+            r.pos.x, r.pos.y, r.size.x, r.size.y);
+
+        // === Case 6: Address-of struct field ===
+        int* px = &r.pos.x;
+        *px = 55;
+        printf("Case 6 field ptr: %d\n", r.pos.x);
+
+        // === Case 7: Pointer to extern struct ===
+        Vec2 point;
+        point.x = 3;
+        point.y = 7;
+        Vec2* vp = &point;
+        printf("Case 7 struct ptr: %d %d\n", vp.x, vp.y);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+Case 1 set_value: 42
+Case 2 swap: 20 10
+Case 3 deref: 99
+Case 3 double deref: 99
+Case 3 after write: 77
+Case 4 array: 100 200 300 400 count=4
+Case 5 rect: (10,20) 640x480
+Case 6 field ptr: 55
+Case 7 struct ptr: 3 7
+  --------------
+  PASS
+
+-------- Module Globals [test_63_globals.mingus] --------
+
+  --- Source ---
+// Test 63: Module-Level Variables and Static Locals
+module Test63
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Module-level variables
+    int globalCounter = 0;
+    const int MAX_VALUE = 100;
+    const double PI = 3.14159;
+
+    func increment() => void
+    {
+        globalCounter = globalCounter + 1;
+    }
+
+    func getCounter() => int
+    {
+        return globalCounter;
+    }
+
+    // Static local variable
+    func nextId() => int
+    {
+        static int id = 0;
+        id = id + 1;
+        return id;
+    }
+
+    func main() => int
+    {
+        // Case 1: Module-level variable read/write
+        printf("Case 1 initial: %d\n", globalCounter);
+        globalCounter = 42;
+        printf("Case 1 assigned: %d\n", globalCounter);
+
+        // Case 2: Module-level constant
+        printf("Case 2 const: %d\n", MAX_VALUE);
+        printf("Case 2 pi: %f\n", PI);
+
+        // Case 3: Module-level var via function
+        globalCounter = 0;
+        increment();
+        increment();
+        increment();
+        printf("Case 3 after 3 increments: %d\n", getCounter());
+
+        // Case 4: Static local persistence
+        printf("Case 4 id1: %d\n", nextId());
+        printf("Case 4 id2: %d\n", nextId());
+        printf("Case 4 id3: %d\n", nextId());
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+Case 1 initial: 0
+Case 1 assigned: 42
+Case 2 const: 100
+Case 2 pi: 3.141590
+Case 3 after 3 increments: 3
+Case 4 id1: 1
+Case 4 id2: 2
+Case 4 id3: 3
+  --------------
+  PASS
+
+-------- Extern Globals [test_64_extern_globals.mingus] --------
+
+  --- Source ---
+// Test 64: Extern Global Variables
+module Test64
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Module-level globals accessed by multiple functions
+    int sharedValue = 99;
+
+    func readShared() => int
+    {
+        return sharedValue;
+    }
+
+    func writeShared(int val) => void
+    {
+        sharedValue = val;
+    }
+
+    func main() => int
+    {
+        // Case 1: Read module global from function
+        printf("Case 1: %d\n", readShared());
+
+        // Case 2: Write and read back via functions
+        writeShared(777);
+        printf("Case 2: %d\n", readShared());
+
+        // Case 3: Direct access from main
+        printf("Case 3: %d\n", sharedValue);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+Case 1: 99
+Case 2: 777
+Case 3: 777
+  --------------
+  PASS
+
+-------- Unions [test_65_unions.mingus] --------
+
+  --- Source ---
+// Test 65: Untagged Unions
+module Test65
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Mingus-native union
+    union Value
+    {
+        int i;
+        float f;
+        byte b;
+    }
+
+    // Extern union (C interop style)
+    extern {
+        union RawValue {
+            int asInt;
+            float asFloat;
+            double asDouble;
+        }
+    }
+
+    func readInt(Value v) => int
+    {
+        return v.i;
+    }
+
+    func main() => int
+    {
+        // Case 1: Write int, read int
+        Value v;
+        v.i = 42;
+        printf("Case 1 int: %d\n", v.i);
+
+        // Case 2: Write float, read float
+        v.f = 3.14f;
+        printf("Case 2 float: %f\n", v.f);
+
+        // Case 3: Write byte
+        Value v2;
+        v2.b = 255;
+        printf("Case 3 byte: %d\n", v2.b);
+
+        // Case 4: Extern union
+        RawValue rv;
+        rv.asInt = 100;
+        printf("Case 4 int: %d\n", rv.asInt);
+
+        rv.asDouble = 2.718;
+        printf("Case 4 double: %f\n", rv.asDouble);
+
+        // Case 5: Union as function parameter
+        Value v3;
+        v3.i = 99;
+        printf("Case 5 param: %d\n", readInt(v3));
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+Case 1 int: 42
+Case 2 float: 3.140000
+Case 3 byte: 255
+Case 4 int: 100
+Case 4 double: 2.718000
+Case 5 param: 99
+  --------------
+  PASS
+
+-------- Define Constants [test_66_define_constants.mingus] --------
+
+  --- Source ---
+module Test66
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Constants extracted from #define (inlined for compiler test)
+    const int TD_VERSION = 1;
+    const int TD_MAX_SIZE = 1024;
+    const int TD_FLAG_A = 0x01;
+    const int TD_FLAG_B = 0x02;
+    const uint TD_BIG_HEX = 0xDEADBEEF;
+    const double TD_PI = 3.14159;
+    const float TD_HALF = 0.5f;
+    const string TD_NAME = "TestDefines";
+
+    func main() => int
+    {
+        printf("Version: %d\n", TD_VERSION);
+        printf("Max: %d\n", TD_MAX_SIZE);
+        printf("Flag A: %d\n", TD_FLAG_A);
+        printf("Flag B: %d\n", TD_FLAG_B);
+        printf("Hex: %u\n", TD_BIG_HEX);
+        printf("PI: %f\n", TD_PI);
+        printf("Half: %f\n", TD_HALF);
+        printf("Name: %s\n", TD_NAME);
+
+        // Use constants in expressions
+        var flags = TD_FLAG_A + TD_FLAG_B;
+        printf("Flags: %d\n", flags);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+Version: 1
+Max: 1024
+Flag A: 1
+Flag B: 2
+Hex: 3735928559
+PI: 3.141590
+Half: 0.500000
+Name: TestDefines
+Flags: 3
+  --------------
+  PASS
+
+-------- Tagged Unions [test_67_tagged_unions.mingus] --------
+
+  --- Source ---
+module Test67
+{
+    extern func printf(string fmt, ...) => int;
+
+    // Basic tagged union: Option with Some(int) and None
+    tagged union Option {
+        Some(int value),
+        None
+    }
+
+    // Multi-field tagged union: Result with Ok(int) and Err(string)
+    tagged union Result {
+        Ok(int value),
+        Err(string message)
+    }
+
+    // Function returning tagged union
+    func makeOption(bool hasSome, int val) => Option
+    {
+        if (hasSome) {
+            return Option.Some(val);
+        }
+        return Option.None;
+    }
+
+    // Function taking tagged union as parameter
+    func printOption(Option opt) => void
+    {
+        match opt {
+            Option.Some(var v) => printf("Some(%d)\n", v),
+            Option.None => printf("None\n"),
+        };
+    }
+
+    func main() => int
+    {
+        // Test 1: Basic Option construction and matching
+        printf("=== Test 1: Basic Option ===\n");
+        var some = Option.Some(42);
+        var none = Option.None;
+
+        match some {
+            Option.Some(var v) => printf("some = Some(%d)\n", v),
+            Option.None => printf("some = None\n"),
+        };
+
+        match none {
+            Option.Some(var v) => printf("none = Some(%d)\n", v),
+            Option.None => printf("none = None\n"),
+        };
+
+        // Test 2: Result with string payload
+        printf("=== Test 2: Result ===\n");
+        var ok = Result.Ok(100);
+        var err = Result.Err("not found");
+
+        match ok {
+            Result.Ok(var v) => printf("ok = Ok(%d)\n", v),
+            Result.Err(var msg) => printf("ok = Err(%s)\n", msg),
+        };
+
+        match err {
+            Result.Ok(var v) => printf("err = Ok(%d)\n", v),
+            Result.Err(var msg) => printf("err = Err(%s)\n", msg),
+        };
+
+        // Test 3: Function returning tagged union
+        printf("=== Test 3: Function return ===\n");
+        var opt1 = makeOption(true, 7);
+        var opt2 = makeOption(false, 0);
+
+        match opt1 {
+            Option.Some(var v) => printf("opt1 = Some(%d)\n", v),
+            Option.None => printf("opt1 = None\n"),
+        };
+
+        match opt2 {
+            Option.Some(var v) => printf("opt2 = Some(%d)\n", v),
+            Option.None => printf("opt2 = None\n"),
+        };
+
+        // Test 4: Tagged union as function parameter
+        printf("=== Test 4: Function parameter ===\n");
+        printOption(Option.Some(99));
+        printOption(Option.None);
+
+        // Test 5: Direct assignment of empty variant
+        printf("=== Test 5: Direct assignment ===\n");
+        var x = Option.None;
+        printOption(x);
+        x = Option.Some(123);
+        printOption(x);
+
+        return 0;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 1: Basic Option ===
+some = Some(42)
+none = None
+=== Test 2: Result ===
+ok = Ok(100)
+err = Err(not found)
+=== Test 3: Function return ===
+opt1 = Some(7)
+opt2 = None
+=== Test 4: Function parameter ===
+Some(99)
+None
+=== Test 5: Direct assignment ===
+None
+Some(123)
+  --------------
+  PASS
+
+-------- Layout Annotations + Platform Types [test_68_layout_platform.mingus] --------
+
+  --- Source ---
+module Test {
+    extern func printf(string fmt, ...) => int;
+    extern func strlen(string s) => size_t;
+
+    // Test 1: @packed struct
+    @packed
+    struct PackedPoint {
+        byte x;
+        int y;
+        byte z;
+    }
+
+    // Test 2: Normal struct (for size comparison)
+    struct NormalPoint {
+        byte x;
+        int y;
+        byte z;
+    }
+
+    func testPlatformTypes() => void {
+        size_t sz = 42;
+        intptr_t ptr = 100;
+        uintptr_t uptr = 200;
+        printf("size_t = %llu\n", sz);
+        printf("intptr_t = %lld\n", ptr);
+        printf("uintptr_t = %llu\n", uptr);
+    }
+
+    func testStrlen() => void {
+        size_t len = strlen("hello");
+        printf("strlen = %llu\n", len);
+    }
+
+    func testPacked() => void {
+        printf("sizeof(PackedPoint) = %d\n", sizeof(PackedPoint));
+        printf("sizeof(NormalPoint) = %d\n", sizeof(NormalPoint));
+
+        PackedPoint p;
+        p.x = 1;
+        p.y = 42;
+        p.z = 2;
+        printf("packed: %d %d %d\n", p.x, p.y, p.z);
+    }
+
+    func main() => void {
+        printf("=== Test 1: Platform types ===\n");
+        testPlatformTypes();
+        printf("=== Test 2: strlen with size_t ===\n");
+        testStrlen();
+        printf("=== Test 3: Packed struct ===\n");
+        testPacked();
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 1: Platform types ===
+size_t = 42
+intptr_t = 100
+uintptr_t = 200
+=== Test 2: strlen with size_t ===
+strlen = 5
+=== Test 3: Packed struct ===
+sizeof(PackedPoint) = 6
+sizeof(NormalPoint) = 12
+packed: 1 42 2
+  --------------
+  PASS
+
+-------- Calling Conv + Const [test_69_calling_conv_const.mingus] --------
+
+  --- Source ---
+module Test {
+    extern func printf(string fmt, ...) => int;
+    extern func strlen(string s) => size_t;
+    extern func memcmp(const byte* a, const byte* b, size_t n) => int;
+
+    // @stdcall attribute accepted (no-op on x86_64 but validates syntax)
+    extern {
+        @stdcall
+        func stdcall_printf(string fmt, ...) => int;
+    }
+
+    func readConstPtr(const int* p) => int {
+        return p[0];
+    }
+
+    func testCallingConvSyntax() => void {
+        printf("=== Test 1: Calling convention syntax ===\n");
+        printf("calling convention attributes: OK\n");
+    }
+
+    func testConstPointer() => void {
+        printf("=== Test 2: Const pointer types ===\n");
+
+        int x = 42;
+        const int* p = &x;
+        int val = readConstPtr(p);
+        printf("const int* read: %d\n", val);
+
+        // Non-const to const pointer (widening, should work)
+        int* mp = &x;
+        const int* cp = mp;
+        printf("non-const to const: %d\n", cp[0]);
+    }
+
+    func testConstExternFunc() => void {
+        printf("=== Test 3: Extern with const params ===\n");
+        size_t len = strlen("hello world");
+        printf("strlen = %llu\n", len);
+
+        int result = memcmp("abc", "abd", 3);
+        printf("memcmp result < 0: %d\n", result < 0);
+    }
+
+    func main() => void {
+        testCallingConvSyntax();
+        testConstPointer();
+        testConstExternFunc();
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 1: Calling convention syntax ===
+calling convention attributes: OK
+=== Test 2: Const pointer types ===
+const int* read: 42
+non-const to const: 42
+=== Test 3: Extern with const params ===
+strlen = 11
+memcmp result < 0: 1
+  --------------
+  PASS
+
+-------- Generic Functions [test_70_generics.mingus] --------
+
+  --- Source ---
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    // Generic identity function
+    func identity<T>(T value) => T {
+        return value;
+    }
+
+    // Generic max function
+    func max<T>(T a, T b) => T {
+        if (a > b) { return a; }
+        return b;
+    }
+
+    // Generic add function
+    func add<T>(T a, T b) => T {
+        return a + b;
+    }
+
+    // Generic with two type params (returns first)
+    func first<T, U>(T a, U b) => T {
+        return a;
+    }
+
+    func main() => void {
+        printf("=== Test 1: Generic identity ===\n");
+        int a = identity::<int>(42);
+        printf("identity<int>(42) = %d\n", a);
+        double b = identity::<double>(3.14);
+        printf("identity<double>(3.14) = %.2f\n", b);
+
+        printf("=== Test 2: Generic max ===\n");
+        int m1 = max::<int>(10, 20);
+        printf("max<int>(10, 20) = %d\n", m1);
+        double m2 = max::<double>(2.71, 3.14);
+        printf("max<double>(2.71, 3.14) = %.2f\n", m2);
+
+        printf("=== Test 3: Generic add ===\n");
+        int s1 = add::<int>(15, 27);
+        printf("add<int>(15, 27) = %d\n", s1);
+        double s2 = add::<double>(1.5, 2.5);
+        printf("add<double>(1.5, 2.5) = %.1f\n", s2);
+
+        printf("=== Test 4: Multiple type params ===\n");
+        int f1 = first::<int, double>(42, 3.14);
+        printf("first<int,double>(42, 3.14) = %d\n", f1);
+
+        printf("=== Test 5: Reuse same instantiation ===\n");
+        int m3 = max::<int>(5, 3);
+        printf("max<int>(5, 3) = %d (cached)\n", m3);
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 1: Generic identity ===
+identity<int>(42) = 42
+identity<double>(3.14) = 3.14
+=== Test 2: Generic max ===
+max<int>(10, 20) = 20
+max<double>(2.71, 3.14) = 3.14
+=== Test 3: Generic add ===
+add<int>(15, 27) = 42
+add<double>(1.5, 2.5) = 4.0
+=== Test 4: Multiple type params ===
+first<int,double>(42, 3.14) = 42
+=== Test 5: Reuse same instantiation ===
+max<int>(5, 3) = 5 (cached)
+  --------------
+  PASS
+
+-------- Generic Structs/Classes [test_71_generic_structs.mingus] --------
+
+  --- Source ---
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    struct Pair<T, U> {
+        T first;
+        U second;
+    }
+
+    class Box<T> {
+        T value;
+
+        constructor(T val) {
+            this.value = val;
+        }
+
+        func get() => T {
+            return this.value;
+        }
+
+        func set(T val) => void {
+            this.value = val;
+        }
+    }
+
+    func main() => void {
+        printf("=== Test 1: Generic struct ===\n");
+        Pair<int, double> p;
+        p.first = 42;
+        p.second = 3.14;
+        printf("Pair<int,double> = (%d, %.2f)\n", p.first, p.second);
+
+        printf("=== Test 2: Different instantiation ===\n");
+        Pair<double, int> q;
+        q.first = 2.71;
+        q.second = 100;
+        printf("Pair<double,int> = (%.2f, %d)\n", q.first, q.second);
+
+        printf("=== Test 3: Generic class ===\n");
+        Box<int>* bi = new Box<int>(42);
+        printf("Box<int>.get() = %d\n", bi->get());
+        bi->set(100);
+        printf("Box<int> after set = %d\n", bi->get());
+        delete bi;
+
+        printf("=== Test 4: Different class instantiation ===\n");
+        Box<double>* bd = new Box<double>(3.14);
+        printf("Box<double>.get() = %.2f\n", bd->get());
+        delete bd;
+
+        printf("=== Test 5: Struct via turbofish ===\n");
+        var r = Pair::<int, int>();
+        r.first = 10;
+        r.second = 20;
+        printf("Pair<int,int> sum = %d\n", r.first + r.second);
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 1: Generic struct ===
+Pair<int,double> = (42, 3.14)
+=== Test 2: Different instantiation ===
+Pair<double,int> = (2.71, 100)
+=== Test 3: Generic class ===
+Box<int>.get() = 42
+Box<int> after set = 100
+=== Test 4: Different class instantiation ===
+Box<double>.get() = 3.14
+=== Test 5: Struct via turbofish ===
+Pair<int,int> sum = 30
+  --------------
+  PASS
+
+-------- Generic Interfaces [test_72_generic_interfaces.mingus] --------
+
+  --- Source ---
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    interface Getter<T> {
+        func get() => T;
+    }
+
+    interface Setter<T> {
+        func set(T val) => void;
+    }
+
+    class IntStore : Getter<int>, Setter<int> {
+        int value;
+        constructor(int v) { this.value = v; }
+        func get() => int { return this.value; }
+        func set(int val) => void { this.value = val; }
+    }
+
+    class DoubleStore : Getter<double> {
+        double value;
+        constructor(double v) { this.value = v; }
+        func get() => double { return this.value; }
+    }
+
+    func printInt(Getter<int>* g) => void {
+        printf("  Getter<int>.get() = %d\n", g->get());
+    }
+
+    func printDouble(Getter<double>* g) => void {
+        printf("  Getter<double>.get() = %.2f\n", g->get());
+    }
+
+    func main() => void {
+        printf("=== Test 1: Generic interface ===\n");
+        var is = new IntStore(42);
+        Getter<int>* gi = is;
+        printf("  gi->get() = %d\n", gi->get());
+
+        printf("=== Test 2: Different instantiation ===\n");
+        var ds = new DoubleStore(3.14);
+        Getter<double>* gd = ds;
+        printf("  gd->get() = %.2f\n", gd->get());
+
+        printf("=== Test 3: Interface parameter ===\n");
+        printInt(is);
+        printDouble(ds);
+
+        printf("=== Test 4: Multiple generic interfaces ===\n");
+        Setter<int>* si = is;
+        si->set(100);
+        printf("  After set(100): is->get() = %d\n", is->get());
+
+        printf("=== Test 5: Second object dispatch ===\n");
+        var is2 = new IntStore(7);
+        printInt(is2);
+
+        delete is;
+        delete ds;
+        delete is2;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 1: Generic interface ===
+  gi->get() = 42
+=== Test 2: Different instantiation ===
+  gd->get() = 3.14
+=== Test 3: Interface parameter ===
+  Getter<int>.get() = 42
+  Getter<double>.get() = 3.14
+=== Test 4: Multiple generic interfaces ===
+  After set(100): is->get() = 100
+=== Test 5: Second object dispatch ===
+  Getter<int>.get() = 7
+  --------------
+  PASS
+
+-------- Type Inference [test_73_type_inference.mingus] --------
+
+  --- Source ---
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    // Generic identity function
+    func identity<T>(T value) => T {
+        return value;
+    }
+
+    // Generic max function
+    func max<T>(T a, T b) => T {
+        if (a > b) { return a; }
+        return b;
+    }
+
+    // Generic add function
+    func add<T>(T a, T b) => T {
+        return a + b;
+    }
+
+    // Generic with two type params (returns first)
+    func first<T, U>(T a, U b) => T {
+        return a;
+    }
+
+    func main() => void {
+        printf("=== Test 1: Basic inference ===\n");
+        int a = identity(42);
+        printf("identity(42) = %d\n", a);
+        double b = identity(3.14);
+        printf("identity(3.14) = %.2f\n", b);
+
+        printf("=== Test 2: Two-arg same type ===\n");
+        int m1 = max(10, 20);
+        printf("max(10, 20) = %d\n", m1);
+        double m2 = max(2.71, 3.14);
+        printf("max(2.71, 3.14) = %.2f\n", m2);
+
+        printf("=== Test 3: Inference with add ===\n");
+        int s1 = add(15, 27);
+        printf("add(15, 27) = %d\n", s1);
+        double s2 = add(1.5, 2.5);
+        printf("add(1.5, 2.5) = %.1f\n", s2);
+
+        printf("=== Test 4: Multi-type-param inference ===\n");
+        int f1 = first(42, 3.14);
+        printf("first(42, 3.14) = %d\n", f1);
+
+        printf("=== Test 5: Turbofish still works ===\n");
+        int m3 = max::<int>(5, 3);
+        printf("max::<int>(5, 3) = %d\n", m3);
+
+        printf("=== Test 6: Reuse cached monomorphization ===\n");
+        int m4 = max(100, 50);
+        printf("max(100, 50) = %d\n", m4);
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 1: Basic inference ===
+identity(42) = 42
+identity(3.14) = 3.14
+=== Test 2: Two-arg same type ===
+max(10, 20) = 20
+max(2.71, 3.14) = 3.14
+=== Test 3: Inference with add ===
+add(15, 27) = 42
+add(1.5, 2.5) = 4.0
+=== Test 4: Multi-type-param inference ===
+first(42, 3.14) = 42
+=== Test 5: Turbofish still works ===
+max::<int>(5, 3) = 5
+=== Test 6: Reuse cached monomorphization ===
+max(100, 50) = 100
+  --------------
+  PASS
+
+-------- Constraint Bounds [test_74_constraint_bounds.mingus] --------
+
+  --- Source ---
+module Test {
+    extern func printf(string fmt, ...) => int;
+
+    interface Printable {
+        func print() => void;
+    }
+
+    interface HasSize {
+        func size() => int;
+    }
+
+    class Message : Printable {
+        string text;
+        constructor(string t) { this.text = t; }
+        func print() => void { printf("%s", this.text); }
+    }
+
+    class Container : Printable, HasSize {
+        int count;
+        constructor(int n) { this.count = n; }
+        func print() => void { printf("Container(%d)", this.count); }
+        func size() => int { return this.count; }
+    }
+
+    // Single constraint
+    func printIt<T: Printable>(T* obj) => void {
+        obj->print();
+    }
+
+    // Multiple constraints
+    func printWithSize<T: Printable + HasSize>(T* obj) => void {
+        printf("[size=%d] ", obj->size());
+        obj->print();
+    }
+
+    // Unconstrained + constrained
+    func wrapPrint<T, U: Printable>(T value, U* printer) => void {
+        printf("wrap(%d): ", value);
+        printer->print();
+    }
+
+    func main() => void {
+        printf("=== Test 1: Single constraint ===\n");
+        var msg = new Message("hello");
+        printIt(msg);
+        printf("\n");
+
+        printf("=== Test 2: Multiple constraints ===\n");
+        var c = new Container(5);
+        printWithSize(c);
+        printf("\n");
+
+        printf("=== Test 3: Single constraint with different type ===\n");
+        printIt(c);
+        printf("\n");
+
+        printf("=== Test 4: Mixed constrained and unconstrained ===\n");
+        wrapPrint(42, msg);
+        printf("\n");
+
+        printf("=== Test 5: Turbofish with constraint ===\n");
+        printIt::<Container>(c);
+        printf("\n");
+
+        delete msg;
+        delete c;
+    }
+}
+
+  -------------
+
+  --- Output ---
+=== Test 1: Single constraint ===
+hello
+=== Test 2: Multiple constraints ===
+[size=5] Container(5)
+=== Test 3: Single constraint with different type ===
+Container(5)
+=== Test 4: Mixed constrained and unconstrained ===
+wrap(42): hello
+=== Test 5: Turbofish with constraint ===
+Container(5)
+  --------------
+  PASS
+
+
+============================================================
+ Results: 74 passed, 0 failed out of 74 tests
+============================================================

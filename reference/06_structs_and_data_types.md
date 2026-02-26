@@ -463,8 +463,7 @@ printOption(x);           // Some(123)
 - Array sizes must be literal integers, not constants or expressions
 - No dynamic arrays or slices (use pointers for dynamic allocation — see [Pointers and Memory](12_pointers_and_memory.md))
 - Unions are untagged by default — the programmer is responsible for tracking which field is active
-- Tagged unions only support single-field variants (no multi-field variants)
-- No generic structs without explicit turbofish syntax (see [Generics](11_generics.md))
+- Each tagged union variant carries at most one payload value (use a struct for compound payloads)
 
 ## See Also
 

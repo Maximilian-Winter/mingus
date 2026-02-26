@@ -196,7 +196,6 @@ See [C FFI](14_c_ffi.md) for the full extern system including extern blocks, opa
 
 - No default parameter values
 - No named arguments at call sites
-- No generic functions without explicit turbofish syntax (see [Generics](11_generics.md))
 - User-defined variadic functions are not supported — only `extern` functions can be variadic
 - No `inline` hint (the optimizer handles inlining)
 
