@@ -1,0 +1,21 @@
+{
+  "name": "mingus",
+  "displayName": "Mingus Language",
+  "description": "Syntax highlighting for Mingus programming language",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [{
+      "id": "mingus",
+      "aliases": ["Mingus"],
+      "extensions": [".mingus"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "mingus",
+      "scopeName": "source.mingus",
+      "path": "./syntaxes/mingus.tmLanguage.json"
+    }]
+  }
+}
