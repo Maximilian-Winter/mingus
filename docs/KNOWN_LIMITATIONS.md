@@ -80,8 +80,8 @@ Limitations in compiler diagnostics, error recovery, and development tooling.
 
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
-| **Minimal error recovery** | The first parse error or semantic error typically stops compilation. The compiler does not attempt to recover and report multiple errors in a single pass. | Medium |
-| **No LSP / IDE integration** | No Language Server Protocol implementation. No syntax highlighting definitions, autocompletion, or go-to-definition support for editors. | Low |
+| **Error recovery is partial** | The compiler collects multiple semantic errors per pass and continues, and the test suite verifies expected error patterns in `test_58`. However, parse errors can still abort compilation before any semantic analysis runs. | Low |
+| **No LSP (no autocomplete / go-to-def / refactoring)** | No Language Server Protocol implementation. The `mingus-vscode` extension (`mingus-vscode/mingus-0.1.0.vsix`) provides syntax highlighting only — no language server features. | Low |
 | **No REPL** | No interactive read-eval-print loop. All code must be compiled and executed as files. | Low |
 | **Error messages lack suggestions** | Error messages report what went wrong but do not suggest fixes (e.g., "did you mean..." or "consider adding..."). | Low |
 
@@ -97,7 +97,7 @@ Limitations in the four semantic analysis passes (SymbolTableBuilder, TypeResolv
 | **Lambda return type inference** | Block-bodied lambdas infer their return type from the first `return` statement encountered. Conflicting return types in different branches are not cross-checked. | Low |
 | **No null safety** | Pointers and nullable closures can be dereferenced without null checks. No `?.` safe-navigation operator or nullable type system. | Medium |
 | ~~**Operator imports not transferred**~~ | Fixed — see [Previously Known Limitations](#8-previously-known-limitations-now-fixed). | ~~Low~~ |
-| **Limited constructor forms** | Constructor overloading supports arbitrary signatures (test_55), but only one destructor per class. | Low |
+| **Single destructor per class** | Each class supports one destructor. Constructor overloading (test_55) handles the constructor side; destructors remain one-per-class. | Low |
 | **Vtable ordering is alphabetical** | New virtual methods introduced in derived classes are ordered alphabetically (from `std::map` iteration), not in source order. This affects vtable layout but not correctness for single-inheritance. | Low |
 | **Enum exhaustiveness is name-based** | Match exhaustiveness checking for enums uses case names only. Numeric patterns, complex expressions, or range patterns covering enum values are not recognized as exhaustive. | Low |
 | **Loop return analysis is conservative** | `for`/`while` bodies are always classified as `NeverReturns` for return completeness checking, even for provably infinite loops. Functions that return only inside a loop may get false "missing return" warnings. | Low |
@@ -138,17 +138,6 @@ module MyModule {
     import sin, cos from MathLib;
     // ...
 }
-```
-
-### No Generics
-
-**Problem**: Cannot write type-parameterized containers or algorithms.
-
-**Workaround**: Write concrete versions for each type needed, or use `void*` (pointer to byte) with manual casting in `raw` blocks:
-```
-// Concrete approach:
-func maxInt(int a, int b) => int { return a > b ? a : b; }
-func maxDouble(double a, double b) => double { return a > b ? a : b; }
 ```
 
 ### No Standard Library
