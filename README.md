@@ -24,6 +24,19 @@ func softClip(double sample) => double
 }
 ```
 
+## Documentation
+
+The full Mingus documentation lives in the [`docs/`](docs/) directory:
+
+| Audience | Where to start |
+|----------|---------------|
+| **Mingus programmers** | [Language Reference](docs/reference/00_index.md) — 15 chapters covering every feature, with examples, output, and known limitations. Start at [Getting Started](docs/reference/01_getting_started.md). |
+| **Compiler developers** | [V2 Architecture](docs/V2_ARCHITECTURE.md), then [Codegen Patterns](docs/CODEGEN_PATTERNS.md), [Semantic Analysis](docs/SEMANTIC_ANALYSIS.md), and the rest. |
+| **Project status** | [Mingus Status](docs/MINGUS_STATUS.md) for the current state, [Known Limitations](docs/KNOWN_LIMITATIONS.md) for every known issue, [Next Improvements](docs/NEXT_IMPROVEMENTS.md) for the roadmap. |
+| **Compile-from-source flow** | [Building](#building) below. |
+
+If you're new to Mingus, read chapters 1–8 of the Language Reference in order. That gives you everything you need to write substantial programs; the rest of the reference is reference material for when you need it.
+
 ## What It Looks Like
 
 ### Structs with operator overloading
@@ -368,7 +381,7 @@ Pointer dereference for assignment and pointer arithmetic only compile inside `r
 
 ## Examples
 
-The `examples/` directory contains 9 showcase programs demonstrating every major feature:
+The `examples/` directory contains 14 showcase programs demonstrating every major feature:
 
 | Example | Features shown |
 |---------|---------------|
@@ -381,6 +394,11 @@ The `examples/` directory contains 9 showcase programs demonstrating every major
 | Data Structures (List & Stack) | Classes, `new`/`delete`, destructors, ref params, RAII |
 | Particle Simulation | Structs, classes, RAII, raw blocks, closures, ref params |
 | **Mingus Groove** (Walking Bass) | **Multi-module imports**, classes, ADSR envelopes, pattern matching, `[=]`/`[&]` captures, ref params, raw blocks, WAV output |
+| Checkerboard PNG | Raw blocks, file I/O via extern, pointer arithmetic |
+| Mandelbrot | Performance, fixed-size arrays, complex arithmetic |
+| Auto-bind Gradient | C header parsing, automatic FFI binding generation |
+| SQLite3 | Full SQLite3 binding via FFI, dynamic dispatch |
+| SQLite3 Auto-bindings | Generated FFI from C headers |
 
 Run them all: `cd examples && showcase.bat`
 
@@ -426,13 +444,15 @@ clang hello.ll -o hello.exe -O2
 ### Running the test suite
 
 ```bash
-# Full suite (45 feature tests + stress tests)
-run_tests.bat           # Windows — from project root
-
-# Or individually:
+# Feature tests (74 tests covering every language feature)
 cd tests
-run_all_tests.bat       # Feature tests only
-run_stress_tests.bat    # Stress tests only
+run_v2_tests.bat
+
+# Stress tests (21 tests for RAII, closures, reference cycles, etc.)
+run_v2_stress_tests.bat
+
+# Or both from the project root
+run_tests.bat
 ```
 
 All tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to see program output, or `--code` to display Mingus source.
@@ -468,12 +488,21 @@ All tests should pass. Use `--ir` to inspect generated LLVM IR, `--output` to se
 | Pipe operator (`\|>`) with functions, methods, and extra args | ✓ |
 | Pattern matching with guards | ✓ |
 | Enums with underlying types (`int`, `byte`, `string`) | ✓ |
+| String value type with length, slice, concatenation, equality | ✓ |
 | Lambdas with C++ capture lists (`[=]`, `[&]`, `[x, &y]`) | ✓ |
 | By-reference captures — writes persist to outer scope | ✓ |
 | Self-capturing recursive closures | ✓ |
 | Closures with struct and reference parameters | ✓ |
+| Weak captures (`[weak x]`) for breaking reference cycles | ✓ |
 | Escape analysis for temporary closures | ✓ |
 | Nullable closures / fat pointer null comparison | ✓ |
+| Generics (functions, structs, classes, interfaces) | ✓ |
+| Generic constraint bounds and type inference | ✓ |
+| Turbofish call syntax (`f::<int>(x)`) | ✓ |
+| Constructor overloading (multiple constructors per class) | ✓ |
+| Forward type references within a module | ✓ |
+| Definite assignment analysis | ✓ |
+| Shared pointers / reference-counted heap classes (`new shared Foo()`) | ✓ |
 | Reference parameters (`func swap(int& a, int& b)`) | ✓ |
 | Higher-order functions and composition | ✓ |
 | Tuples and destructuring | ✓ |
@@ -505,16 +534,13 @@ Source (.mingus)
 
 ## Known Limitations
 
-- **No generics** — no template or generic type support yet.
 - **Strings are heap-allocated** — no small string optimization.
 - **Single compilation unit** — each `.mingus` file compiles independently. Cross-file linking uses `import`.
 - **Error recovery is minimal** — the first parse or semantic error often stops compilation. Error messages lack detailed context.
 - **Reference lifetime** — `[&x]` captures that escape their scope produce dangling references (programmer responsibility, same as C++).
 - **Duplicate cross-module externs** — two modules declaring the same `extern func` causes linker errors. Declare externs in one module only and `import` them in others.
 
-# Detailed Current Status
-Under docs/MINGUS_STATUS.md is a detailed report about the current limitations and issues, with short- and long-term goals.
-
+For the full consolidated list of known issues with severity ratings and workarounds, see [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
 
 ## Why "Mingus"?
 

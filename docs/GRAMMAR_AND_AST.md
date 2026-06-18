@@ -1786,13 +1786,10 @@ Lambda bodies can be either `ExpressionBaseNode` or `BlockStatementNode`, stored
 
 ## 8. Grammar Limitations
 
-- **No generics/templates.** All types are concrete.
 - **No multiple return types.** Functions return a single type (tuples can be used as a workaround).
 - **Range patterns are integer-only.** `1..10` works, but `'a'..'z'` or `0.0..1.0` do not.
-- **Char literal escapes are raw.** The ASTGenerator reads `text[1]` without processing escape sequences in character literals, so `'\n'` produces `\` instead of a newline character.
 - **Lambda params can omit types.** Untyped lambda params produce `ParameterNode` with null type; type inference for lambda parameters is not supported and sema will reject them.
 - **Tuple patterns not implemented in V2.** The grammar rule exists but the ASTGenerator reports an error.
 - **Guard patterns only on bindings.** The grammar allows guards on any pattern, but the ASTGenerator only attaches guards to `IdentifierPattern` nodes.
 - **No `for-each` or range-based for.** Only C-style `for(init; cond; iter)` is supported.
-- **No string escape in char literals.** Escape sequences like `'\n'` are not properly decoded.
 - **Single inheritance only.** Classes support one base class (plus interfaces via the comma-separated list after `:`).

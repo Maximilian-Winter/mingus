@@ -1,6 +1,6 @@
 # Mingus V2 Architecture Design
 
-**Date:** February 2026
+**Date:** June 2026
 **Status:** Design specification — clean rewrite, no backward compatibility
 **Approach:** Modeled on the proven `SymbolWithScope` multiple-inheritance pattern
 

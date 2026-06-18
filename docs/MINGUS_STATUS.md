@@ -1,7 +1,7 @@
 # Mingus -- Language Status Report
 
-**Date:** February 2026
-**Status:** Compiles and executes optimized native binaries -- **45 feature tests + 21 stress tests passing (66/66)**
+**Date:** June 2026
+**Status:** Compiles and executes optimized native binaries -- **74 feature tests + 21 stress tests passing (95/95)**
 
 ---
 
@@ -35,8 +35,8 @@ Source (.mingus) -> ANTLR4 Parser -> AST -> Semantic Analysis (4 passes) -> LLVM
 | Compilation | Clang (from LLVM distribution) compiles IR to native executable |
 
 **Build System:** CMake + Ninja + MSVC (Windows), CLion IDE or standalone `build.bat`
-**Test Runner:** `run_tests.bat` (combined 66 tests), `tests/run_v2_tests.bat` (45 feature), `tests/run_v2_stress_tests.bat` (21 stress) -- supports `--code`, `--ir`, `--output` flags
-**Showcase:** `examples/showcase.bat` -- 9 example programs (including multi-module import demo)
+**Test Runner:** `run_tests.bat` (combined feature + stress), `tests/run_v2_tests.bat` (74 feature), `tests/run_v2_stress_tests.bat` (21 stress) -- supports `--code`, `--ir`, `--output` flags
+**Showcase:** `examples/showcase.bat` -- 14 example programs (including multi-module import demo)
 
 ---
 
@@ -1067,7 +1067,7 @@ The `move(expr)` syntax wraps an expression as an rvalue reference, signaling th
 
 **Note:** There is no `stress_12` -- numbering was preserved from development history.
 
-**All 66 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
+**All 95 tests produce correct output validated against `.expected` files with `--opt 2` enabled.**
 
 ---
 
@@ -1106,12 +1106,12 @@ CLion uses `cmake-build-release/` as its build directory and works out of the bo
 
 ### Post-Build
 
-CMake post-build copies `mingus_v2_tool.exe` to both `examples/` and `tests/` directories, so tests and examples can be run directly.
+CMake post-build copies the compiler binary (`mingus_ir_tool.exe`) to both `examples/` and `tests/` directories, so tests and examples can be run directly.
 
 ### Running Tests
 
 ```bat
-:: Run all 45 feature tests
+:: Run all 74 feature tests
 cd tests
 run_v2_tests.bat
 
@@ -1119,7 +1119,7 @@ run_v2_tests.bat
 cd tests
 run_v2_stress_tests.bat
 
-:: Run all 66 tests together
+:: Or run the combined suite from the project root
 run_tests.bat
 
 :: Optional flags
@@ -1134,7 +1134,7 @@ Each test compiles `.mingus` to `.ll` (with `--opt 2`), then uses `clang` to pro
 
 ```bat
 cd examples
-showcase.bat              :: Run all 9 examples
+showcase.bat              :: Run all 14 examples
 showcase.bat --code       :: Show source code
 showcase.bat --ir         :: Show generated LLVM IR
 ```
@@ -1206,7 +1206,7 @@ mingus/
 +-- MingusParser.g4                         # ANTLR4 parser grammar
 +-- README.md                               # Project overview and quick start
 +-- build.bat                               # Standalone build script (Ninja + MSVC)
-+-- run_tests.bat                           # Combined test runner (all 66 tests)
++-- run_tests.bat                           # Combined test runner (feature + stress)
 +-- docs/
 |   +-- MINGUS_STATUS.md                    # This file
 |   +-- GRAMMAR_AND_AST.md                  # Grammar rules, operator precedence, AST node inventory
@@ -1252,14 +1252,14 @@ mingus/
 +-- examples/
 |   +-- DSPLib.mingus                       # Reusable DSP library (Envelope, Oscillator, WAV writer)
 |   +-- example_01..09_*.mingus             # 9 showcase programs
-|   +-- showcase.bat                        # Run all 9 examples
+|   +-- showcase.bat                        # Run all 14 examples
 +-- tests/
-|   +-- test_01..test_45_*.mingus           # 45 feature tests
+|   +-- test_01..test_74_*.mingus           # 74 feature tests
 |   +-- stress_01..stress_22_*.mingus       # 21 stress tests
 |   +-- *.expected                          # Expected output files
 |   +-- MathLib.mingus                      # Library file for test_12 imports
-|   +-- run_all_tests.bat                   # Feature test runner
-|   +-- run_stress_tests.bat                # Stress test runner
+|   +-- run_v2_tests.bat                    # Feature test runner (v2)
+|   +-- run_v2_stress_tests.bat             # Stress test runner (v2)
 +-- CMakeLists.txt                          # Root build system
 ```
 

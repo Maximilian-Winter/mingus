@@ -1,6 +1,6 @@
 # Mingus Known Limitations
 
-Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of February 2026 with 73 passing tests (52 feature + 21 stress).
+Consolidated reference of all known limitations, edge cases, and workarounds in the Mingus compiler. Organized by category. Current as of June 2026 with 95 passing tests (74 feature + 21 stress).
 
 ---
 
@@ -24,16 +24,13 @@ Missing language features that have not been implemented.
 
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
-| **No generics/templates** | All types are concrete. No parameterized types (`List<T>`) or generic functions (`func map<T, U>(...)`). Each concrete type must be written explicitly. | High |
 | **No standard library** | No built-in data structures, I/O abstractions, or utility functions. Only `extern` C functions (libc) are available for I/O, math, and memory. | High |
 | **Limited first-class arrays** | Fixed-size arrays (`int[N]`) are first-class: stack allocation, function parameters/returns (passed by pointer), array literals (`[1, 2, 3]`), and struct/class fields. Dynamic arrays still require pointers via `new T[N]`. No bounds checking. No array length property. | Medium |
-| **No string type** | Strings are C-style null-terminated `char*`. No built-in string class with length tracking, slicing, or Unicode support. String concatenation via `+` produces heap-allocated results registered for RAII cleanup. | Medium |
 | **No garbage collection** | Manual memory management only. Raw heap objects (`new Foo()`) must be explicitly freed with `delete`. Closure environments and shared pointers (`new shared Foo()`) use reference counting. All other heap allocations are manual. | Medium |
 | **No multiple return types (beyond tuples)** | Functions can return tuples, but there is no named-return or multi-value return beyond the tuple mechanism. | Low |
 | **No exceptions** | No `try`/`catch`/`throw`. Error handling must use return codes, error enums, or similar patterns. | Medium |
 | **Range patterns are integer-only** | `match` arm ranges (`1..10`) work only with integer literals. Float or char ranges are not supported. | Low |
 | **Array size must be literal** | `int[N]` requires an integer literal for `N`. Constant expressions or variables cannot be used for array dimensions. `int[n]` (variable) is a parse error. Runtime-sized arrays use `new int[n]` (heap allocation). | Low |
-| **Float literal always double** | `1.0` is always `double`. No `1.0f` suffix for `float`. Requires explicit cast for `float` assignment. | Low |
 | **Single compilation unit** | Each `.mingus` file compiles independently. Cross-file interaction uses the `import` system, which links at the LLVM IR level. No header files or forward declarations across modules. | Medium |
 | **No untyped lambda params** | Lambda parameters can syntactically omit types (`[=](x) => x`), but type inference for untyped parameters is not implemented. Sema will report an error. All lambda params must have explicit types. | Low |
 
@@ -58,7 +55,7 @@ Limitations related to memory allocation, RAII, reference counting, and string h
 
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
-| **RC is closure-only** | Reference counting applies only to closure capture environments. Class instances, structs, arrays, and other heap allocations are not reference-counted. | Medium |
+| **RC is opt-in for classes** | Class instances are reference-counted only when created with `new shared Foo()`. Plain `new Foo()` allocations are manual. Closure capture environments are reference-counted unconditionally. | Low |
 
 ### String Memory
 
@@ -84,11 +81,9 @@ Limitations in compiler diagnostics, error recovery, and development tooling.
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
 | **Minimal error recovery** | The first parse error or semantic error typically stops compilation. The compiler does not attempt to recover and report multiple errors in a single pass. | Medium |
-| **No DWARF/PDB debug info** | The `emitDebugInfo_` flag and DIBuilder infrastructure exist in codegen, but debug information emission is not fully implemented. Compiled binaries cannot be stepped through in a debugger with source-level mapping. | Medium |
 | **No LSP / IDE integration** | No Language Server Protocol implementation. No syntax highlighting definitions, autocompletion, or go-to-definition support for editors. | Low |
 | **No REPL** | No interactive read-eval-print loop. All code must be compiled and executed as files. | Low |
 | **Error messages lack suggestions** | Error messages report what went wrong but do not suggest fixes (e.g., "did you mean..." or "consider adding..."). | Low |
-| **No source-map in IR** | Generated LLVM IR does not carry source location metadata. When inspecting IR output, there is no mapping back to source lines. | Low |
 
 ---
 
@@ -98,14 +93,11 @@ Limitations in the four semantic analysis passes (SymbolTableBuilder, TypeResolv
 
 | Limitation | Description | Severity |
 |-----------|-------------|----------|
-| **No forward declarations** | A class used as a base must be defined before the derived class in source order (or imported from another module). Mutual class references within a single module are not supported. | Medium |
-| **No forward type references** | Types must be defined before use in type annotations. A struct referencing another struct that is defined later in the file will fail. | Medium |
 | **Operator overload is left-only** | Operator resolution checks only the left operand's type. `42 + vec` will not find `Vec::operator+`. The overloaded type must be on the left side: `vec + 42`. | Low |
 | **Lambda return type inference** | Block-bodied lambdas infer their return type from the first `return` statement encountered. Conflicting return types in different branches are not cross-checked. | Low |
-| **No definite assignment analysis** | Variables can be read before assignment without a compiler error. Uninitialized variables contain whatever was in the alloca (zero for zero-initialized structs, undefined for primitives). | Medium |
 | **No null safety** | Pointers and nullable closures can be dereferenced without null checks. No `?.` safe-navigation operator or nullable type system. | Medium |
 | ~~**Operator imports not transferred**~~ | Fixed — see [Previously Known Limitations](#8-previously-known-limitations-now-fixed). | ~~Low~~ |
-| **Limited constructor forms** | Each class supports one regular constructor, one copy constructor (`T&`), and one move constructor (`T&&`). General constructor overloading with arbitrary signatures is not supported. Only one destructor per class. | Low |
+| **Limited constructor forms** | Constructor overloading supports arbitrary signatures (test_55), but only one destructor per class. | Low |
 | **Vtable ordering is alphabetical** | New virtual methods introduced in derived classes are ordered alphabetically (from `std::map` iteration), not in source order. This affects vtable layout but not correctness for single-inheritance. | Low |
 | **Enum exhaustiveness is name-based** | Match exhaustiveness checking for enums uses case names only. Numeric patterns, complex expressions, or range patterns covering enum values are not recognized as exhaustive. | Low |
 | **Loop return analysis is conservative** | `for`/`while` bodies are always classified as `NeverReturns` for return completeness checking, even for provably infinite loops. Functions that return only inside a loop may get false "missing return" warnings. | Low |
@@ -242,6 +234,15 @@ These were documented as limitations in earlier versions but have been fixed and
 | **Char literal escape processing** | `parseCharLiteral()` helper in ASTGenerator now processes all standard escape sequences (`\n`, `\t`, `\0`, `\\`, `\'`, `\"`, `\r`, `\a`, `\b`, `\f`, `\v`). Previously read `text[1]` naively. | test_52 |
 | **Duplicate cross-module externs** | `declareExternFunctions()` checks `module_->getFunction(name)` before `Function::Create()`. Reuses existing LLVM function declaration, preventing `@sin.1` duplicates. | test_52 |
 | **Whole-module import broken** | ASTGenerator's `visitImportDefinition()` now handles `import Module;` correctly. Grammar parses the module name as an `importTarget`; AST generator detects the no-`from` case and converts target to `sourcePath` with `isWholeModule=true`. Previously, `sourcePath` was empty, causing the entire import to be silently skipped. | test_52 |
+| **No generics/templates** | Generic functions (`func identity<T>(T value) => T`), generic structs/classes, and generic interfaces are implemented with monomorphization. Turbofish call syntax (`f::<int>(x)`), constraint bounds, and type inference all supported. | test_70..test_74 |
+| **No string type** | `String` value type with `.length()`, `.slice()`, concatenation (`+`), and equality (`==`/`!=`) implemented as a built-in type alongside C-style `string` (`char*`). | test_57 |
+| **Float literal always double** | `1.0f` and `1.0F` produce `float` (32-bit); `1.0` remains `double` (64-bit). `sizeof(float)` and `sizeof(double)` return the expected sizes. | test_54 |
+| **No forward declarations / forward type references** | Classes, structs, interfaces, and enums can reference types defined later in the same module. Two-pass symbol resolution handles forward refs. | test_53 |
+| **No definite assignment analysis** | Variables read before assignment produce a compile-time warning. Code paths that may use an uninitialized variable are detected during semantic analysis. | test_56 |
+| **Limited constructor forms** | Classes now support multiple constructors with arbitrary parameter signatures. Overload resolution selects the right one by parameter count and type. | test_55 |
+| **No DWARF/PDB debug info** | `--debug` flag emits DWARF 4 source mapping (and Windows PDB/ILK) via LLVM's DIBuilder. Compiled binaries can be stepped through in a debugger with source-level mapping. | test_27, test_59 |
+| **No source-map in IR** | Generated LLVM IR carries `DebugLoc` (line/column metadata) for every instruction that maps back to source. | test_27 |
+| **RC is closure-only** | Class instances can opt into reference counting via `new shared Foo()`. `shared Foo*` and `Foo*` are distinct types; only the shared variant is RC-managed. | test_50 |
 
 ---
 
